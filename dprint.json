@@ -1,0 +1,40 @@
+{
+  "lineWidth": 80,
+  "useTabs": false,
+  "indentWidth": 2,
+  "typescript": {
+    "quoteStyle": "preferSingle",
+    "quoteProps": "asNeeded",
+    "useBraces": "always",
+    "bracePosition": "sameLine",
+    "operatorPosition": "maintain",
+    "arrowFunction.useParentheses": "force",
+    "enumDeclaration.memberSpacing": "newLine",
+    "exportDeclaration.sortNamedExports": "caseSensitive",
+    "importDeclaration.sortNamedImports": "caseSensitive",
+    "importDeclaration.sortTypeOnlyImports": "last"
+  },
+  "json": {
+  },
+  "markdown": {
+  },
+  "dockerfile": {
+  },
+  "yaml": {
+    "quotes": "forceSingle",
+    "formatComments": true
+  },
+  "excludes": [
+    "**/node_modules",
+    "**/*-lock.json",
+    "**/*-lock.yaml",
+    "**/dist"
+  ],
+  "plugins": [
+    "https://plugins.dprint.dev/typescript-0.95.0.wasm",
+    "https://plugins.dprint.dev/json-0.20.0.wasm",
+    "https://plugins.dprint.dev/markdown-0.18.0.wasm",
+    "https://plugins.dprint.dev/dockerfile-0.3.2.wasm",
+    "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.5.0.wasm"
+  ]
+}

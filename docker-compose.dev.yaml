@@ -1,0 +1,52 @@
+version: '3.9'
+
+services:
+  pg:
+    image: postgres:18
+    container_name: whisky-db
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASS}
+      - POSTGRES_DB=${DB_NAME}
+    restart: unless-stopped
+    volumes:
+      - whisky_pg_data:/var/lib/postgresql
+    ports:
+      - '5431:5432'
+    networks:
+      - whisky-db
+    healthcheck:
+      test: pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB
+      start_period: 5s
+      interval: 5s
+      timeout: 1s
+      retries: 10
+  valkey:
+    image: valkey/valkey:8
+    container_name: whisky-valkey
+    restart: unless-stopped
+    command: valkey-server --save 60 1 --appendonly yes
+    volumes:
+      - whisky_valkey_data:/data
+    ports:
+      - '6378:6379'
+    networks:
+      - whisky-valkey
+    healthcheck:
+      test: valkey-cli ping
+      start_period: 1s
+      interval: 1s
+      timeout: 2s
+      retries: 30
+
+networks:
+  whisky-db:
+    name: whisky_db
+  whisky-valkey:
+    name: whisky_valkey
+
+volumes:
+  whisky_pg_data:
+    driver: local
+  whisky_valkey_data:
+    driver: local

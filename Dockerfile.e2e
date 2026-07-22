@@ -1,0 +1,12 @@
+FROM node:24
+
+WORKDIR /app
+COPY . .
+
+RUN corepack enable
+RUN apt update
+RUN apt install -y mc nano iputils-ping net-tools telnet
+
+RUN pnpm i
+
+CMD ["pnpm", "start"]

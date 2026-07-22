@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "ES2023",
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "resolvePackageJsonExports": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "declaration": true,
+    "removeComments": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "allowSyntheticDefaultImports": true,
+    "sourceMap": true,
+    "incremental": true,
+    "inlineSources": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "strictNullChecks": true,
+    "forceConsistentCasingInFileNames": false,
+    "noImplicitAny": true,
+    "strictBindCallApply": true,
+    "noFallthroughCasesInSwitch": false,
+    "paths": {
+      "~*": ["./src/*"],
+      "~types": ["./src/interfaces"],
+      "~types/*": ["./src/interfaces/*"],
+      "~core/common": ["./src/core/_common"],
+      "~core/common/*": ["./src/core/_common/*"],
+      "~domain/common": ["./src/domain/_common"],
+      "~domain/common/*": ["./src/domain/_common/*"]
+    }
+  }
+}

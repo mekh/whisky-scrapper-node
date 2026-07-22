@@ -1,0 +1,57 @@
+version: '3.9'
+
+services:
+  db:
+    image: bitnami/postgresql:17
+    container_name: service-db-e2e
+    environment:
+      - POSTGRESQL_USERNAME=user
+      - POSTGRESQL_PASSWORD=1
+      - POSTGRESQL_DATABASE=e2e
+      - POSTGRESQL_POSTGRES_PASSWORD=1
+    tmpfs:
+      - /bitnami/postgresql
+    healthcheck:
+      test: pg_isready -U $$POSTGRESQL_USERNAME -d $$POSTGRESQL_DATABASE
+      start_period: 5s
+      interval: 5s
+      timeout: 1s
+      retries: 10
+  redis:
+    image: docker.io/bitnami/redis:7.2
+    container_name: service-redis-e2e
+    environment:
+      - ALLOW_EMPTY_PASSWORD=yes
+    tmpfs:
+      - /bitnami/redis
+    healthcheck:
+      test: redis-cli ping
+      start_period: 1s
+      interval: 1s
+      timeout: 2s
+      retries: 30
+  tests:
+    container_name: service-e2e
+    image: node:22
+    build:
+      context: .
+      dockerfile: Dockerfile.e2e
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_HOST=service-redis-e2e
+      - DB_HOST=service-db-e2e
+      - DB_TYPE=postgres
+      - DB_USER=user
+      - DB_PASS=1
+      - DB_NAME=e2e
+      - JWT_ACCESS_SECRET=JWT_ACCESS_SECRET
+      - JWT_REFRESH_SECRET=JWT_REFRESH_SECRET
+      - LOG_LEVEL=error
+    restart: no
+    command: >
+      sh -c "pnpm run migration:run
+      && ./node_modules/.bin/jest --config ./jest.e2e.config.ts"

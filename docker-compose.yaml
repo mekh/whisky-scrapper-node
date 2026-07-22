@@ -1,0 +1,41 @@
+version: '3.9'
+
+services:
+  service:
+    container_name: service
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - APP_PORT=4000
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - DB_LOGGING=false
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=db
+      - DB_USER=user
+      - DB_PASS=<SECRET>
+      - JWT_ACCESS_SECRET=<SECRET>
+      - JWT_REFRESH_SECRET=<SECRET>
+      - LOG_LEVEL=trace
+      - LOG_JSON=false
+      - LOG_PRETTY=false
+      - LOG_CALLSITES=true
+      - LOG_COLORS=true
+    ports:
+      - '4000:4000'
+    networks:
+      - api
+      - mysql
+      - redis
+    restart: unless-stopped
+
+networks:
+  api:
+    name: api
+  mysql:
+    external: true
+  redis:
+    external: true

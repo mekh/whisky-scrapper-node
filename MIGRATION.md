@@ -1,7 +1,8 @@
 # Frontend migration map (legacy FastAPI → Node API)
 
-Reference for porting the legacy web UI (`../legacy/whisky/web`, served by the
-Python FastAPI app) to a new React frontend talking to this Node API.
+Reference for porting the legacy web UI (the Python FastAPI app's former
+`whisky/web`, since removed) to the React frontend (`../web`) talking to this
+Node API.
 
 Guiding differences from the legacy API:
 

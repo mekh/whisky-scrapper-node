@@ -3,7 +3,7 @@ import path from 'node:path';
 
 /**
  * Thin wrapper around the TypeORM CLI that pins every migration command to the
- * `node/migrations` directory. It lets the package scripts accept a bare
+ * `be/migrations` directory. It lets the package scripts accept a bare
  * migration name (e.g. `pnpm migration:generate init`) and expands it to the
  * full `migrations/<name>` path the CLI expects, so generated/created files
  * always land inside `migrations/` instead of the project root.

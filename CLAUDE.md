@@ -1,7 +1,7 @@
 # Whisky Scrapper — Node.js Backend
 
 NestJS 11 + Fastify + TypeORM + PostgreSQL rewrite of the Python project in
-`../legacy`. Valkey (Redis-compatible) is used for caching/sessions, Pino for
+`../scrapper`. Valkey (Redis-compatible) is used for caching/sessions, Pino for
 logging, JWT (access + refresh) for auth, Argon2id for hashing.
 
 This document describes the intended architecture and conventions. Follow it
@@ -9,14 +9,13 @@ when creating any new file — placement, naming, and layering are strict.
 
 ## Commands
 
-All commands run from the `node/` directory with `pnpm`.
+All commands run from the `be/` directory with `pnpm`.
 
 ```bash
 pnpm build                  # nest build
 pnpm build:prod             # nest build -p tsconfig.build.json
 pnpm start                  # nest start
-pnpm start:prod             # node dist/main  (STALE: build emits dist/src/main.js —
-                            #                  run `node dist/src/main.js`)
+pnpm start:prod             # node dist/src/main.js
 pnpm lint                   # eslint --fix on {src,test}/**/*.ts
 pnpm test                   # jest unit tests
 pnpm test:cov               # jest with coverage
@@ -31,14 +30,16 @@ pnpm migration:create <name>     # empty skeleton in ./migrations/
 pnpm migration:run
 pnpm migration:revert
 
-# One-time / periodic data sync from the legacy SQLite DB into Postgres:
+# One-time import of the legacy SQLite DB into Postgres. Path resolution:
+# <sqlite-path> arg > $LEGACY_SQLITE_PATH > ./whisky.db (be root); fails fast
+# if the file does not exist.
 pnpm exec ts-node -r tsconfig-paths/register scripts/sync-from-sqlite.ts \
   [<sqlite-path>] [--dry-run] [--tables=country,store,...]
 ```
 
 Because `scripts/` sits beside `src/`, `nest build` nests the output under
-`dist/src/` — the built entry point is `dist/src/main.js` (the `start:prod`
-script's `node dist/main` path is stale).
+`dist/src/` — the built entry point is `dist/src/main.js` (which `start:prod`
+runs).
 
 Pass only the bare `<name>` — no path or extension. All four scripts route
 through `scripts/migration.ts`, a thin wrapper over the TypeORM CLI that pins
@@ -49,7 +50,7 @@ are forwarded to the CLI (e.g. `pnpm migration:generate init --dryrun`).
 Local infrastructure: `docker-compose.dev.yaml` starts **PostgreSQL 18**
 (host port **5431**, db `db`, user `user`, password `1`) and **Valkey 8**
 (host port **6378**). PG 18 is required — entity PKs default to `uuidv7()`,
-which PG 18 provides natively. E2E: `jest.e2e.config.ts` matches `*.e2e.spec.ts`.
+which PG 18 provides natively.
 
 Formatting is enforced by **dprint** + **ESLint** (strict-type-checked).
 Husky and lint-staged run `tsc --noEmit`, `eslint`, and `dprint fmt` on staged
@@ -71,7 +72,7 @@ relative imports (`./`, `../`).
 ## Directory layout and responsibilities
 
 ```
-node/
+be/
 ├── typeorm.config.ts        # DataSource for TypeORM CLI (migrations)
 ├── migrations/              # generated TypeORM migrations
 └── src/
@@ -310,8 +311,9 @@ devDependency) reads the legacy SQLite DB and upserts into Postgres by natural
 key, resolving FKs by natural key (legacy integer ids are never carried over).
 Brand names pass through `BrandUtils.canonical` (`~utils`, mirrors the scraper's
 `normalize.canonical_brand`) so the case/whitespace/Cyrillic variants stores
-emit collapse onto one lookup row. Idempotent/re-runnable — safe as a periodic
-sync while the Python collector still writes SQLite. Chunked at 500/1000 rows to stay under the PG 65 535-param
+emit collapse onto one lookup row. Idempotent/re-runnable — a one-time importer
+for the historical SQLite data; the Python collector now writes Postgres
+directly, so this is no longer a live bridge. Chunked at 500/1000 rows to stay under the PG 65 535-param
 limit. Verified against the real 24 MB legacy DB (8 724 products, 210 357
 snapshots). Timestamp columns are `timestamp` (no tz); legacy UTC ISO values
 shift by the local offset on display — decide a tz policy before production.
@@ -484,14 +486,13 @@ that strips the prefix.
 
 Still open:
 
-- The Python collector still writes SQLite; run `sync-from-sqlite.ts`
-  periodically until/unless the collector is repointed to Postgres (deferred).
-- The frontend (`../legacy/whisky/web`) still targets the legacy contract —
-  migrate it to this API per `MIGRATION.md` (login returns `{ access }`, fields
-  are camelCase, `/meta` keys renamed, etc.).
-- `docker-compose.yaml` (prod) still references MySQL — outdated; the real
-  target is PostgreSQL (see `docker-compose.dev.yaml`).
-
-The legacy Python implementation in `../legacy` is the functional reference
-for the eventual feature set, but its code style and structure are NOT to be
-copied.
+- The Python collector writes Postgres directly, so `sync-from-sqlite.ts` is now
+  a one-time importer for the historical SQLite data, not a live bridge. Still
+  missing: an owned seed for `store`/`store_config`/`country` so a fresh DB can be
+  populated without importing that legacy file.
+- The React frontend (`../web`) has replaced the legacy Python-served UI (which
+  was removed) and consumes this API per `MIGRATION.md` (login returns
+  `{ access }`, fields are camelCase, `/meta` keys renamed, etc.).
+The original Python implementation (now scraper-only, in `../scrapper`) is the
+functional reference for the eventual feature set, but its code style and
+structure are NOT to be copied.

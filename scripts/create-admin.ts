@@ -127,7 +127,7 @@ export const createAdmin = async (manager: EntityManager): Promise<void> => {
 };
 
 /**
- * Standalone entry point: opens a DB connection using `node/.env`, creates the
+ * Standalone entry point: opens a DB connection using `be/.env`, creates the
  * admin user, then closes the connection.
  *
  * @returns Resolves once the connection has been closed.

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { stdout } from 'node:process';
 
@@ -978,10 +979,15 @@ const parseArgs = (): {
     ? new Set(tablesArg.slice('--tables='.length).split(','))
     : null;
 
+  /**
+   * SQLite source path: an explicit positional arg wins, then the
+   * `LEGACY_SQLITE_PATH` env var, then the default `whisky.db` in the `be`
+   * project root. Existence is verified in `main` before any work runs.
+   */
   const positional = args.find((arg) => !arg.startsWith('--'));
   const sqlitePath = positional
     ?? process.env.LEGACY_SQLITE_PATH
-    ?? resolve(__dirname, '../../legacy/data/whisky.db');
+    ?? resolve(__dirname, '..', 'whisky.db');
 
   return { sqlitePath, dryRun, only };
 };
@@ -994,6 +1000,13 @@ const parseArgs = (): {
  */
 const main = async (): Promise<void> => {
   const { sqlitePath, dryRun, only } = parseArgs();
+
+  if (!existsSync(sqlitePath)) {
+    throw new Error(
+      `SQLite file not found: ${sqlitePath} — pass a path as the first `
+        + `positional argument or set LEGACY_SQLITE_PATH`,
+    );
+  }
 
   if (only) {
     const unknown = [...only].filter((name) => !ALL_TABLES.includes(name));

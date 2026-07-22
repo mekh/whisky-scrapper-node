@@ -2,40 +2,41 @@ version: '3.9'
 
 services:
   service:
-    container_name: service
+    container_name: whisky-be
     build:
       context: .
       dockerfile: Dockerfile
     environment:
       - APP_PORT=4000
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_DB=0
+      - APP_HOST=0.0.0.0
+      - VALKEY_HOST=whisky-valkey
+      - VALKEY_PORT=6379
+      - VALKEY_DB=0
       - DB_LOGGING=false
-      - DB_HOST=mysql
-      - DB_PORT=3306
-      - DB_NAME=db
+      - DB_HOST=whisky-db
+      - DB_PORT=5432
+      - DB_NAME=whisky
       - DB_USER=user
       - DB_PASS=<SECRET>
+      - DB_SLOW_QUERY_MS=2500
       - JWT_ACCESS_SECRET=<SECRET>
-      - JWT_REFRESH_SECRET=<SECRET>
       - LOG_LEVEL=trace
       - LOG_JSON=false
       - LOG_PRETTY=false
-      - LOG_CALLSITES=true
+      - LOG_CALLSITES=false
       - LOG_COLORS=true
     ports:
       - '4000:4000'
     networks:
-      - api
-      - mysql
-      - redis
+      - whisky-be
+      - whisky-db
+      - whisky-valkey
     restart: unless-stopped
 
 networks:
-  api:
-    name: api
-  mysql:
+  whisky-be:
+    name: whisky-be
+  whisky-db:
     external: true
-  redis:
+  whisky-valkey:
     external: true

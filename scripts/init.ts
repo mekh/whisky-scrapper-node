@@ -5,7 +5,7 @@ import datasource from '../typeorm.config';
 import { createAdmin } from './create-admin';
 
 /**
- * One-time application bootstrap: opens a DB connection using `node/.env`,
+ * One-time application bootstrap: opens a DB connection using `be/.env`,
  * applies every pending migration, then interactively creates the first admin
  * user. Meant to be run once, right after the app is provisioned.
  *

@@ -10,6 +10,7 @@ services:
       - POSTGRES_DB=${DB_NAME}
     restart: unless-stopped
     volumes:
+      # PG18 stores data in a versioned subdir; mount the parent, not /data.
       - whisky_pg_data:/var/lib/postgresql
     ports:
       - '5431:5432'

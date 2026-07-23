@@ -21,8 +21,9 @@ pnpm test                   # jest unit tests
 pnpm test:cov               # jest with coverage
 
 pnpm openapi                # write ./openapi.json from a running server's
-                            # /docs-json (start the API first). Input for the
-                            # web frontend's typed API-client codegen — commit it.
+                            # /docs-json (optional local snapshot; git-ignored).
+                            # The web frontend fetches /docs-json over HTTP at
+                            # deploy instead — prod needs SWAGGER_ENABLED=true.
 
 # TypeORM migrations (DataSource: ./typeorm.config.ts, files in ./migrations/)
 pnpm migration:generate <name>   # diff entities -> ./migrations/<ts>-<name>.ts
@@ -468,7 +469,11 @@ Pre-existing bugs fixed while wiring auth (context for future changes):
   `referencePrice` instead of the legacy `note`). Whisky types/flavors come from
   the `type`/`flavor` tables, never hardcoded. The whisky core graph is wired
   via the aggregate `CoreWhiskyModule` (`~core/core-whisky.module`) so all
-  related entities register together under `autoLoadEntities`.
+  related entities register together under `autoLoadEntities`. The GET read
+  endpoints (`/report/*`, `/store`, `/store/:slug`, `/meta`) send
+  `Cache-Control: private, max-age=600` via the `@CacheControl` decorator
+  (`~decorators/http`), so the browser caches them for 10 minutes and a hard
+  reload bypasses it; mutations and `auth`/`user` endpoints stay uncached.
 
 **`MIGRATION.md`** is the endpoint + field map (legacy → node) for the future
 React frontend — update it alongside any API contract change.
@@ -477,9 +482,12 @@ React frontend — update it alongside any API contract change.
 `nest-cli.json` (auto-`@ApiProperty` on DTOs/entities). The `@Plain` /
 `@Paginated` type decorators also emit the `@ApiOkResponse` schema (paginated
 endpoints get the `{ data, total, limit, offset }` envelope with `data` items
-`$ref`-ing the item DTO), so `/docs-json` fully describes every response. Run
-`pnpm openapi` (server up) to snapshot it to `./openapi.json` for the frontend
-client codegen. `@fastify/helmet` is registered in `main.ts` (its CSP is relaxed
+`$ref`-ing the item DTO), so `/docs-json` fully describes every response. The
+web frontend generates its client by fetching `/docs-json` over HTTP at deploy
+(`../web/deploy/deploy.sh`), so **prod must run with `SWAGGER_ENABLED=true`** (the
+route is gated by that flag — see `main.ts` — and blocked publicly by nginx +
+iptables). `pnpm openapi` (server up) still snapshots it to a git-ignored local
+`./openapi.json` for manual inspection. `@fastify/helmet` is registered in `main.ts` (its CSP is relaxed
 for the Swagger UI; the SPA's own CSP belongs on the reverse proxy). No global
 route prefix is used — the SPA reaches the API same-origin via a `/api` proxy
 that strips the prefix.

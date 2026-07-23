@@ -2,7 +2,10 @@
 /dist
 /node_modules
 /build
+/openapi.json
 /.env
+# Backup config holds the DB password; only the .example is committed.
+/scripts/db-backup.env
 /.env.development.local
 /.env.test.local
 /.env.production.local

@@ -32,4 +32,14 @@ export class AppConfig extends BaseConfig {
   @IsIn(['error', 'warn', 'info', 'debug', 'trace'])
   public readonly logLevel: Loglevel = this
     .asString('APP_LOGLEVEL') as Loglevel | undefined ?? 'info';
+
+  /**
+   * Whether to mount Swagger UI (/docs) and the OpenAPI spec (/docs-json).
+   * These routes are registered on Fastify outside the global auth guards,
+   * so they are unauthenticated when on — keep it off (default) in
+   * production and enable it in local/dev only (needed by `pnpm openapi`).
+   */
+  @IsBoolean()
+  public readonly swaggerEnabled: boolean =
+    this.asBoolean('SWAGGER_ENABLED') ?? false;
 }

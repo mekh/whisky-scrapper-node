@@ -1004,7 +1004,7 @@ const main = async (): Promise<void> => {
   if (!existsSync(sqlitePath)) {
     throw new Error(
       `SQLite file not found: ${sqlitePath} — pass a path as the first `
-        + `positional argument or set LEGACY_SQLITE_PATH`,
+        + 'positional argument or set LEGACY_SQLITE_PATH',
     );
   }
 

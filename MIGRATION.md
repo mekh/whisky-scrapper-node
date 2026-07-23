@@ -51,6 +51,12 @@ Report list responses are paginated: `{ data: ReportRow[], total, limit,
 offset }` (was `{rows, title, latest_date, count, page, per_page, total_pages}`
 — `title` dropped; `total`/`limit`/`offset` replace `count`/`per_page`/`page`).
 
+The read endpoints (`GET /meta`, `GET /report/{kind}`, `GET /report/history`,
+`GET /store`, `GET /store/{slug}`) send `Cache-Control: private, max-age=600`
+so the browser caches them for 10 minutes; a hard reload bypasses it. Mutations
+(`POST /product/update`, `PATCH /store/{slug}`) and `auth`/`user` endpoints are
+uncached.
+
 ## Field maps
 
 ### ReportRow (report list items + `history.product`)

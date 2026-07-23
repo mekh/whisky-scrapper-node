@@ -1,5 +1,7 @@
 import { Body, Controller, Get, Param, Patch } from '@nestjs/common';
 
+import { READ_CACHE_MAX_AGE_SECONDS } from '~constants';
+import { CacheControl } from '~decorators/http';
 import { Plain } from '~decorators/types';
 import { Action, Resource } from '~enums';
 import type { StoreDetail, StoreListItem } from '~types';
@@ -13,12 +15,14 @@ export class StoreController {
   public constructor(private readonly storeService: StoreService) {}
 
   @Get()
+  @CacheControl(READ_CACHE_MAX_AGE_SECONDS)
   @Plain([StoreListItemType], [Resource.STORE, Action.LIST])
   public list(): Promise<StoreListItem[]> {
     return this.storeService.list();
   }
 
   @Get(':slug')
+  @CacheControl(READ_CACHE_MAX_AGE_SECONDS)
   @Plain(StoreDetailType, [Resource.STORE, Action.READ])
   public detail(@Param() params: StoreSlugParamsDto): Promise<StoreDetail> {
     return this.storeService.detail(params.slug);

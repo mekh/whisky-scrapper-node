@@ -1,5 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
 
+import { READ_CACHE_MAX_AGE_SECONDS } from '~constants';
+import { CacheControl } from '~decorators/http';
 import { Plain } from '~decorators/types';
 import { Resource } from '~enums';
 import type { Meta } from '~types';
@@ -12,6 +14,7 @@ export class MetaController {
   public constructor(private readonly metaService: MetaService) {}
 
   @Get()
+  @CacheControl(READ_CACHE_MAX_AGE_SECONDS)
   @Plain(MetaType, Resource.AUTHENTICATED)
   public meta(): Promise<Meta> {
     return this.metaService.build();

@@ -47,14 +47,24 @@ const run = async (): Promise<void> => {
     },
   });
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle(config.appName)
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
+  /**
+   * Swagger UI (/docs) and the OpenAPI spec (/docs-json) are mounted only
+   * when explicitly enabled. They are registered on the Fastify instance
+   * directly, so the global auth guards do NOT protect them — leave them off
+   * in production (SWAGGER_ENABLED unset) and enable them in dev only, where
+   * `pnpm openapi` snapshots /docs-json for the frontend codegen.
+   */
+  if (config.swaggerEnabled) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle(config.appName)
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
 
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('docs', app, document);
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+
+    SwaggerModule.setup('docs', app, document);
+  }
 
   await app.listen(config.port, config.host);
 };

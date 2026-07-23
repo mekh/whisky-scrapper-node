@@ -68,6 +68,17 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
   }
 
   /**
+   * For every product, the date since which its price has not been higher than
+   * its current price (when the current price level took hold). Backs the
+   * `drops` report's discount-age column.
+   *
+   * @returns Map from product id to that date (`YYYY-MM-DD`).
+   */
+  public async currentPriceSince(): Promise<Map<ID, string>> {
+    return this.repo.currentPriceSince();
+  }
+
+  /**
    * A product's chronological price history (oldest first).
    *
    * @param id - Product id.

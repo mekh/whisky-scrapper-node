@@ -162,6 +162,8 @@ export class ReportService {
    * Active discounts: current price below the window maximum from our own
    * price history. The store's advertised strike price (`oldPrice`) is never
    * used, so a permanent marketing anchor cannot fabricate a discount here.
+   * Each row also carries `daysDiscount`: how long the current price has held
+   * (measured against the real current date, like the `new` report's age).
    * Ordered by discount desc.
    *
    * @param current - All matching current rows.
@@ -173,14 +175,25 @@ export class ReportService {
     options: ReportOptions,
   ): Promise<ReportRow[]> {
     const cutoff = this.cutoff(current, WINDOW_DAYS[options.window]);
-    const extremes = await this.products.priceExtremes(cutoff);
+
+    const [extremes, priceSince] = await Promise.all([
+      this.products.priceExtremes(cutoff),
+      this.products.currentPriceSince(),
+    ]);
+
+    const today = this.today();
 
     const rows = current
       .map((row) => {
         const windowMax = extremes.get(row.id)?.max ?? null;
         const reference = this.referencePrice(row, windowMax);
+        const since = priceSince.get(row.id) ?? null;
 
-        return this.enrich(row, { referencePrice: reference, isNew: false });
+        return this.enrich(row, {
+          referencePrice: reference,
+          isNew: false,
+          daysDiscount: since === null ? null : this.daysBetween(since, today),
+        });
       })
       .filter((row) => row.discountPct !== null);
 
@@ -469,7 +482,12 @@ export class ReportService {
    */
   private enrich(
     row: ReportCurrentRow,
-    extra: { referencePrice: number | null; isNew: boolean; daysNew?: number },
+    extra: {
+      referencePrice: number | null;
+      isNew: boolean;
+      daysNew?: number;
+      daysDiscount?: number | null;
+    },
   ): ReportRow {
     return {
       ...row,
@@ -477,6 +495,7 @@ export class ReportService {
       discountPct: this.discountPct(row.price, extra.referencePrice),
       isNew: extra.isNew,
       daysNew: extra.daysNew ?? null,
+      daysDiscount: extra.daysDiscount ?? null,
     };
   }
 

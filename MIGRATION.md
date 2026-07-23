@@ -11,8 +11,9 @@ Guiding differences from the legacy API:
   `volumeMl`, etc.)
 - **No UI text in responses.** The legacy `note`/`title` strings (e.g.
   `"нова позиція"`, `"діє N дн."`, `"дешевше на N%"`, report titles) are gone.
-  The API returns **structured** fields (`isNew`, `daysNew`, `discountPct`,
-  `referencePrice`) and the frontend composes any display text / i18n.
+  The API returns **structured** fields (`isNew`, `daysNew`, `daysDiscount`,
+  `discountPct`, `referencePrice`) and the frontend composes any display text /
+  i18n.
 - **Filter options come from the database**, not hardcoded lists. `flavors`
   and `types` in `/meta` are the `flavor` / `type` tables; `countries` are the
   countries actually referenced by products.
@@ -89,6 +90,7 @@ uncached.
 | —                | `firstSeen`, `capturedDate` | new (`YYYY-MM-DD`)                                                                                                                                                        |
 | `is_new`         | `isNew`                     |                                                                                                                                                                           |
 | `days_new`       | `daysNew`                   |                                                                                                                                                                           |
+| —                | `daysDiscount`              | new — days the current price has held (days since it was last higher); `drops` only, null elsewhere. Structured replacement for the legacy `"діє N дн."` note             |
 | `note`           | —                           | removed (was UI text)                                                                                                                                                     |
 
 ### Report query params
@@ -103,11 +105,16 @@ report `today`/`yesterday` instead narrow listings to that added-on day (`/meta`
 `windows` still lists only the period values). The `new` report measures recency
 (`daysNew`, the `NEW_DAYS`-day window, and `today`/`yesterday`) against the real
 current date — not the latest snapshot date — so ages are true elapsed days and
-the report is empty when nothing has appeared in the last `NEW_DAYS` days.
+the report is empty when nothing has appeared in the last `NEW_DAYS` days. The
+`drops` report likewise carries `daysDiscount` — how long the current price has
+held (days since it was last higher), measured against the same real current
+date; `null` on every other report.
 
 `sort` values (ReportRow fields): `storeName`, `name`, `type`, `countryName`,
-`age`, `abv`, `volumeMl`, `previousPrice`, `price`, `discountPct`. Nulls sort
-last. Omitting `sort` keeps the report's natural order.
+`age`, `abv`, `volumeMl`, `previousPrice`, `price`, `discountPct`,
+`daysDiscount`. Nulls sort last. Omitting `sort` keeps the report's natural
+order (e.g. `drops` by discount desc); the web `drops` tab defaults its view to
+`sort=daysDiscount&order=asc` (freshest price drops first).
 
 ### `/meta`
 

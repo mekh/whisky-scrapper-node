@@ -60,27 +60,41 @@ function makeRow(over: Partial<ReportCurrentRow>): ReportCurrentRow {
 
 /**
  * Runs a report kind against a fake product service seeded with the given
- * current rows and (for `drops`) per-product price extremes.
+ * current rows and (for `drops`) per-product price extremes and price-since
+ * dates.
  *
  * @param kind - The report kind to run.
  * @param rows - The current rows the fake service returns.
  * @param extremes - Optional product id → window min/max price map.
+ * @param priceSince - Optional product id → current-price-since date map
+ *   (drives `daysDiscount`).
+ * @param today - Optional fixed "today" (`YYYY-MM-DD`) so day-count assertions
+ *   are deterministic; when omitted the real current date is used.
  * @returns The report rows (page data) the service produced.
  */
 async function run(
   kind: ReportKind,
   rows: ReportCurrentRow[],
   extremes?: Map<ID, { min: number; max: number }>,
+  priceSince?: Map<ID, string>,
+  today?: string,
 ): Promise<ReportRow[]> {
   const products = {
     findCurrentRows: jest.fn().mockResolvedValue(rows),
     latestDate: jest.fn().mockResolvedValue('2026-07-21'),
     priceExtremes: jest.fn().mockResolvedValue(extremes ?? new Map()),
+    currentPriceSince: jest.fn().mockResolvedValue(priceSince ?? new Map()),
   };
 
   const service = new ReportService(
     products as unknown as CoreProductService,
   );
+
+  if (today !== undefined) {
+    jest
+      .spyOn(service as unknown as { today: () => string }, 'today')
+      .mockReturnValue(today);
+  }
 
   const page = await service.report(kind, FILTER, OPTIONS);
 
@@ -154,5 +168,47 @@ describe('ReportService — drops discount semantics', () => {
 
     expect(row.referencePrice).toBe(2500);
     expect(row.discountPct).toBe(20);
+  });
+});
+
+describe('ReportService — drops discount age', () => {
+  const extremes = new Map([['p1' as ID, { min: 2000, max: 2500 }]]);
+
+  it('ages the current price from when it stopped being higher', async () => {
+    const rows = [makeRow({ price: 2000 })];
+    const priceSince = new Map([['p1' as ID, '2026-07-18']]);
+
+    const [row] = await run(
+      ReportKind.DROPS,
+      rows,
+      extremes,
+      priceSince,
+      '2026-07-21',
+    );
+
+    expect(row.daysDiscount).toBe(3);
+  });
+
+  it('reports a price that dropped today as zero days', async () => {
+    const rows = [makeRow({ price: 2000 })];
+    const priceSince = new Map([['p1' as ID, '2026-07-21']]);
+
+    const [row] = await run(
+      ReportKind.DROPS,
+      rows,
+      extremes,
+      priceSince,
+      '2026-07-21',
+    );
+
+    expect(row.daysDiscount).toBe(0);
+  });
+
+  it('leaves the discount age null when history is missing', async () => {
+    const rows = [makeRow({ price: 2000 })];
+
+    const [row] = await run(ReportKind.DROPS, rows, extremes);
+
+    expect(row.daysDiscount).toBeNull();
   });
 });

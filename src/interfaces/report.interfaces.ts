@@ -334,6 +334,13 @@ export interface ReportRow extends ReportCurrentRow {
    * Days since the product first appeared (0 = today), when applicable.
    */
   daysNew: number | null;
+
+  /**
+   * Days since the current (discounted) price took effect — i.e. how long the
+   * price has not been higher than it is now (0 = it dropped today). Set only
+   * for the `drops` report; null everywhere else.
+   */
+  daysDiscount: number | null;
 }
 
 export interface PriceHistoryPoint {

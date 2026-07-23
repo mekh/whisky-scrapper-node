@@ -160,6 +160,40 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
   }
 
   /**
+   * For every product, the date since which its price has not been higher than
+   * its current (latest) price — i.e. when the current price level took hold.
+   * It is the capture date of the first snapshot after the most recent one
+   * priced above the current price; when the price was never higher, the
+   * product's very first snapshot. Ages the `drops` report's current discount.
+   *
+   * @returns Map from product id to that date (`YYYY-MM-DD`).
+   */
+  public async currentPriceSince(): Promise<Map<ID, string>> {
+    const rows = await this.query(
+      `WITH latest AS (
+         SELECT DISTINCT ON ("productId")
+                "productId", price AS "currentPrice"
+         FROM price_snapshot
+         ORDER BY "productId", "createdAt" DESC
+       ),
+       last_higher AS (
+         SELECT s."productId", MAX(s."createdAt") AS "higherAt"
+         FROM price_snapshot s
+         JOIN latest l ON l."productId" = s."productId"
+         WHERE s.price > l."currentPrice"
+         GROUP BY s."productId"
+       )
+       SELECT s."productId", MIN(s."createdAt")::date::text AS since
+       FROM price_snapshot s
+       LEFT JOIN last_higher h ON h."productId" = s."productId"
+       WHERE h."higherAt" IS NULL OR s."createdAt" > h."higherAt"
+       GROUP BY s."productId"`,
+    ) as { productId: ID; since: string }[];
+
+    return new Map(rows.map((row) => [row.productId, row.since]));
+  }
+
+  /**
    * Loads a product's price history, oldest point first.
    *
    * @param id - Product id.

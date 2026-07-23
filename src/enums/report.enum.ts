@@ -23,6 +23,7 @@ export enum ReportSortField {
   ABV = 'abv',
   AGE = 'age',
   COUNTRY_NAME = 'countryName',
+  DAYS_DISCOUNT = 'daysDiscount',
   DISCOUNT_PCT = 'discountPct',
   NAME = 'name',
   PREVIOUS_PRICE = 'previousPrice',

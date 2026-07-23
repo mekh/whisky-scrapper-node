@@ -99,6 +99,10 @@ export class ReportRowType implements ReportRow {
   @IsInt()
   public daysNew!: number | null;
 
+  @IsOptional()
+  @IsInt()
+  public daysDiscount!: number | null;
+
   @IsArray()
   @IsString({ each: true })
   public flavors!: string[];

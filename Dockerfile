@@ -25,4 +25,4 @@ RUN apt update
 RUN apt install -y mc nano iputils-ping net-tools telnet
 # CMD ["ping", "-i", "600", "google.com"]
 
-CMD ["pnpm", "run", "start:prod"]
+CMD ["node", "dist/src/main.js"]

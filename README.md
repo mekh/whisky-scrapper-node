@@ -98,12 +98,21 @@ pnpm start        # nest start (watch) — API on http://localhost:4000
 | `pnpm migration:run` / `:revert` | Apply / roll back migrations                                                                      |
 | `pnpm clean-names`               | Maintenance: normalize existing product names                                                     |
 
-Dry-run the in-process scraper for one store without writing (needs the store's
-adapter, ported in later migration steps):
+Dry-run the in-process scraper for one store without writing (adapters exist
+today for the 19 Zakaz.ua networks, `maudau` and `okwine`; the rest are ported
+in later migration steps):
 
 ```bash
 pnpm exec ts-node -r tsconfig-paths/register scripts/scrape-dry-run.ts <slug> \
   [--json]
+```
+
+Compare a store's output against the legacy Python scraper before flipping it
+to the TS engine (see [`PARITY.md`](PARITY.md) for the sign-off rule and the
+results so far):
+
+```bash
+pnpm exec ts-node -r tsconfig-paths/register scripts/scrape-parity-diff.ts <slug>
 ```
 
 One-time SQLite import (historical data only, not a live bridge):
@@ -133,8 +142,13 @@ which pins generated/created files to `./migrations/` and injects
   `sync_log` rows straight into this backend's Postgres. This service is the
   **schema owner**; the scraper never creates or migrates tables. **Being
   migrated in-process** into `src/scrape/` (see `CLAUDE.md` → "Scraping engine"
-  and the plan): each store flips from Python to the TS engine via
-  `store_config.engine` once parity-checked.
+  / "Sync orchestration" and the plan): each store flips from Python to the TS
+  engine via `store_config.engine` once parity-checked
+  ([`PARITY.md`](PARITY.md)). Until a store is flipped, Python remains its live
+  writer; a store can be handed back at any time by setting `engine` back to
+  `python`. On-demand syncs of migrated stores run through
+  `POST /store/:slug/sync`, with `GET /store/sync-status` reporting what is in
+  flight.
 - **Valkey** — refresh-session storage and caching.
 
 ## Production / Docker
@@ -273,3 +287,6 @@ log) surfaces problems.
 
 - Architecture, layering rules and path aliases (`~*`, `~types`, ...) are in
   [`CLAUDE.md`](CLAUDE.md).
+- The endpoint/field map for the frontend is [`MIGRATION.md`](MIGRATION.md).
+- Python → TypeScript scraper parity results and the per-store sign-off rule
+  are in [`PARITY.md`](PARITY.md).

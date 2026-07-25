@@ -87,6 +87,34 @@ export abstract class ScrapeAdapterBase implements ScrapeAdapter {
   }
 
   /**
+   * Maps one listing page's raw items to snapshots, dropping the unmappable
+   * ones and every SKU already collected — stores routinely repeat items
+   * across pages, and a re-seen SKU must not be counted as new.
+   *
+   * @param items - The raw items of one page.
+   * @param seen - SKUs collected on the previous pages.
+   * @param toSnapshot - Maps one raw item to a snapshot, or null to skip it.
+   * @returns The page's new snapshots, in listing order.
+   */
+  protected freshSnapshots<T>(
+    items: T[],
+    seen: ReadonlySet<string>,
+    toSnapshot: (item: T) => ProductSnapshot | null,
+  ): ProductSnapshot[] {
+    const fresh = new Map<string, ProductSnapshot>();
+
+    items.forEach((item) => {
+      const snap = toSnapshot(item);
+
+      if (snap && !seen.has(snap.storeSku) && !fresh.has(snap.storeSku)) {
+        fresh.set(snap.storeSku, snap);
+      }
+    });
+
+    return [...fresh.values()];
+  }
+
+  /**
    * Builds a full snapshot from the store-specific fields, filling `storeSlug`
    * and the defaults for everything omitted.
    *

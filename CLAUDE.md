@@ -346,10 +346,26 @@ wrappers): `scrape/` has its own internal layering.
   flavors), `http/` (plain fetch / `impit` impersonation / retrying wrapper +
   `HTTP_STRATEGY_BY_SLUG`), `browser/` (Playwright stealth context, fresh
   context per page), `llm/` (`@anthropic-ai/sdk` fallback, gated on
-  `ANTHROPIC_API_KEY`), `adapters/` (base classes + `AdapterRegistryService`;
-  concrete store adapters land in later steps), `persist/` (one-store, one
-  transaction write pipeline over the core services), and `ScrapeService`
-  (`collectStore(slug, { dryRun })`).
+  `ANTHROPIC_API_KEY`), `adapters/` (base classes + `AdapterRegistryService`
+  - one folder per store platform), `persist/` (one-store, one transaction
+    write pipeline over the core services), and `ScrapeService`
+    (`collectStore(slug, { dryRun })`).
+- **Adapters ported so far**: `zakaz/` (one parameterized adapter for all 19
+  Zakaz.ua networks — chain and category come from `store_config`, prices are
+  kopecks), `maudau/` (catalog JSON API, available items only, early stop after
+  2 pages without a new item; the Python RSC-payload fallback is deliberately
+  not ported), `okwine/` (filter API, volume/age from the product's
+  characteristics). The registry resolves a specialized adapter by slug and
+  falls back to `ZakazAdapter` for any store with a `retailChain`/`category`.
+- **Parity harness**: `scripts/scrape-parity-diff.ts <slug> [--python <dump>]
+  [--ts <dump>] [--out <dir>]` runs the legacy Python scraper
+  (`scripts/scrape-parity-dump.py` through `../scrapper/.venv`) and the TS
+  dry run back to back and diffs their pre-database snapshots by SKU. Both
+  sides skip the LLM pass. Exit code 1 means the shared SKUs differ; SKU-set
+  drift is reported but does not fail (stock flips between the two runs are
+  normal). Every store is signed off on two separate calendar days before its
+  `engine` is flipped; the results and the sign-off state per store live in
+  [`PARITY.md`](PARITY.md).
 - **Regex gotcha**: JS `\b`/`\w` stay ASCII even under the `u` flag (Python's
   are Unicode). Cyrillic units use explicit lookaheads / classes — see the
   header of `normalize.service.ts`.
@@ -572,12 +588,16 @@ that strips the prefix.
 moved out of `../scrapper` into `src/scrape/` (plan:
 `~/.claude/plans/hazy-greeting-pearl.md`, 12 steps). Done: feasibility spike
 (GO — every store reachable from a datacenter IP), the schema overhaul
-(`group`/`engine`/`capturedOn` + `sync_log` lock), the core write path, and the
+(`group`/`engine`/`capturedOn` + `sync_log` lock), the core write path, the
 scrape engine (`normalize`/`http`/`browser`/`llm`/`persist` +
-`ScrapeService.collectStore`), and the sync orchestrator + on-demand/status
-endpoints (see "Sync orchestration"). Pending: the concrete store adapters
-(ported + parity-checked in batches), the internal `@nestjs/schedule` cron, the
-web "Sync" button, and the Python decommission. Until each store's `store_config.engine` is flipped to
+`ScrapeService.collectStore`), the sync orchestrator + on-demand/status
+endpoints (see "Sync orchestration"), and the tier-1a adapters (19 Zakaz.ua
+networks, `maudau`, `okwine`) with their golden tests and the parity harness.
+Pending: the remaining adapters (`winewine`/`wine-point`, `goodwine`,
+`rozetka`), the internal `@nestjs/schedule` cron, the web "Sync" button, and
+the Python decommission. **No production store is flipped yet** — every
+`store_config.engine` is still `python`, so the Python collector remains the
+live writer everywhere. Until each store's `store_config.engine` is flipped to
 `ts`, the **Python collector remains the live writer** — same-day dual-writing
 is benign (the snapshot upsert is last-write-wins). Follow-up flagged in code:
 `HTTP_STRATEGY_BY_SLUG` (in `scrape/http/http-client.factory.ts`) should move to
@@ -592,6 +612,6 @@ Still open:
 - The React frontend (`../web`) has replaced the legacy Python-served UI (which
   was removed) and consumes this API per `MIGRATION.md` (login returns
   `{ access }`, fields are camelCase, `/meta` keys renamed, etc.).
-The original Python implementation (now scraper-only, in `../scrapper`) is the
-functional reference for the eventual feature set, but its code style and
-structure are NOT to be copied.
+  The original Python implementation (now scraper-only, in `../scrapper`) is the
+  functional reference for the eventual feature set, but its code style and
+  structure are NOT to be copied.

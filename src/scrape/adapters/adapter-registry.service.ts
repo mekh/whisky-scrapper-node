@@ -10,21 +10,58 @@ import type {
 } from '~types';
 
 import { HttpClientFactory } from '../http/http-client.factory';
+import { NormalizeService } from '../normalize/normalize.service';
+
+import { MaudauAdapter } from './maudau';
+import { OkwineAdapter } from './okwine';
+import { ZakazAdapter } from './zakaz';
+
+import type { AdapterDeps } from './adapter-registry.interfaces';
+
+/**
+ * Builders for stores that run their own platform, keyed by slug. Every
+ * Zakaz.ua network is served by the parameterized `ZakazAdapter` instead and
+ * is therefore absent here.
+ */
+const SPECIALIZED: Record<string, (deps: AdapterDeps) => ScrapeAdapter> = {
+  maudau: (deps) =>
+    new MaudauAdapter(
+      deps.spec,
+      deps.delayMultiplier,
+      deps.http,
+      deps.reporter,
+    ),
+  okwine: (deps) =>
+    new OkwineAdapter(
+      deps.spec,
+      deps.delayMultiplier,
+      deps.http,
+      deps.normalizer,
+      deps.reporter,
+    ),
+};
 
 /**
  * Resolves the adapter for a store. Specialized stores are matched by slug and
  * every Zakaz.ua network (a `retailChain`) shares one parameterized adapter —
- * both are wired in as adapters are ported (steps 6-9). An unresolved slug is
- * a configuration error.
+ * the remaining stores are wired in as they are ported (steps 7-9). An
+ * unresolved slug is a configuration error.
  */
 @Injectable()
 export class AdapterRegistryService implements ScrapeAdapterFactory {
   private readonly httpFactory: HttpClientFactory;
 
+  private readonly normalizer: NormalizeService;
+
   private readonly config: ScrapeConfig;
 
-  public constructor(httpFactory: HttpClientFactory, config: ScrapeConfig) {
+  public constructor(
+    httpFactory: HttpClientFactory,
+    normalizer: NormalizeService,
+    config: ScrapeConfig,
+  ) {
     this.httpFactory = httpFactory;
+    this.normalizer = normalizer;
     this.config = config;
   }
 
@@ -40,12 +77,28 @@ export class AdapterRegistryService implements ScrapeAdapterFactory {
     spec: StoreScrapeSpec,
     reporter?: ScrapeProgressReporter,
   ): ScrapeAdapter {
-    // Concrete adapters are registered here as they are ported. Until then,
-    // resolving a slug is a configuration error. `httpFactory`/`config` are the
-    // dependencies those adapters will be built from.
-    void this.httpFactory;
-    void this.config;
-    void reporter;
+    const deps: AdapterDeps = {
+      spec,
+      delayMultiplier: this.config.delayMultiplier,
+      http: this.httpFactory.create(spec.slug),
+      normalizer: this.normalizer,
+      reporter,
+    };
+    const specialized = SPECIALIZED[spec.slug];
+
+    if (specialized) {
+      return specialized(deps);
+    }
+
+    if (spec.retailChain ?? spec.category) {
+      return new ZakazAdapter(
+        deps.spec,
+        deps.delayMultiplier,
+        deps.http,
+        deps.normalizer,
+        deps.reporter,
+      );
+    }
 
     throw new ServerError('No scrape adapter registered for store', {
       slug: spec.slug,

@@ -75,13 +75,13 @@ blocker).
 `GET /store/sync-status` (permission `store:list`) returns the runs currently
 in flight, oldest first:
 
-| Field       | Notes                                                       |
-| ----------- | ----------------------------------------------------------- |
-| `storeId`   | Store being synced                                          |
-| `storeSlug` | Its slug                                                    |
-| `group`     | Concurrency group, or `null`                                |
-| `startedAt` | When the run started                                        |
-| `total`     | Products written so far (updated as the run progresses)     |
+| Field       | Notes                                                   |
+| ----------- | ------------------------------------------------------- |
+| `storeId`   | Store being synced                                      |
+| `storeSlug` | Its slug                                                |
+| `group`     | Concurrency group, or `null`                            |
+| `startedAt` | When the run started                                    |
+| `total`     | Products written so far (updated as the run progresses) |
 
 An empty array means nothing is running.
 

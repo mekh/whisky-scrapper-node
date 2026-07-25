@@ -1,0 +1,405 @@
+import { Injectable } from '@nestjs/common';
+
+import { BrandUtils } from '~utils';
+
+import {
+  BRAND_INFO,
+  BRAND_KEYS,
+  COUNTRY_KEYWORDS,
+  FLAVOR_KEYWORDS,
+  TYPE_KEYWORDS,
+  UMBRELLA_COUNTRIES,
+} from './brand-info.constants';
+
+import type { ProductSnapshot } from '~types';
+import type { BrandDetection } from './normalize.interfaces';
+
+// Cyrillic letters, used in place of ASCII-only \w / \b (JS keeps those ASCII
+// even under the u flag, unlike Python's Unicode-aware regex). The trailing
+// negative lookahead reproduces Python's word boundary after a Cyrillic unit.
+const CYRILLIC = 'а-яіїєґ';
+const NOT_LETTER = `(?![a-z${CYRILLIC}])`;
+
+// Volume: "0.7 л", "0,7л", "700 мл", "1 l". `літр` comes first so the shorter
+// `л` alternative does not steal the match inside the longer word.
+const VOLUME_ML = new RegExp(`(\\d{2,4})\\s*(?:мл|ml)${NOT_LETTER}`, 'i');
+const VOLUME_L = new RegExp(
+  `(\\d+(?:[.,]\\d+)?)\\s*(?:літр|л|l)${NOT_LETTER}`,
+  'i',
+);
+
+// ABV: "40%", "43 %", "alc 46%".
+const ABV = /(\d{1,2}(?:[.,]\d)?)\s*%/g;
+
+// Age: "12 yo", "12 y.o.", "12 років", "aged 15 years". Reading the number
+// whole (\d{1,3}) keeps "250 років" from being read as "50".
+const AGE = new RegExp(
+  '(?<!\\d)(\\d{1,3})\\s*(?:y\\.?o\\.?|yo|years?|років|роки|рік|year)'
+    + NOT_LETTER,
+  'i',
+);
+const AGE_VYTR = new RegExp(`витримк[${CYRILLIC}]*\\s*(?<!\\d)(\\d{1,3})`, 'i');
+
+// Non-alphanumeric run (Cyrillic included) used to tokenize a brand haystack.
+const BRAND_NON_ALNUM = new RegExp(`[^0-9a-z${CYRILLIC}]+`, 'gi');
+
+// A bare number field value ("0.7", "1") with no unit.
+const BARE_NUMBER = /^\s*(\d+(?:[.,]\d+)?)\s*$/;
+
+// A field value that is purely a number with an optional unit.
+const NUMBER_WITH_UNIT = /\d{1,2}(?:[.,]\d)?/g;
+
+const ABV_MIN = 30;
+const ABV_MAX = 70;
+const AGE_MIN = 1;
+const AGE_MAX = 60;
+const LITRE_THRESHOLD = 20;
+const DISCOUNT_PREFIXES = '-−–';
+
+/**
+ * Deterministic extraction of volume / ABV / age / flavor / type / country
+ * from product names and detail-page field values. A direct port of the
+ * Python `normalize` module; brand and display-name canonicalization are
+ * delegated to the shared `BrandUtils` / `ProductNameUtils`.
+ */
+@Injectable()
+export class NormalizeService {
+  /**
+   * Parses a number, accepting a comma decimal separator.
+   *
+   * @param raw - The numeric string.
+   * @returns The parsed float.
+   */
+  private static toFloat(raw: string): number {
+    return Number.parseFloat(raw.replace(',', '.'));
+  }
+
+  /**
+   * Extracts the volume in millilitres from free text.
+   *
+   * @param text - Text to search (name or field value).
+   * @returns The volume in millilitres, or null when none is found.
+   */
+  public extractVolumeMl(text: string): number | null {
+    const ml = VOLUME_ML.exec(text);
+
+    if (ml) {
+      return Number.parseInt(ml[1], 10);
+    }
+
+    const litres = VOLUME_L.exec(text);
+
+    if (litres) {
+      return Math.round(NormalizeService.toFloat(litres[1]) * 1000);
+    }
+
+    return null;
+  }
+
+  /**
+   * Extracts the ABV percent from free text, ignoring discounts (`-25%`) and
+   * values outside the whisky range.
+   *
+   * @param text - Text to search.
+   * @returns The ABV percent, or null when none is found.
+   */
+  public extractAbv(text: string): number | null {
+    ABV.lastIndex = 0;
+
+    let match = ABV.exec(text);
+
+    while (match !== null) {
+      const prev = match.index > 0 ? text[match.index - 1] : '';
+
+      if (!DISCOUNT_PREFIXES.includes(prev)) {
+        const value = NormalizeService.toFloat(match[1]);
+
+        if (value >= ABV_MIN && value <= ABV_MAX) {
+          return value;
+        }
+      }
+
+      match = ABV.exec(text);
+    }
+
+    return null;
+  }
+
+  /**
+   * Extracts an explicit age statement (in years) from short text — a product
+   * name or a spec field, never a marketing description. Values outside 1–60
+   * are ignored.
+   *
+   * @param text - Text to search.
+   * @returns The age in years, or null when none is found.
+   */
+  public extractAgeYears(text: string): number | null {
+    const age = AGE.exec(text);
+
+    if (age) {
+      const value = Number.parseInt(age[1], 10);
+
+      if (value >= AGE_MIN && value <= AGE_MAX) {
+        return value;
+      }
+    }
+
+    const vytr = AGE_VYTR.exec(text);
+
+    if (vytr) {
+      const value = Number.parseInt(vytr[1], 10);
+
+      if (value >= AGE_MIN && value <= AGE_MAX) {
+        return value;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Determines the whisky type from text (single malt / blend / bourbon / ...).
+   *
+   * @param text - Text to classify.
+   * @returns The canonical type, or null when undetermined.
+   */
+  public extractType(text: string): string | null {
+    const lowered = ` ${text.toLowerCase()} `;
+
+    const found = TYPE_KEYWORDS.find(
+      ([, keywords]) => keywords.some((keyword) => lowered.includes(keyword)),
+    );
+
+    return found ? found[0] : null;
+  }
+
+  /**
+   * Determines the origin country from keyword matches (Ukrainian name).
+   *
+   * @param text - Text to classify.
+   * @returns The canonical country name, or null when undetermined.
+   */
+  public extractCountry(text: string): string | null {
+    const lowered = text.toLowerCase();
+
+    const found = COUNTRY_KEYWORDS.find(
+      ([, keywords]) => keywords.some((keyword) => lowered.includes(keyword)),
+    );
+
+    return found ? found[0] : null;
+  }
+
+  /**
+   * Reduces a source country value to the project taxonomy: concrete countries
+   * pass through; the umbrella "United Kingdom" is dropped so the brand/keyword
+   * pass can refine it.
+   *
+   * @param value - The raw country value.
+   * @returns The canonical country name, or null.
+   */
+  public canonicalCountry(value: string | null | undefined): string | null {
+    if (!value) {
+      return null;
+    }
+
+    const trimmed = value.trim();
+
+    if (UMBRELLA_COUNTRIES.has(trimmed.toLowerCase())) {
+      return null;
+    }
+
+    return trimmed || null;
+  }
+
+  /**
+   * Parses an ABV from a spec field value where `%` may be absent (`40`, `40%`,
+   * `37-43%`): the first number in the whisky range.
+   *
+   * @param text - The field value.
+   * @returns The ABV percent, or null.
+   */
+  public parseAbvValue(text: string | null | undefined): number | null {
+    if (!text) {
+      return null;
+    }
+
+    const matches = text.match(NUMBER_WITH_UNIT) ?? [];
+
+    for (const raw of matches) {
+      const value = NormalizeService.toFloat(raw);
+
+      if (value >= ABV_MIN && value <= ABV_MAX) {
+        return value;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Parses a volume from a spec field value. A bare number (no unit) is read as
+   * litres (`0.7` → 700, `1` → 1000); values with units go through
+   * {@link extractVolumeMl}.
+   *
+   * @param text - The field value.
+   * @returns The volume in millilitres, or null.
+   */
+  public parseVolumeValue(text: string | null | undefined): number | null {
+    if (!text) {
+      return null;
+    }
+
+    const ml = this.extractVolumeMl(text);
+
+    if (ml) {
+      return ml;
+    }
+
+    const bare = BARE_NUMBER.exec(text);
+
+    if (bare) {
+      const value = NormalizeService.toFloat(bare[1]);
+
+      return value < LITRE_THRESHOLD
+        ? Math.round(value * 1000)
+        : Math.round(value);
+    }
+
+    return null;
+  }
+
+  /**
+   * Extracts the flavor tags present in text.
+   *
+   * @param text - Text to scan.
+   * @returns The matched tags, sorted and deduplicated.
+   */
+  public extractFlavorTags(text: string): string[] {
+    const lowered = text.toLowerCase();
+
+    const tags = FLAVOR_KEYWORDS
+      .filter(([, keywords]) => keywords.some((kw) => lowered.includes(kw)))
+      .map(([tag]) => tag);
+
+    return [...new Set(tags)].sort();
+  }
+
+  /**
+   * Infers origin country and type from a known brand in the name or brand
+   * field.
+   *
+   * @param name - The product name.
+   * @param brand - The brand field, when present.
+   * @returns The detected country and type (each null when unknown).
+   */
+  public detectBrandInfo(
+    name: string,
+    brand?: string | null,
+  ): BrandDetection {
+    const haystacks = [this.brandHaystack(name)];
+
+    if (brand) {
+      haystacks.push(this.brandHaystack(brand));
+    }
+
+    const key = BRAND_KEYS.find((candidate) => {
+      const needle = ` ${candidate} `;
+
+      return haystacks.some((haystack) => haystack.includes(needle));
+    });
+
+    if (!key) {
+      return { country: null, type: null };
+    }
+
+    const info = BRAND_INFO.get(key);
+
+    return { country: info?.country ?? null, type: info?.type ?? null };
+  }
+
+  /**
+   * Enriches a snapshot with derived fields without overwriting values the
+   * site already provided. Age and type are read only from the name (a
+   * description's "N years" usually means brand history, not maturation).
+   *
+   * @param snap - The snapshot to enrich (mutated in place).
+   * @returns The same snapshot.
+   */
+  public normalize(snap: ProductSnapshot): ProductSnapshot {
+    snap.brand = BrandUtils.canonical(snap.brand);
+
+    const haystack = this.haystack(snap);
+
+    // Age and type read only from the name (a description's "N years" usually
+    // means brand history, not maturation); everything else from the haystack.
+    snap.volumeMl ??= this.extractVolumeMl(haystack);
+    snap.abv ??= this.extractAbv(haystack);
+    snap.ageYears ??= this.extractAgeYears(snap.name);
+    snap.whiskyType ??= this.extractType(snap.name);
+    snap.country ??= this.extractCountry(haystack);
+
+    if (snap.country === null || snap.whiskyType === null) {
+      const detected = this.detectBrandInfo(snap.name, snap.brand);
+
+      snap.country ??= detected.country;
+      snap.whiskyType ??= detected.type;
+    }
+
+    const flavors = new Set([
+      ...snap.flavorTags,
+      ...this.extractFlavorTags(haystack),
+    ]);
+
+    snap.flavorTags = [...flavors].sort();
+
+    return snap;
+  }
+
+  /**
+   * Whether a snapshot still lacks a field the regex pass could not fill, so
+   * the LLM fallback is worth trying.
+   *
+   * @param snap - The snapshot to check.
+   * @returns True when ABV or volume is still missing.
+   */
+  public needsLlm(snap: ProductSnapshot): boolean {
+    return snap.abv === null || snap.volumeMl === null;
+  }
+
+  /**
+   * Builds the search text for a snapshot: its name plus every string value in
+   * `rawAttrs` (description, attributes).
+   *
+   * @param snap - The snapshot.
+   * @returns The combined search text.
+   */
+  private haystack(snap: ProductSnapshot): string {
+    const parts = [snap.name];
+
+    Object.values(snap.rawAttrs).forEach((value) => {
+      if (typeof value === 'string') {
+        parts.push(value);
+      }
+    });
+
+    return parts.join(' ');
+  }
+
+  /**
+   * Normalizes text for brand matching: lower-cased, apostrophes removed, every
+   * non-alphanumeric run collapsed to a space, wrapped in spaces so a key can
+   * be matched as a whole word.
+   *
+   * @param text - The text to normalize.
+   * @returns The space-wrapped normalized haystack.
+   */
+  private brandHaystack(text: string): string {
+    const stripped = text
+      .toLowerCase()
+      .replace(/['`’]/g, '')
+      .replace(BRAND_NON_ALNUM, ' ')
+      .trim();
+
+    return ` ${stripped} `;
+  }
+}

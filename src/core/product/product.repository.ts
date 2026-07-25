@@ -116,19 +116,16 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
   }
 
   /**
-   * Deletes a store's products whose SKU is absent from the latest listing
-   * (gone / out of stock); snapshots and flavor links cascade. Deletes nothing
-   * when `seenSkus` is empty, so an empty or failed scrape never wipes a store.
+   * Deletes a store's products by SKU (the out-of-stock items the latest
+   * listing returned); snapshots and flavor links cascade. Deletes nothing
+   * when the list is empty. Mirrors the Python `delete_products`.
    *
    * @param storeId - Store id.
-   * @param seenSkus - SKUs present in the latest listing.
+   * @param skus - SKUs to delete.
    * @returns How many products were deleted.
    */
-  public async deleteMissing(
-    storeId: ID,
-    seenSkus: string[],
-  ): Promise<number> {
-    if (!seenSkus.length) {
+  public async deleteBySkus(storeId: ID, skus: string[]): Promise<number> {
+    if (!skus.length) {
       return 0;
     }
 
@@ -136,7 +133,7 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
       .delete()
       .from(ProductEntity)
       .where('"storeId" = :storeId', { storeId })
-      .andWhere('NOT (sku = ANY(:skus))', { skus: seenSkus })
+      .andWhere('sku = ANY(:skus)', { skus })
       .execute();
 
     return result.affected ?? 0;

@@ -50,18 +50,15 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
   }
 
   /**
-   * Deletes a store's products absent from the latest listing; a no-op when
-   * the listing is empty.
+   * Deletes a store's out-of-stock products by SKU; a no-op when the list is
+   * empty.
    *
    * @param storeId - Store id.
-   * @param seenSkus - SKUs present in the latest listing.
+   * @param skus - SKUs to delete.
    * @returns How many products were deleted.
    */
-  public async deleteMissing(
-    storeId: ID,
-    seenSkus: string[],
-  ): Promise<number> {
-    return this.repo.deleteMissing(storeId, seenSkus);
+  public async deleteBySkus(storeId: ID, skus: string[]): Promise<number> {
+    return this.repo.deleteBySkus(storeId, skus);
   }
 
   /**

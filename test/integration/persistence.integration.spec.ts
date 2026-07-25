@@ -177,15 +177,15 @@ describe('persistence write path (integration)', () => {
     expect([100, 200]).toContain(rows[0].price);
   });
 
-  it('deletes products gone from the listing, not on empty', async () => {
+  it('deletes out-of-stock products by sku, not on empty', async () => {
     await products.upsertFromScrape(baseProduct({ sku: 'keep' }));
     await products.upsertFromScrape(baseProduct({ sku: 'gone' }));
 
-    const removedOnEmpty = await products.deleteMissing(storeId, []);
+    const removedOnEmpty = await products.deleteBySkus(storeId, []);
 
     expect(removedOnEmpty).toBe(0);
 
-    const removed = await products.deleteMissing(storeId, ['keep']);
+    const removed = await products.deleteBySkus(storeId, ['gone']);
 
     expect(removed).toBe(1);
 

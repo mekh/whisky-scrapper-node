@@ -289,23 +289,35 @@ entity/repository/service/module shape:
 - `store` (`slug` unique, `name`, `baseUrl`, `color?`, `active`) and
   `store-config` (1:1 → store via `storeId` unique + `fk_store_config_store`;
   `tier`, `delayFrom`/`delayTo` reals, `needsBrowser`, `retailChain?`,
-  `category?` — this is scrape-config, unrelated to product category).
+  `category?`, `group?` (sync-concurrency group; `zakaz` for the 19 Zakaz.ua
+  networks), `engine` (`python`|`ts`|`python-api`, default `python`) — this is
+  scrape-config, unrelated to product category).
 - `product` — `storeId`, `sku`, `url`, `name`, `age?`, `abv?`, `volumeMl?`,
   FKs `brandId?`/`typeId?`/`countryId?`, `firstSeen`/`lastSeen` (date). Unique
   `(storeId, sku)`. Many-to-many `flavors` via the `product_flavor` join table.
 - `price-snapshot` — `productId`, `price`/`oldPrice?` (`NumericColumn`),
-  `currency`, `inStock`, `promo`. **No capture-date column**: the snapshot time
-  is the inherited `createdAt`; multiple snapshots per day are allowed; index
-  `(productId, createdAt)`.
-- `sync-log` — `storeId`, counters, `success?`, `error?`, `finishedAt?`; the
-  legacy `started_at`/`updated_at` map to the base `createdAt`/`updatedAt`.
+  `currency`, `inStock`, `promo`, `capturedOn` (date, default `CURRENT_DATE`).
+  **One row per product per day**, enforced by the unique index
+  `(productId, capturedOn)` + an atomic `INSERT ... ON CONFLICT DO UPDATE`;
+  plus a plain index `(productId, createdAt)`. `capturedOn` is the UTC calendar
+  day (matches the existing `createdAt::date` report basis).
+- `sync-log` — `storeId`, counters, `success?` (null = still running), `error?`,
+  `finishedAt?`, `group?`/`trigger?` (`manual`|`cron`, denormalized at run
+  start); the legacy `started_at`/`updated_at` map to the base `createdAt`/
+  `updatedAt`. The concurrency lock is a **partial unique index**
+  `sync_log_running_uindex` over `CASE WHEN group IS NOT NULL THEN 'g:'||group
+  ELSE 's:'||storeId END` `WHERE success IS NULL` — at most one open run per
+  group (or per store, group-less). `@Index(..., { synchronize: false })` keeps
+  the expression index out of `migration:generate`.
 
 Dropped vs legacy: `products.category` and `products.raw_attrs` (both only ever
 consumed by the Python scraper/enrich utilities, never by the API).
 
-Migrations: `1783840439247-init` (`user`, `permission`) and
-`1783840751031-whisky-domain` (all of the above) — both applied, formatted per
-the `typeorm-migration-format` skill, and drift-free against the entities.
+Migrations: `1783840439247-init` (`user`, `permission`),
+`1783840751031-whisky-domain` (all of the above), then the sync overhaul —
+`store-config-group-engine`, `sync-log-lock`, `price-snapshot-captured-on` — all
+applied, formatted per the `typeorm-migration-format` skill, and drift-free
+against the entities.
 
 Data migration: `scripts/sync-from-sqlite.ts` (uses the `better-sqlite3`
 devDependency) reads the legacy SQLite DB and upserts into Postgres by natural
@@ -318,6 +330,39 @@ directly, so this is no longer a live bridge. Chunked at 500/1000 rows to stay u
 limit. Verified against the real 24 MB legacy DB (8 724 products, 210 357
 snapshots). Timestamp columns are `timestamp` (no tz); legacy UTC ISO values
 shift by the local offset on display — decide a tz policy before production.
+
+## Scraping engine (`src/scrape/`)
+
+The in-process port of the Python scraper (`../scrapper`). A top-level
+subsystem (peer of `core/`/`domain/`), not `lib/` (which is thin infra
+wrappers): `scrape/` has its own internal layering.
+
+- **Layering addendum**: `scrape/` may import `core/` modules and the leaf
+  layers (`~types`/`~config`/`~utils`/`~constants`/`~errors`); `domain/` may
+  import `scrape/`; `core/` must **not** import `scrape/`. Treat it like
+  `domain/` for import-boundary purposes.
+- Layout: `normalize/` (regex/keyword port of `normalize.py`; reuses
+  `BrandUtils.canonical` + `ProductNameUtils.clean`, no `match_key`/exclude-
+  flavors), `http/` (plain fetch / `impit` impersonation / retrying wrapper +
+  `HTTP_STRATEGY_BY_SLUG`), `browser/` (Playwright stealth context, fresh
+  context per page), `llm/` (`@anthropic-ai/sdk` fallback, gated on
+  `ANTHROPIC_API_KEY`), `adapters/` (base classes + `AdapterRegistryService`;
+  concrete store adapters land in later steps), `persist/` (one-store, one
+  transaction write pipeline over the core services), and `ScrapeService`
+  (`collectStore(slug, { dryRun })`).
+- **Regex gotcha**: JS `\b`/`\w` stay ASCII even under the `u` flag (Python's
+  are Unicode). Cyrillic units use explicit lookaheads / classes — see the
+  header of `normalize.service.ts`.
+- **TypeORM `.query` gotcha**: `INSERT ... RETURNING` yields a flat rows array,
+  but `UPDATE`/`DELETE ... RETURNING` yields `[rows, affected]`. Use the query
+  builder's `.execute().affected` for update/delete counts.
+- `SCRAPE_ADAPTER_FACTORY` DI token decouples `ScrapeService` from the registry
+  (tests inject a fake). New env: `SCRAPE_DELAY_MULTIPLIER` (default 1),
+  reuses `ANTHROPIC_API_KEY`. Config: `ScrapeConfig` in `config/parts/`.
+- Integration tests need a live Postgres: `pnpm test:integration`
+  (`*.integration.spec.ts`, excluded from `pnpm test`). Dry-run a store without
+  writing: `ts-node -r tsconfig-paths/register scripts/scrape-dry-run.ts <slug>
+  [--json]`.
 
 ## Auth and permissions
 
@@ -379,7 +424,11 @@ default 600); logger vars consumed by `@toxicoder/nestjs-pino` (`LOG_LEVEL`,
 `LOG_JSON`, `LOG_PRETTY`, `LOG_COLORS`, `LOG_CALLSITES`); Valkey vars
 consumed by `@toxicoder/nestjs-valkey` (`VALKEY_HOST`, `VALKEY_PORT`,
 `VALKEY_DB`, `VALKEY_PASSWORD`, `VALKEY_MODE`, `VALKEY_PREFIX`,
-`VALKEY_INJECT_KEY`).
+`VALKEY_INJECT_KEY`); scrape vars (`SCRAPE_DELAY_MULTIPLIER` default 1,
+`ANTHROPIC_API_KEY` — LLM fallback, unset = disabled). The sync-orchestration
+step adds `SYNC_CRON_ENABLED`/`SYNC_CRON_EXPRESSION` (default `0 12 * * *`)/
+`SYNC_TIMEZONE` (default `Europe/Kyiv`)/`SYNC_MAX_PARALLEL_TRACKS`/
+`SYNC_STORE_TIMEOUT_MS`.
 
 ## Errors
 
@@ -491,6 +540,21 @@ iptables). `pnpm openapi` (server up) still snapshots it to a git-ignored local
 for the Swagger UI; the SPA's own CSP belongs on the reverse proxy). No global
 route prefix is used — the SPA reaches the API same-origin via a `/api` proxy
 that strips the prefix.
+
+**Python → TypeScript scrape migration (in progress).** The scraper is being
+moved out of `../scrapper` into `src/scrape/` (plan:
+`~/.claude/plans/hazy-greeting-pearl.md`, 12 steps). Done: feasibility spike
+(GO — every store reachable from a datacenter IP), the schema overhaul
+(`group`/`engine`/`capturedOn` + `sync_log` lock), the core write path, and the
+scrape engine (`normalize`/`http`/`browser`/`llm`/`persist` +
+`ScrapeService.collectStore`). Pending: the sync orchestrator + on-demand/
+status endpoints, the concrete store adapters (ported + parity-checked in
+batches), the internal `@nestjs/schedule` cron, the web "Sync" button, and the
+Python decommission. Until each store's `store_config.engine` is flipped to
+`ts`, the **Python collector remains the live writer** — same-day dual-writing
+is benign (the snapshot upsert is last-write-wins). Follow-up flagged in code:
+`HTTP_STRATEGY_BY_SLUG` (in `scrape/http/http-client.factory.ts`) should move to
+a `store_config` column.
 
 Still open:
 

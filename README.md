@@ -90,12 +90,21 @@ pnpm start        # nest start (watch) — API on http://localhost:4000
 | `pnpm start:prod`                | Run the built app (`node dist/src/main.js`)                                                       |
 | `pnpm lint`                      | ESLint with autofix                                                                               |
 | `pnpm test` / `test:cov`         | Jest unit tests (+ coverage)                                                                      |
+| `pnpm test:integration`          | Jest integration tests (`*.integration.spec.ts`) — needs a live Postgres (`docker-compose.dev`)   |
 | `pnpm openapi`                   | Emit `openapi.json` locally (optional snapshot; git-ignored — web fetches `/docs-json` over HTTP) |
 | `pnpm init`                      | One-time bootstrap: run migrations + create 1st admin                                             |
 | `pnpm migration:generate <name>` | Diff entities → new migration in `./migrations/`                                                  |
 | `pnpm migration:create <name>`   | Empty migration skeleton                                                                          |
 | `pnpm migration:run` / `:revert` | Apply / roll back migrations                                                                      |
 | `pnpm clean-names`               | Maintenance: normalize existing product names                                                     |
+
+Dry-run the in-process scraper for one store without writing (needs the store's
+adapter, ported in later migration steps):
+
+```bash
+pnpm exec ts-node -r tsconfig-paths/register scripts/scrape-dry-run.ts <slug> \
+  [--json]
+```
 
 One-time SQLite import (historical data only, not a live bridge):
 
@@ -122,7 +131,10 @@ which pins generated/created files to `./migrations/` and injects
   [`MIGRATION.md`](MIGRATION.md).
 - **Python scraper (`../scrapper`)** — writes products, snapshots and
   `sync_log` rows straight into this backend's Postgres. This service is the
-  **schema owner**; the scraper never creates or migrates tables.
+  **schema owner**; the scraper never creates or migrates tables. **Being
+  migrated in-process** into `src/scrape/` (see `CLAUDE.md` → "Scraping engine"
+  and the plan): each store flips from Python to the TS engine via
+  `store_config.engine` once parity-checked.
 - **Valkey** — refresh-session storage and caching.
 
 ## Production / Docker

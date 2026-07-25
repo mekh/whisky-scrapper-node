@@ -14,6 +14,9 @@ import type {
   SiteResult,
   StoreListItem,
   SyncOutcome,
+  SyncRunReport,
+  SyncStoreReport,
+  SyncTrackReport,
 } from '~types';
 import { ArrayUtils } from '~utils';
 
@@ -81,20 +84,11 @@ export class SyncOrchestratorService implements OnModuleInit {
     trigger: SyncTrigger,
   ): Promise<EntitySyncLog> {
     const store = await this.resolveSyncableStore(slug);
-    const log = await this.syncLogs.tryStart(
-      store.id,
-      store.group,
-      trigger,
-    );
-
-    if (!log) {
-      throw new DuplicateError(await this.describeBlocker(store), { slug });
-    }
-
-    this.logger.log('Sync started for %s (%s)', store.slug, trigger);
-
+    const log = await this.acquireRun(store, trigger);
     const run = this.runStoreSync(store, log.id).catch((error: unknown) => {
       this.logger.error('Sync run crashed for %s: %o', store.slug, error);
+
+      return UNKNOWN_FAILURE;
     });
 
     if (trigger === SyncTrigger.CRON) {
@@ -109,9 +103,10 @@ export class SyncOrchestratorService implements OnModuleInit {
    * tracks (one per group, plus one per group-less store) and the tracks run
    * in parallel chunks, sequentially inside each track.
    *
-   * @returns Resolves once every track is done.
+   * @returns What every track and store did, for the caller to log.
    */
-  public async runFullSync(): Promise<void> {
+  public async runFullSync(): Promise<SyncRunReport> {
+    const startedAt = Date.now();
     const all = await this.stores.findAllWithConfig();
     const owned = all.filter(
       (store) => store.active && store.engine === SyncEngine.TS,
@@ -126,10 +121,17 @@ export class SyncOrchestratorService implements OnModuleInit {
     );
 
     const chunks = ArrayUtils.chunkify(tracks, this.config.maxParallelTracks);
+    const reports: SyncTrackReport[] = [];
 
     for (const chunk of chunks) {
-      await Promise.allSettled(chunk.map((track) => this.runTrack(track)));
+      const settled = await Promise.allSettled(
+        chunk.map((track) => this.runTrack(track)),
+      );
+
+      reports.push(...this.trackReports(settled));
     }
+
+    return { durationMs: Date.now() - startedAt, tracks: reports };
   }
 
   /**
@@ -167,18 +169,43 @@ export class SyncOrchestratorService implements OnModuleInit {
   }
 
   /**
+   * Acquires the store's exclusivity lock by opening its `sync_log` row.
+   *
+   * @param store - The store to lock.
+   * @param trigger - What started this run.
+   * @returns The open `sync_log` row.
+   * @throws {DuplicateError} When the store or its group is already syncing.
+   */
+  private async acquireRun(
+    store: StoreListItem,
+    trigger: SyncTrigger,
+  ): Promise<EntitySyncLog> {
+    const log = await this.syncLogs.tryStart(store.id, store.group, trigger);
+
+    if (!log) {
+      throw new DuplicateError(await this.describeBlocker(store), {
+        slug: store.slug,
+      });
+    }
+
+    this.logger.log('Sync started for %s (%s)', store.slug, trigger);
+
+    return log;
+  }
+
+  /**
    * Runs one store's collection and finalizes its `sync_log` row. The row is
    * always closed — that is what releases the lock — so this never rethrows
    * the collection error.
    *
    * @param store - The store to collect.
    * @param logId - The open sync-log row id.
-   * @returns Resolves once the row is finalized.
+   * @returns The outcome the row was finalized with.
    */
   private async runStoreSync(
     store: StoreListItem,
     logId: ID,
-  ): Promise<void> {
+  ): Promise<SyncOutcome> {
     let outcome = UNKNOWN_FAILURE;
 
     try {
@@ -207,6 +234,8 @@ export class SyncOrchestratorService implements OnModuleInit {
     } finally {
       await this.syncLogs.finish(logId, outcome);
     }
+
+    return outcome;
   }
 
   /**
@@ -313,23 +342,85 @@ export class SyncOrchestratorService implements OnModuleInit {
   }
 
   /**
-   * Runs one track's stores strictly one at a time. A store that cannot start
-   * (locked, misconfigured) is logged and skipped, so the track continues.
+   * Keeps the reports of the tracks that resolved. A track cannot reject (each
+   * of its stores is guarded), so a rejection here means a bug worth logging.
+   *
+   * @param settled - The settled track promises of one chunk.
+   * @returns The reports that were produced.
+   */
+  private trackReports(
+    settled: PromiseSettledResult<SyncTrackReport>[],
+  ): SyncTrackReport[] {
+    settled
+      .filter((result) => result.status === 'rejected')
+      .forEach((result) => {
+        this.logger.error('Sync track crashed: %o', result.reason);
+      });
+
+    return settled
+      .filter((result) => result.status === 'fulfilled')
+      .map((result) => result.value);
+  }
+
+  /**
+   * Runs one track's stores strictly one at a time.
    *
    * @param track - The stores of this track, in order.
-   * @returns Resolves once the track is done.
+   * @returns What each of the track's stores did.
    */
-  private async runTrack(track: StoreListItem[]): Promise<void> {
+  private async runTrack(track: StoreListItem[]): Promise<SyncTrackReport> {
+    const startedAt = Date.now();
+    const key = track[0].group ?? track[0].slug;
+    const stores: SyncStoreReport[] = [];
+
     for (const store of track) {
-      try {
-        await this.startStoreSync(store.slug, SyncTrigger.CRON);
-      } catch (error) {
-        this.logger.warn(
-          'Scheduled sync skipped for %s: %o',
-          store.slug,
-          error,
-        );
-      }
+      stores.push(await this.runScheduledStore(store));
+    }
+
+    return { key, durationMs: Date.now() - startedAt, stores };
+  }
+
+  /**
+   * Syncs one store on behalf of the scheduler. The store is re-validated
+   * first, because a full sync can span hours and the schedule was built at
+   * its start; a store that cannot start (locked, deactivated meanwhile) is
+   * logged and skipped so the track continues.
+   *
+   * @param store - The store to sync.
+   * @returns What this store did, successful or not.
+   */
+  private async runScheduledStore(
+    store: StoreListItem,
+  ): Promise<SyncStoreReport> {
+    const startedAt = Date.now();
+
+    try {
+      const fresh = await this.resolveSyncableStore(store.slug);
+      const log = await this.acquireRun(fresh, SyncTrigger.CRON);
+      const outcome = await this.runStoreSync(fresh, log.id);
+
+      return {
+        slug: store.slug,
+        durationMs: Date.now() - startedAt,
+        outcome,
+        skipReason: null,
+      };
+    } catch (error) {
+      const reason = this.errorText(error);
+
+      /**
+       * The reason is logged as text, not as the error object: the structured
+       * logger renders a thrown `ErrorBase` without its message, which is the
+       * only part that says what blocked the store.
+       */
+      this.logger.warn('Scheduled sync skipped for %s: %s', store.slug, reason);
+
+      return {
+        slug: store.slug,
+        durationMs: Date.now() - startedAt,
+        outcome: null,
+        skipReason: reason,
+      };
     }
   }
 

@@ -157,7 +157,9 @@ which pins generated/created files to `./migrations/` and injects
   writer; a store can be handed back at any time by setting `engine` back to
   `python`. On-demand syncs of migrated stores run through
   `POST /store/:slug/sync`, with `GET /store/sync-status` reporting what is in
-  flight.
+  flight. This service also carries its own daily schedule for the full sync
+  (`SYNC_CRON_ENABLED`, off unless set — the Python system cron still owns the
+  schedule until the cutover).
 - **Valkey** — refresh-session storage and caching.
 
 ## Production / Docker

@@ -444,13 +444,47 @@ wrappers): `scrape/` has its own internal layering.
   the lock, so it must happen exactly once, and the lock path is never wrapped
   in `@Transactional()` (the ALS context would leak into the background run).
   A timed-out collection is abandoned, not aborted: the row is already closed.
-- `runFullSync()` (used by the cron in a later step) splits active `ts` stores
-  into tracks (`group ?? id`), runs tracks in `SYNC_MAX_PARALLEL_TRACKS`-sized
-  chunks and the stores inside a track strictly sequentially; a store that
-  cannot start is warned and skipped.
+- `runFullSync()` splits active `ts` stores into tracks (`group ?? id`), runs
+  tracks in `SYNC_MAX_PARALLEL_TRACKS`-sized chunks and the stores inside a
+  track strictly sequentially; a store that cannot start is warned and skipped.
+  It returns a `SyncRunReport` (per track, per store: duration, outcome or skip
+  reason) purely so the cron can log a summary — nothing persists it.
 - `onModuleInit` sweeps orphaned locks — single instance, so any open row at
   boot belongs to a dead process. `main.ts` calls `enableShutdownHooks()` and
   compose gives the container `stop_grace_period: 60s`.
+- **Cron** (`SyncCronService`): one `@nestjs/schedule` job driving
+  `runFullSync()`, defaults `0 12 * * *` `Europe/Kyiv`, **registered only when
+  `SYNC_CRON_ENABLED` is true** — and it ships disabled (arming it in
+  production is part of the cutover). Either way the boot log says which state
+  the process is in. Details that are load-bearing:
+  - The `@Cron` decorator cannot be used: its arguments are evaluated at class
+    definition time and so cannot read runtime config. The job is built with
+    `CronJob.from({ cronTime, timeZone, onTick })` (the positional
+    `new CronJob(...)` form is legacy in `cron` 4.x) and `cron` is therefore a
+    direct dependency pinned to the exact version `@nestjs/schedule` resolves,
+    so there is only ever one copy. `SchedulerRegistry.addCronJob` only
+    registers a job — `job.start()` after it is what arms the timer.
+  - Registration happens in `onApplicationBootstrap`, **not** `onModuleInit`:
+    Nest runs one module's `onModuleInit` hooks concurrently (`Promise.all`),
+    so arming there could beat `SyncOrchestratorService`'s boot sweep. Every
+    `onModuleInit` settles before any `onApplicationBootstrap` runs.
+  - Shutdown needs no code here: `ScheduleModule`'s own
+    `beforeApplicationShutdown` stops and drops every registered job (verified
+    — a `SIGTERM`ed process exits immediately instead of waiting on the timer).
+    A sync in flight at that moment is abandoned with its `sync_log` row open;
+    the next boot sweep closes it. The job deliberately does **not** use
+    `waitForCompletion`: `stop()` would then poll every 100 ms until the run
+    ends, keeping the event loop alive long past shutdown, and overlap is
+    already impossible via the row lock.
+  - An unusable `SYNC_CRON_EXPRESSION` throws during bootstrap and fails the
+    boot. That is deliberate — a schedule that silently never fires is the
+    worse failure.
+  - The job body never rethrows; it logs one summary line (a warning when
+    anything failed or was skipped) plus one line per track with each store's
+    duration, which is what makes it obvious in production that the browser-tier
+    track sets the total run time.
+  - `ScheduleModule.forRoot()` is registered in `app.module.ts` (it is a global
+    module exporting `SchedulerRegistry`), scheduling being an app-wide concern.
 - Endpoints: `POST /store/:slug/sync` (`202`, `[Resource.STORE, Action.SYNC]`)
   and `GET /store/sync-status` (`@CacheControl('no-cache')`, polled by the web
   client). `sync-status` must stay declared **before** the `:slug` routes.
@@ -522,7 +556,9 @@ consumed by `@toxicoder/nestjs-valkey` (`VALKEY_HOST`, `VALKEY_PORT`,
 `SYNC_MAX_PARALLEL_TRACKS` (4), `SYNC_STORE_TIMEOUT_MS` (900000),
 `SYNC_BROWSER_STORE_TIMEOUT_MS` (2700000 — the budget for a `needsBrowser`
 store, which needs ~20 min for a full pass and would never fit the HTTP one).
-The two cron vars are read only by the scheduler added in a later step.
+`SYNC_CRON_ENABLED`/`SYNC_CRON_EXPRESSION`/`SYNC_TIMEZONE` are read by
+`SyncCronService` at bootstrap (see "Sync orchestration"): with the flag unset
+no job is registered at all, and changing any of the three needs a restart.
 
 ## Errors
 
@@ -645,9 +681,10 @@ scrape engine (`normalize`/`http`/`html`/`browser`/`llm`/`persist` +
 endpoints (see "Sync orchestration"), and **every adapter** — the 19 Zakaz.ua
 networks, `maudau`, `okwine`, `winewine`, `wine-point`, `goodwine`, `rozetka` —
 with golden tests and the parity harness (`silpo` is ported but unregistered
-and stays on Python).
-Pending: the internal `@nestjs/schedule` cron, the web "Sync" button, the
-release-day parity sweep + cutover, and the Python decommission. **No production store is flipped yet** — every
+and stays on Python), and the internal daily cron — which **ships disabled**
+(`SYNC_CRON_ENABLED` unset), so the Python system cron still owns the schedule.
+Pending: the web "Sync" button, the release-day parity sweep + cutover, and the
+Python decommission. **No production store is flipped yet** — every
 `store_config.engine` is still `python`, so the Python collector remains the
 live writer everywhere. Until each store's `store_config.engine` is flipped to
 `ts`, the **Python collector remains the live writer** — same-day dual-writing

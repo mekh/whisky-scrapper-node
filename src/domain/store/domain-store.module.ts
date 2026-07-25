@@ -6,6 +6,7 @@ import { ScrapeModule } from '~scrape';
 
 import { StoreController } from './store.controller';
 import { StoreService } from './store.service';
+import { SyncCronService } from './sync-cron.service';
 import { SyncOrchestratorService } from './sync-orchestrator.service';
 
 @Module({
@@ -20,6 +21,7 @@ import { SyncOrchestratorService } from './sync-orchestrator.service';
   providers: [
     StoreService,
     SyncOrchestratorService,
+    SyncCronService,
   ],
   exports: [
     SyncOrchestratorService,

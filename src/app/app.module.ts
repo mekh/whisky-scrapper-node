@@ -5,6 +5,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { ClsMiddleware } from 'nestjs-cls';
 import { DataSource, DataSourceOptions } from 'typeorm';
@@ -33,6 +34,12 @@ import { LogInterceptor, ValidationInterceptor } from './interceptors';
   imports: [
     ContextModule,
     LoggerModule,
+    /**
+     * Registered here (it is a global module exporting `SchedulerRegistry`)
+     * because scheduling is an application-wide concern; `SyncCronService` in
+     * `domain/store` is its only user today.
+     */
+    ScheduleModule.forRoot(),
     TypeOrmModule.forRootAsync({
       imports: [
         ConfigModule,

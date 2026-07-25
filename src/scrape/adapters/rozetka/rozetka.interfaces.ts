@@ -24,7 +24,15 @@ export interface RozetkaRow {
   old: number | null;
 
   /**
-   * Whether the tile lacks the "out of stock" status text.
+   * Whether the tile carries a buy button, which is the store's positive
+   * availability marker.
    */
   inStock: boolean;
+
+  /**
+   * Whether the tile carries one of the store's known out-of-stock labels.
+   * A tile with neither this nor `inStock` is a rendering the extractor does
+   * not recognize, and is never treated as a stock signal.
+   */
+  outOfStock: boolean;
 }

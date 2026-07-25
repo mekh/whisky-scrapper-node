@@ -381,7 +381,18 @@ wrappers): `scrape/` has its own internal layering.
   blocks the second and later navigations inside one browser context, so every
   page is rendered in a **fresh stealth context** (`BrowserAdapterBase`
   `renderEval`/`renderHtml`), with one retry per page and the challenge-title
-  wait. The browser is launched lazily and closed by `adapter.close()` in
+  wait.
+  **Availability is read from a positive marker** — the tile's buy button
+  (`button.buy-button`) — never from the absence of an out-of-stock phrase: the
+  store has two such labels («Закінчився», «Немає в наявності») and the old
+  negative rule knew only one, so sold-out tiles counted as available (see
+  [`PARITY.md`](PARITY.md)). Since a positive marker fails closed, the extractor
+  also reports whether a known out-of-stock label is present, and a page holding
+  tiles with **neither** signal is retried once and then fails the run — the
+  alternative is `deleteGone` wiping the store's products and price history on a
+  markup change. Keep that invariant in mind before touching `EXTRACT_JS`; the
+  golden test (`test/scrape/rozetka-extract.integration.spec.ts`) runs the real
+  extractor in Chromium against captured tiles. The browser is launched lazily and closed by `adapter.close()` in
   `ScrapeService`'s `finally`.
   Infrastructure: the `service_run` Docker stage installs Chromium
   (`playwright install --with-deps chromium`, `PLAYWRIGHT_BROWSERS_PATH=
@@ -644,9 +655,9 @@ is benign (the snapshot upsert is last-write-wins).
 
 **Deferred defects live in [`FOLLOWUPS.md`](FOLLOWUPS.md)** — read it before
 touching the scrape engine. It currently holds `goodwine`'s truncating page cap,
-the never-built browser Docker stage, and `rozetka`'s wrong in-stock count. They
-are held back because the migration requires byte-identical output from both
-engines, not because they are acceptable. One more follow-up is flagged in code
+the never-built browser Docker stage, and `rozetka`'s full-catalog walk for a
+7-page in-stock prefix. They are held back because the migration requires
+byte-identical output from both engines, not because they are acceptable. One more follow-up is flagged in code
 only: `HTTP_STRATEGY_BY_SLUG` (in `scrape/http/http-client.factory.ts`) should
 move to a `store_config` column.
 

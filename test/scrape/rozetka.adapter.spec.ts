@@ -49,7 +49,8 @@ class FakeRozetkaAdapter extends RozetkaAdapter {
 }
 
 /**
- * Builds one extracted tile.
+ * Builds one extracted tile, available by default (it carries the buy button
+ * and no out-of-stock label).
  *
  * @param id - Product id, which appears in the URL as `/p<id>/`.
  * @param over - Field overrides.
@@ -62,8 +63,21 @@ function row(id: string, over: Partial<RozetkaRow> = {}): RozetkaRow {
     price: 899,
     old: null,
     inStock: true,
+    outOfStock: false,
     ...over,
   };
+}
+
+/**
+ * Builds a tile the store reports as gone: no buy button, one of the two
+ * out-of-stock labels present.
+ *
+ * @param id - Product id, which appears in the URL as `/p<id>/`.
+ * @param over - Field overrides.
+ * @returns The tile row.
+ */
+function goneRow(id: string, over: Partial<RozetkaRow> = {}): RozetkaRow {
+  return row(id, { inStock: false, outOfStock: true, ...over });
 }
 
 describe('RozetkaAdapter.fetchListing', () => {
@@ -88,7 +102,7 @@ describe('RozetkaAdapter.fetchListing', () => {
   it('reads a promotion and an out-of-stock tile', async () => {
     const adapter = new FakeRozetkaAdapter([[
       row('1', { price: 799, old: 999 }),
-      row('2', { inStock: false }),
+      goneRow('2'),
       row('3', { price: 500, old: 400 }),
     ]]);
 
@@ -127,6 +141,38 @@ describe('RozetkaAdapter.fetchListing', () => {
       `${LISTING}page=3/`,
       `${LISTING}page=3/`,
     ]);
+  });
+
+  it('fails the run when a tile carries no availability signal', async () => {
+    const adapter = new FakeRozetkaAdapter([
+      [row('1')],
+      [row('2', { inStock: false, outOfStock: false })],
+      [row('2', { inStock: false, outOfStock: false })],
+    ]);
+
+    await expect(adapter.fetchListing()).rejects.toThrow(
+      /markup changed/,
+    );
+    // Page 2 was retried before the run was given up on.
+    expect(adapter.urls).toEqual([
+      LISTING,
+      `${LISTING}page=2/`,
+      `${LISTING}page=2/`,
+    ]);
+  });
+
+  it('accepts a page whose unrecognized tile disappears on retry', async () => {
+    const adapter = new FakeRozetkaAdapter([
+      [row('1')],
+      [row('2', { inStock: false, outOfStock: false })],
+      [row('2'), goneRow('3')],
+      [],
+    ]);
+
+    const snaps = await adapter.fetchListing();
+
+    expect(snaps.map((snap) => snap.storeSku)).toEqual(['1', '2', '3']);
+    expect(snaps[2].inStock).toBe(false);
   });
 
   it('retries an empty page once before ending the walk', async () => {

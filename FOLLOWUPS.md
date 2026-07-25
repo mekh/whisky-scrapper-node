@@ -52,25 +52,30 @@ Python image does not need them).
 with the engine's own launch arguments — then run one real `rozetka` sync in the
 container before the cutover flips that store to `ts`.
 
-## 3. `rozetka`'s availability count does not match the catalog
+## 3. `rozetka` walks the whole catalog to collect a 7-page prefix
 
-**Status**: under investigation in a separate session.
+**Status**: open. **Blocked by**: nothing technical — it needs a decision on
+what `total` and `deleteGone` should mean once the walk stops early.
 
-The store's whisky category holds **410 in-stock items** (verified from both a
-residential and a datacenter IP: the in-stock items form a contiguous prefix
-ending on page 7, which holds 50 of them, after 6 full pages of 60). Neither
-engine reports that number: both the TypeScript and the Python adapter found
-443-444 in stock locally on 2026-07-25 (they agree with each other, so the port
-is faithful — the defect is in the shared logic), while production's Python runs
-on 19-21 July recorded 900-970.
+Everything in stock sits in the **first ~7 of ~38 pages** (2026-07-25: 60, 60,
+57, 60, 60, 60, 50 available, then nothing on pages 8 and 20), yet the adapter
+walks the tail as well, which costs ~8 of the run's 11 minutes. `maudau` already
+solves the same shape with `EARLY_STOP_EMPTY_PAGES`.
 
-Two suspects: the in-stock test itself (a negative text match,
-`!/нема\S* в наявн/i`, on the tile's whole text — it infers availability from
-the _absence_ of a phrase, so any rendering change reads as "in stock"), and the
-fact that the adapter walks all ~38 pages even though everything in stock sits
-in the first ~7 — which also costs ~9 of the run's 11 minutes.
+The stop rule has to be "K consecutive pages with no in-stock tile", not "the
+first page holding an out-of-stock tile": sold-out tiles are interleaved into
+the prefix (3 of them on page 3, 10 on page 7). Contiguity past page 8 has not
+been proven — pages 9-19 and 21-38 were never sampled — so confirm it first by
+logging in-stock counts per page during a normal full run, which costs no extra
+requests.
 
-**Fix**: pending the investigation's findings. Note that changing the
-availability rule diverges from the Python engine, so either it lands after the
-cutover, or it is applied with a fresh parity comparison and a deliberate,
-documented break.
+Two consequences to settle before switching it on, neither of them cosmetic:
+
+- `total` (the `sync_log` counter and the `found` figure) drops from ~2330 to
+  ~600, so any threshold or eyeballed comparison against history changes basis.
+- the deep out-of-stock SKUs stop reaching `deleteGone`, which today is the only
+  thing that removes a product. Cleanup would have to move to a `lastSeen`
+  staleness rule instead.
+
+**Availability detection itself is fixed** (2026-07-25, both engines): the tile's
+buy button is now the positive marker, see [`PARITY.md`](PARITY.md).

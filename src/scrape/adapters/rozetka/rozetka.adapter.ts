@@ -1,3 +1,5 @@
+import { ServerError } from '~errors';
+
 import type { ProductSnapshot } from '~types';
 
 import { BrowserAdapterBase } from '../../browser/browser-adapter.base';
@@ -24,22 +26,31 @@ const CATEGORY = 'viski';
 
 /**
  * Scrapes every tile of a page in one pass inside the browser: link, title,
- * both prices and availability. Ported from the Python adapter, with its two
- * Ukrainian notes translated: a tile without a buy button keeps the "out of
- * stock" status in its text while an available one has no such text, and the
- * tile carries no dedicated status class to key on.
+ * both prices and availability.
+ *
+ * Availability is read from the **buy button**, a positive marker, never from
+ * the absence of a phrase. The store has two out-of-stock labels —
+ * «Закінчився» for an item that just ran out and «Немає в наявності» for one
+ * gone for longer — and the previous rule knew only the second, so every
+ * freshly sold-out tile counted as available. The tile carries no status class
+ * to key on, so both signals are read separately: the button means available,
+ * either label means gone, and a tile with neither is a rendering this
+ * extractor does not recognize (handled in `fetchPage`).
  *
  * The price cleanup drops `\s`, which already covers the non-breaking space
- * Rozetka uses as a thousands separator (the Python source spells that space
- * out separately; in both regex engines it is redundant).
+ * Rozetka uses as a thousands separator.
+ *
+ * Exported so the golden test can run this very script in a browser against
+ * captured tiles, which is the only way to cover a DOM extractor.
  */
-const EXTRACT_JS = String.raw`
+export const EXTRACT_JS = String.raw`
 () => {
   const num = s => {
     if (!s) return null;
     const m = s.replace(/[\s ]/g, '').match(/\d+(?:[.,]\d+)?/);
     return m ? parseFloat(m[0].replace(',', '.')) : null;
   };
+  const gone = /закінчився|нема\S* в наявн/i;
   return [...document.querySelectorAll('rz-catalog-tile')].map(t => {
     const a = t.querySelector('a[href*="/p"]');
     const titleEl = t.querySelector(
@@ -55,7 +66,8 @@ const EXTRACT_JS = String.raw`
         t.querySelector('.old-price')
           && t.querySelector('.old-price').textContent
       ),
-      inStock: !/нема\S* в наявн/i.test(t.textContent),
+      inStock: !!t.querySelector('button.buy-button'),
+      outOfStock: gone.test(t.textContent),
     };
   }).filter(x => x.href && x.title && x.price != null);
 }
@@ -111,19 +123,39 @@ export class RozetkaAdapter extends BrowserAdapterBase {
 
   /**
    * Renders one listing page in a fresh browser context and extracts its
-   * tiles, retrying once when the page comes back empty.
+   * tiles, retrying once when the page comes back empty or unrecognized.
+   *
+   * Every tile must carry either the buy button or an out-of-stock label. A
+   * tile with neither means the markup changed under us, and guessing would be
+   * destructive: an unavailable verdict feeds `deleteGone`, which would drop
+   * the store's products and cascade their price history. So the page is
+   * retried and then the whole run fails loudly instead.
    *
    * @param url - The listing page URL.
-   * @returns The page's rows; empty when both attempts failed.
+   * @returns The page's rows; empty when both attempts came back empty.
+   * @throws {ServerError} When tiles carry neither availability signal.
    */
   private async fetchPage(url: string): Promise<RozetkaRow[]> {
+    let unrecognized = 0;
+
     for (let attempt = 0; attempt < PAGE_ATTEMPTS; attempt += 1) {
       const result = await this.renderEval(url, EXTRACT_JS, TILE_SELECTOR);
       const rows = Array.isArray(result) ? result as RozetkaRow[] : [];
 
-      if (rows.length > 0) {
+      unrecognized = rows.filter(
+        (row) => !row.inStock && !row.outOfStock,
+      ).length;
+
+      if (rows.length > 0 && unrecognized === 0) {
         return rows;
       }
+    }
+
+    if (unrecognized > 0) {
+      throw new ServerError(
+        'Rozetka tiles carry no availability signal — markup changed',
+        { url, unrecognized },
+      );
     }
 
     return [];
@@ -151,7 +183,7 @@ export class RozetkaAdapter extends BrowserAdapterBase {
       name: row.title,
       price: row.price,
       oldPrice: discounted ? row.old : null,
-      inStock: row.inStock !== false,
+      inStock: row.inStock,
       promo: discounted,
       rawAttrs: { category: CATEGORY },
     });

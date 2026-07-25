@@ -5,6 +5,8 @@ import {
   ID,
   MetaCountry,
   PriceHistoryPoint,
+  ProductUpsertInput,
+  ProductUpsertResult,
   ReportCurrentRow,
   ReportFilter,
 } from '~types';
@@ -21,6 +23,56 @@ import { ProductRepository } from './product.repository';
 export class CoreProductService extends CoreBaseService<ProductEntity> {
   public constructor(protected readonly repo: ProductRepository) {
     super(repo);
+  }
+
+  /**
+   * Inserts or updates a product by its `(storeId, sku)` identity, preserving
+   * first-insert and manually-edited fields on conflict.
+   *
+   * @param input - The resolved product to write.
+   * @returns The product id and whether it was newly inserted.
+   */
+  public async upsertFromScrape(
+    input: ProductUpsertInput,
+  ): Promise<ProductUpsertResult> {
+    return this.repo.upsertFromScrape(input);
+  }
+
+  /**
+   * SKUs of a store's products that already have an ABV (the detail-fetch
+   * gate).
+   *
+   * @param storeId - Store id.
+   * @returns The set of SKUs with an ABV.
+   */
+  public async skusWithAbv(storeId: ID): Promise<Set<string>> {
+    return this.repo.skusWithAbv(storeId);
+  }
+
+  /**
+   * Deletes a store's products absent from the latest listing; a no-op when
+   * the listing is empty.
+   *
+   * @param storeId - Store id.
+   * @param seenSkus - SKUs present in the latest listing.
+   * @returns How many products were deleted.
+   */
+  public async deleteMissing(
+    storeId: ID,
+    seenSkus: string[],
+  ): Promise<number> {
+    return this.repo.deleteMissing(storeId, seenSkus);
+  }
+
+  /**
+   * Replaces a product's flavor links with the given set.
+   *
+   * @param productId - Product id.
+   * @param flavorIds - Flavor ids to link.
+   * @returns Resolves once the links are replaced.
+   */
+  public async setFlavors(productId: ID, flavorIds: ID[]): Promise<void> {
+    return this.repo.setFlavors(productId, flavorIds);
   }
 
   /**

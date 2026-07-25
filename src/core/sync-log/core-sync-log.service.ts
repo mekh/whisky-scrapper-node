@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 
 import { CoreBaseService } from '~core/_common';
-import { ID } from '~types';
+import { SyncTrigger } from '~enums';
+import { ID, RunningSync, SyncOutcome } from '~types';
 
 import { SyncLogEntity } from './sync-log.entity';
 import { SyncLogRepository } from './sync-log.repository';
@@ -13,6 +14,62 @@ import { SyncLogRepository } from './sync-log.repository';
 export class CoreSyncLogService extends CoreBaseService<SyncLogEntity> {
   public constructor(protected readonly repo: SyncLogRepository) {
     super(repo);
+  }
+
+  /**
+   * Atomically starts a run and acquires its group/store lock.
+   *
+   * @param storeId - Store to start a run for.
+   * @param group - The store's exclusivity group, or null for its own domain.
+   * @param trigger - What started this run.
+   * @returns The created row, or null when the group/store is already running.
+   */
+  public async tryStart(
+    storeId: ID,
+    group: string | null,
+    trigger: SyncTrigger,
+  ): Promise<SyncLogEntity | null> {
+    return this.repo.tryStart(storeId, group, trigger);
+  }
+
+  /**
+   * Mid-run progress touch (bumps `updatedAt` and the running total).
+   *
+   * @param id - Sync-log row id.
+   * @param total - Products written so far.
+   * @returns Resolves once the row is updated.
+   */
+  public async touch(id: ID, total: number): Promise<void> {
+    return this.repo.touch(id, total);
+  }
+
+  /**
+   * Finalizes a run and releases its lock.
+   *
+   * @param id - Sync-log row id.
+   * @param outcome - The terminal result and counters.
+   * @returns Resolves once the row is finalized.
+   */
+  public async finish(id: ID, outcome: SyncOutcome): Promise<void> {
+    return this.repo.finish(id, outcome);
+  }
+
+  /**
+   * Closes every still-open run as interrupted (boot cleanup).
+   *
+   * @returns How many orphaned rows were closed.
+   */
+  public async sweepOrphaned(): Promise<number> {
+    return this.repo.sweepOrphaned();
+  }
+
+  /**
+   * Lists the currently running syncs, oldest first.
+   *
+   * @returns One entry per in-flight run.
+   */
+  public async findRunning(): Promise<RunningSync[]> {
+    return this.repo.findRunning();
   }
 
   /**

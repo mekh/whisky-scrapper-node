@@ -21,7 +21,8 @@
     "clean-names": "ts-node -r tsconfig-paths/register ./scripts/clean-product-names.ts",
     "openapi": "ts-node ./scripts/emit-openapi.ts",
     "test": "jest",
-    "test:cov": "jest --coverage"
+    "test:cov": "jest --coverage",
+    "test:integration": "jest -c jest.integration.config.ts --runInBand"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

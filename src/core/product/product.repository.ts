@@ -5,6 +5,8 @@ import {
   ID,
   MetaCountry,
   PriceHistoryPoint,
+  ProductUpsertInput,
+  ProductUpsertResult,
   ReportCurrentRow,
   ReportFilter,
 } from '~types';
@@ -53,6 +55,123 @@ const CURRENT_SQL = `
 
 @TypeormRepository(ProductEntity)
 export class ProductRepository extends BaseRepository<ProductEntity> {
+  /**
+   * Inserts or updates a product by its `(storeId, sku)` identity. On conflict
+   * only `url`, `nameOrig`, `lastSeen` and `brandId` change — `brandId` via
+   * COALESCE so a later null never clears a known brand — while `name`, the
+   * type/country/age/abv/volume fields and `firstSeen` are written once on
+   * insert and then left untouched, so manual edits survive later scrapes.
+   *
+   * @param input - The resolved product to write.
+   * @returns The product id and whether it was newly inserted.
+   */
+  public async upsertFromScrape(
+    input: ProductUpsertInput,
+  ): Promise<ProductUpsertResult> {
+    const rows = await this.query(
+      `INSERT INTO product
+         ("storeId", "brandId", "typeId", "countryId", age, abv, "volumeMl",
+          sku, url, name, "nameOrig", "firstSeen", "lastSeen")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+       ON CONFLICT ("storeId", sku) DO UPDATE SET
+         url = EXCLUDED.url,
+         "nameOrig" = EXCLUDED."nameOrig",
+         "brandId" = COALESCE(EXCLUDED."brandId", product."brandId"),
+         "lastSeen" = EXCLUDED."lastSeen",
+         "updatedAt" = now()
+       RETURNING id, (xmax = 0) AS "isNew"`,
+      [
+        input.storeId,
+        input.brandId,
+        input.typeId,
+        input.countryId,
+        input.age,
+        input.abv,
+        input.volumeMl,
+        input.sku,
+        input.url,
+        input.name,
+        input.nameOrig,
+        input.seenOn,
+      ],
+    ) as { id: ID; isNew: boolean }[];
+
+    return { id: rows[0].id, isNew: rows[0].isNew };
+  }
+
+  /**
+   * SKUs of a store's products whose ABV is already filled. The collector uses
+   * this to fetch product detail pages only for new or still-incomplete items.
+   *
+   * @param storeId - Store id.
+   * @returns The set of SKUs that already have an ABV.
+   */
+  public async skusWithAbv(storeId: ID): Promise<Set<string>> {
+    const rows = await this.query(
+      'SELECT sku FROM product WHERE "storeId" = $1 AND abv IS NOT NULL',
+      [storeId],
+    ) as { sku: string }[];
+
+    return new Set(rows.map((row) => row.sku));
+  }
+
+  /**
+   * Deletes a store's products whose SKU is absent from the latest listing
+   * (gone / out of stock); snapshots and flavor links cascade. Deletes nothing
+   * when `seenSkus` is empty, so an empty or failed scrape never wipes a store.
+   *
+   * @param storeId - Store id.
+   * @param seenSkus - SKUs present in the latest listing.
+   * @returns How many products were deleted.
+   */
+  public async deleteMissing(
+    storeId: ID,
+    seenSkus: string[],
+  ): Promise<number> {
+    if (!seenSkus.length) {
+      return 0;
+    }
+
+    const result = await this.createQueryBuilder()
+      .delete()
+      .from(ProductEntity)
+      .where('"storeId" = :storeId', { storeId })
+      .andWhere('NOT (sku = ANY(:skus))', { skus: seenSkus })
+      .execute();
+
+    return result.affected ?? 0;
+  }
+
+  /**
+   * Replaces a product's flavor links with the given set (deduplicated).
+   *
+   * @param productId - Product id.
+   * @param flavorIds - Flavor ids to link; duplicates are ignored.
+   * @returns Resolves once the links are replaced.
+   */
+  public async setFlavors(productId: ID, flavorIds: ID[]): Promise<void> {
+    await this.query(
+      'DELETE FROM product_flavor WHERE "productId" = $1',
+      [productId],
+    );
+
+    const distinct = [...new Set(flavorIds)];
+
+    if (!distinct.length) {
+      return;
+    }
+
+    const values = distinct
+      .map((_, index) => `($1, $${index + 2})`)
+      .join(', ');
+
+    await this.query(
+      `INSERT INTO product_flavor ("productId", "flavorId") VALUES ${values} `
+        + 'ON CONFLICT DO NOTHING',
+      [productId, ...distinct],
+    );
+  }
+
   /**
    * Loads the current state (latest snapshot + previous price + joins) of
    * every product matching the filter. Filtering runs in SQL; report-specific

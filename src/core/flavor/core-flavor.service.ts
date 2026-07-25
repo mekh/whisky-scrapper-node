@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { CoreBaseService } from '~core/_common';
+import { ID } from '~types';
 
 import { FlavorEntity } from './flavor.entity';
 import { FlavorRepository } from './flavor.repository';
@@ -14,6 +15,16 @@ export class CoreFlavorService extends CoreBaseService<FlavorEntity> {
 
   public constructor(protected readonly repo: FlavorRepository) {
     super(repo);
+  }
+
+  /**
+   * Resolves flavor names to ids, creating any missing ones.
+   *
+   * @param names - Flavor names; blanks and duplicates are ignored.
+   * @returns Map from each present name to its id.
+   */
+  public async resolveByName(names: string[]): Promise<Map<string, ID>> {
+    return this.repo.getOrCreateByName(names);
   }
 
   /**

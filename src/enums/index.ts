@@ -8,3 +8,4 @@ export {
   SortOrder,
 } from './report.enum';
 export { Resource } from './resource.enum';
+export { DEFAULT_SYNC_ENGINE, SyncEngine, SyncTrigger } from './sync.enum';

@@ -66,6 +66,18 @@ export interface StoreListItem {
   category: string | null;
 
   /**
+   * Concurrency group: stores sharing a non-null group never sync at the same
+   * time. Null means the store is its own exclusivity domain.
+   */
+  group: string | null;
+
+  /**
+   * Which engine owns this store's sync (`python` | `ts` | `python-api`).
+   * Null only when the store has no scrape-config row (a broken store).
+   */
+  engine: string | null;
+
+  /**
    * Timestamp of the store's most recent successful sync, or null when it has
    * never synced successfully.
    */

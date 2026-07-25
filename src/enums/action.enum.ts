@@ -6,6 +6,7 @@ export enum Action {
   DELETE = 'delete',
   LIST = 'list',
   LOGOUT = 'logout',
+  SYNC = 'sync',
   READ_PERMISSIONS = 'read_permissions',
   SET_PERMISSIONS = 'set_permissions',
 }

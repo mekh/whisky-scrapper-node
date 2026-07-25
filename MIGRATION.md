@@ -139,10 +139,19 @@ order (e.g. `drops` by discount desc); the web `drops` tab defaults its view to
 | `last_sync`     | `lastSync`                                                                 |
 | `recent_syncs`  | `recentSyncs`                                                              |
 | —               | `color`, `active`, `tier`, `needsBrowser`, `retailChain`, `category` (new) |
+| —               | `group`, `engine` (new — see below)                                        |
+
+`group` (from `store_config.group`, nullable) is the sync-concurrency group:
+stores sharing a non-null group never sync at the same time; today only the 19
+Zakaz.ua networks are grouped as `zakaz`. `engine` (from `store_config.engine`,
+`python` \| `ts` \| `python-api`, default `python`) is which scraper owns the
+store; the `be/` sync path only acts on `ts` stores. Both also appear on the
+`GET /store` list items.
 
 Sync-log entry fields: `added`, `removed`, `updated`, `total`, `success`,
 `error`, plus `id`, `storeId`, `createdAt` (was `started_at`), `updatedAt` (was
-`updated_at`), `finishedAt`.
+`updated_at`), `finishedAt`, `group`, `trigger` (`manual` \| `cron`; null on
+rows written before the sync overhaul).
 
 ## Things intentionally not reproduced
 

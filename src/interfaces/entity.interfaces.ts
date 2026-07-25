@@ -98,6 +98,8 @@ export interface EntityStoreConfig extends EntityBaseRich {
   needsBrowser: boolean;
   retailChain?: string;
   category?: string;
+  group?: string;
+  engine: string;
 }
 
 export interface EntityProduct extends EntityBaseRich {
@@ -123,6 +125,7 @@ export interface EntityPriceSnapshot extends EntityBaseRich {
   currency: string;
   inStock: boolean;
   promo: boolean;
+  capturedOn: string;
 }
 
 export interface EntitySyncLog extends EntityBaseRich {
@@ -134,4 +137,6 @@ export interface EntitySyncLog extends EntityBaseRich {
   success?: boolean;
   error?: string;
   finishedAt?: Date;
+  group?: string;
+  trigger?: string;
 }

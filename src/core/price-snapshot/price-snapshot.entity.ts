@@ -1,5 +1,6 @@
 import {
   IsBoolean,
+  IsDateString,
   IsNumber,
   IsOptional,
   IsString,
@@ -15,6 +16,11 @@ import { BaseRichEntity } from '../_common';
 
 @Entity('price_snapshot')
 @Index('price_snapshot_product_created_idx', ['productId', 'createdAt'])
+@Index(
+  'price_snapshot_product_captured_uindex',
+  ['productId', 'capturedOn'],
+  { unique: true },
+)
 export class PriceSnapshotEntity extends BaseRichEntity
   implements EntityPriceSnapshot {
   @GuidV7Column()
@@ -41,6 +47,13 @@ export class PriceSnapshotEntity extends BaseRichEntity
   @IsBoolean()
   @Column({ type: 'boolean', default: false })
   public promo!: boolean;
+
+  // The calendar day this snapshot belongs to, as a UTC date. Paired with a
+  // unique index on (productId, capturedOn) to enforce one row per product per
+  // day at the database level, replacing the old app-only convention.
+  @IsDateString()
+  @Column({ type: 'date', default: () => 'CURRENT_DATE' })
+  public capturedOn!: string;
 
   @ManyToOne(
     'ProductEntity',

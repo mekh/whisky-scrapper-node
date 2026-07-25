@@ -8,8 +8,14 @@ import {
 } from 'class-validator';
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 
-import { RETAIL_CHAIN_MAX_LENGTH, STORE_CATEGORY_MAX_LENGTH } from '~constants';
+import {
+  RETAIL_CHAIN_MAX_LENGTH,
+  STORE_CATEGORY_MAX_LENGTH,
+  STORE_GROUP_MAX_LENGTH,
+  SYNC_ENGINE_MAX_LENGTH,
+} from '~constants';
 import { GuidV7Column } from '~decorators/columns';
+import { DEFAULT_SYNC_ENGINE } from '~enums';
 import type { EntityStore, EntityStoreConfig, ID } from '~types';
 
 import { BaseRichEntity } from '../_common';
@@ -48,6 +54,17 @@ export class StoreConfigEntity extends BaseRichEntity
   @MaxLength(STORE_CATEGORY_MAX_LENGTH)
   @Column({ length: STORE_CATEGORY_MAX_LENGTH, nullable: true })
   public category?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(STORE_GROUP_MAX_LENGTH)
+  @Column({ length: STORE_GROUP_MAX_LENGTH, nullable: true })
+  public group?: string;
+
+  @IsString()
+  @MaxLength(SYNC_ENGINE_MAX_LENGTH)
+  @Column({ length: SYNC_ENGINE_MAX_LENGTH, default: DEFAULT_SYNC_ENGINE })
+  public engine!: string;
 
   @ManyToOne(
     'StoreEntity',

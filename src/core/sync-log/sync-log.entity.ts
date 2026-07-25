@@ -4,9 +4,11 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  MaxLength,
 } from 'class-validator';
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 
+import { STORE_GROUP_MAX_LENGTH, SYNC_TRIGGER_MAX_LENGTH } from '~constants';
 import { GuidV7Column } from '~decorators/columns';
 import type { EntityStore, EntitySyncLog, ID } from '~types';
 
@@ -14,6 +16,11 @@ import { BaseRichEntity } from '../_common';
 
 @Entity('sync_log')
 @Index('sync_log_store_created_idx', ['storeId', 'createdAt'])
+// The concurrency lock: a partial unique index over an expression
+// (group ?? storeId) with a WHERE success IS NULL predicate. TypeORM's
+// decorator cannot express either, so it is created by hand in the migration
+// and kept out of schema management with synchronize: false.
+@Index('sync_log_running_uindex', { synchronize: false })
 export class SyncLogEntity extends BaseRichEntity implements EntitySyncLog {
   @GuidV7Column()
   public storeId!: ID;
@@ -48,6 +55,18 @@ export class SyncLogEntity extends BaseRichEntity implements EntitySyncLog {
   @IsOptional()
   @Column({ type: 'timestamp', precision: null, nullable: true })
   public finishedAt?: Date;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(STORE_GROUP_MAX_LENGTH)
+  @Column({ length: STORE_GROUP_MAX_LENGTH, nullable: true })
+  public group?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(SYNC_TRIGGER_MAX_LENGTH)
+  @Column({ length: SYNC_TRIGGER_MAX_LENGTH, nullable: true })
+  public trigger?: string;
 
   @ManyToOne(
     'StoreEntity',

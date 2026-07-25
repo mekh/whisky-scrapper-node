@@ -6,9 +6,13 @@ import { StoreListItem } from '~types';
 import { StoreEntity } from './store.entity';
 
 // Store joined with its 1:1 scrape config; ordered by display name.
+// sc."group" must stay quoted — group is a reserved SQL keyword, and this is
+// raw SQL (the query builder would quote it for us, this hand-written string
+// does not).
 const STORE_WITH_CONFIG_SQL = `
   SELECT st.id, st.slug, st.name, st."baseUrl", st.color, st.active,
-         sc.tier, sc."needsBrowser", sc."retailChain", sc.category
+         sc.tier, sc."needsBrowser", sc."retailChain", sc.category,
+         sc."group", sc.engine
   FROM store st
   LEFT JOIN store_config sc ON sc."storeId" = st.id
 `;

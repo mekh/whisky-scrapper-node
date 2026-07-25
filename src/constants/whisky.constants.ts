@@ -4,6 +4,9 @@ export const BASE_URL_MAX_LENGTH = 512;
 export const COLOR_MAX_LENGTH = 16;
 export const RETAIL_CHAIN_MAX_LENGTH = 64;
 export const STORE_CATEGORY_MAX_LENGTH = 64;
+export const STORE_GROUP_MAX_LENGTH = 32;
+export const SYNC_ENGINE_MAX_LENGTH = 16;
+export const SYNC_TRIGGER_MAX_LENGTH = 16;
 
 export const PRODUCT_SKU_MAX_LENGTH = 128;
 export const PRODUCT_URL_MAX_LENGTH = 1024;

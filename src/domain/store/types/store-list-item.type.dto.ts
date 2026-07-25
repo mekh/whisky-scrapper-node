@@ -46,6 +46,14 @@ export class StoreListItemType implements StoreListItem {
   public category!: string | null;
 
   @IsOptional()
+  @IsString()
+  public group!: string | null;
+
+  @IsOptional()
+  @IsString()
+  public engine!: string | null;
+
+  @IsOptional()
   @IsDate()
   @Type(() => Date)
   public lastSuccessfulSyncAt!: Date | null;

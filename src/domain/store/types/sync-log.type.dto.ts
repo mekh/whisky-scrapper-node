@@ -48,4 +48,12 @@ export class SyncLogType implements EntitySyncLog {
   @IsDate()
   @Type(() => Date)
   public finishedAt?: Date;
+
+  @IsOptional()
+  @IsString()
+  public group?: string;
+
+  @IsOptional()
+  @IsString()
+  public trigger?: string;
 }

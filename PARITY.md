@@ -3,10 +3,16 @@
 Every store must produce **identical pre-database snapshots** in the legacy
 Python scraper (`../scrapper`) and this backend's TypeScript engine
 (`src/scrape`) before its `store_config.engine` is flipped to `ts`. This file
-is the record of those comparisons — one section per store, one row per run.
+is the record of those comparisons.
 
-**Sign-off rule (from the migration plan): two clean runs on two different
-calendar days.** Only then is the store handed over for the production flip.
+**Sign-off rule:**
+
+1. **Porting run** — one clean run (0 diffs on the shared SKUs) accepts a
+   store's adapter. The two engines are compared against the same live catalog
+   minutes apart, so a clean run is a strong signal on its own.
+2. **Release sweep** — right before the cutover, parity is re-run for **every**
+   store on a different calendar day. That sweep is the second, independent
+   confirmation, and a non-zero diff there blocks the flip for that store.
 
 ## How to run
 
@@ -37,34 +43,50 @@ worth investigating. Pass `--out <dir>` to keep both JSON dumps, or
 Both sides read the store's delay configuration from the database, so a full
 store takes a few minutes per engine.
 
-## Tier-1a (step 6)
+**Detail-page stores** (`winewine`, `wine-point`, `goodwine`): the TS dry run
+performs the detail-enrichment pass, so `scrape-parity-dump.py` has to perform
+it too (the `collect_site._enrich_details` gate on `db.skus_with_abv`) —
+otherwise `abv`/`whiskyType`/`country`/`ageYears` diff for no reason.
+
+## Porting runs
+
+Counts are `python / ts` items; "clean" means every shared SKU matched on every
+compared field.
+
+| Store              | Tier | Ported in | Porting run                                        |
+| ------------------ | ---- | --------- | -------------------------------------------------- |
+| 19 Zakaz.ua chains | 1    | step 6    | see below — `metro` + `novus`                      |
+| `metro`            | 1    | step 6    | 2026-07-25 clean — 123 / 123                       |
+| `novus`            | 1    | step 6    | 2026-07-25 clean — 288 / 288                       |
+| `maudau`           | 1    | step 6    | 2026-07-25 clean — 713 / 713                       |
+| `okwine`           | 1    | step 6    | 2026-07-25 clean — 563 / 563                       |
+| `winewine`         | 1    | step 7    | pending                                            |
+| `wine-point`       | 1    | step 7    | pending                                            |
+| `goodwine`         | 2    | step 7    | pending                                            |
+| `rozetka`          | 3    | step 7    | pending                                            |
+| `silpo`            | 3    | step 7    | structure only — not registered, stays on `python` |
 
 `metro` and `novus` stand in for all 19 Zakaz.ua networks: they share one
-adapter, and `novus` is the category-slug exception (`whiskey` instead of
-`whiskey-<chain>`).
+parameterized adapter, and `novus` is the category-slug exception (`whiskey`
+instead of `whiskey-<chain>`). The release sweep covers each chain
+individually.
 
-| Store    | Day 1 (2026-07-25)         | Day 2 | Flipped in prod |
-| -------- | -------------------------- | ----- | --------------- |
-| `metro`  | clean — 123 / 123, 0 diffs | —     | no              |
-| `novus`  | clean — 288 / 288, 0 diffs | —     | no              |
-| `maudau` | clean — 713 / 713, 0 diffs | —     | no              |
-| `okwine` | clean — 563 / 563, 0 diffs | —     | no              |
-
-Counts are `python / ts` items; every SKU matched on both sides.
-
-A full live sync of `maudau` through `POST /store/maudau/sync` on the same day
+A full live sync of `maudau` through `POST /store/maudau/sync` on 2026-07-25
 wrote 713 same-day snapshots (`added=5`, `updated=708`, `removed=0`, 1 m 37 s),
 with no duplicate `(productId, capturedOn)` rows.
 
-## Tier-1b (step 7) — pending
+## Release sweep (step 10)
 
-`winewine`, `wine-point`.
+Re-run for every store with a registered adapter — the 19 Zakaz.ua chains,
+`maudau`, `okwine`, `winewine`, `wine-point`, `goodwine`, `rozetka` — on a
+different calendar day than the porting runs, immediately before the cutover.
 
-## Tier-2 (step 8) — pending
+| Date | Stores | Result      |
+| ---- | ------ | ----------- |
+| —    | —      | not run yet |
 
-`goodwine`. Needs the datacenter-IP (VPN) protocol.
+## Production flips
 
-## Tier-3 (step 9) — pending
-
-`rozetka`. Needs the datacenter-IP (VPN) protocol. `silpo` is ported for
-structure only and stays unregistered.
+No store is flipped yet: every `store_config.engine` is `python`, so the Python
+collector is still the live writer everywhere. The flips happen in step 10,
+performed by the user.

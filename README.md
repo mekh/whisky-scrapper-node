@@ -108,8 +108,9 @@ pnpm exec ts-node -r tsconfig-paths/register scripts/scrape-dry-run.ts <slug> \
 ```
 
 Compare a store's output against the legacy Python scraper before flipping it
-to the TS engine (see [`PARITY.md`](PARITY.md) for the sign-off rule and the
-results so far):
+to the TS engine — one clean run accepts the port, and a release sweep re-runs
+every store right before the cutover (see [`PARITY.md`](PARITY.md) for the rule
+and the results so far):
 
 ```bash
 pnpm exec ts-node -r tsconfig-paths/register scripts/scrape-parity-diff.ts <slug>

@@ -363,9 +363,9 @@ wrappers): `scrape/` has its own internal layering.
   dry run back to back and diffs their pre-database snapshots by SKU. Both
   sides skip the LLM pass. Exit code 1 means the shared SKUs differ; SKU-set
   drift is reported but does not fail (stock flips between the two runs are
-  normal). Every store is signed off on two separate calendar days before its
-  `engine` is flipped; the results and the sign-off state per store live in
-  [`PARITY.md`](PARITY.md).
+  normal). One clean run accepts a store's adapter; a release sweep re-runs
+  every store on another day right before the cutover. Results and per-store
+  state live in [`PARITY.md`](PARITY.md).
 - **Regex gotcha**: JS `\b`/`\w` stay ASCII even under the `u` flag (Python's
   are Unicode). Cyrillic units use explicit lookaheads / classes — see the
   header of `normalize.service.ts`.

@@ -30,6 +30,9 @@ services:
       - '4000:4000'
     # A sync may be in flight on SIGTERM; give it time to wind down.
     stop_grace_period: 60s
+    # A `rozetka` sync runs Chromium inside this container: cap it so a browser
+    # leak cannot starve the host. One context at a time needs far less.
+    mem_limit: 2g
     networks:
       - whisky-be
       - whisky-db

@@ -11,6 +11,13 @@ const DEFAULT_MAX_PARALLEL_TRACKS = 4;
 
 const DEFAULT_STORE_TIMEOUT_MS = 15 * 60 * 1000;
 
+/**
+ * The browser tier is an order of magnitude slower: `rozetka` renders ~38 pages
+ * in a fresh browser context each, at a 10-20 s politeness delay, so a full
+ * pass takes ~20 minutes.
+ */
+const DEFAULT_BROWSER_STORE_TIMEOUT_MS = 45 * 60 * 1000;
+
 @Injectable()
 export class SyncConfig extends BaseConfig {
   /**
@@ -50,4 +57,15 @@ export class SyncConfig extends BaseConfig {
   @IsPositive()
   public readonly storeTimeoutMs = this.asNumber('SYNC_STORE_TIMEOUT_MS')
     ?? DEFAULT_STORE_TIMEOUT_MS;
+
+  /**
+   * The same budget for a store that scrapes through a headless browser
+   * (`store_config.needsBrowser`), which is far slower than any HTTP store and
+   * would otherwise never finish inside `storeTimeoutMs`.
+   */
+  @IsInt()
+  @IsPositive()
+  public readonly browserStoreTimeoutMs =
+    this.asNumber('SYNC_BROWSER_STORE_TIMEOUT_MS')
+      ?? DEFAULT_BROWSER_STORE_TIMEOUT_MS;
 }

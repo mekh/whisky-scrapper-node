@@ -107,7 +107,9 @@ export default [
       ],
       '@typescript-eslint/no-unused-vars': [
         'error',
-        { ignoreRestSiblings: true },
+        // A leading underscore marks a parameter a signature requires but the
+        // implementation ignores (e.g. a no-op base-class hook).
+        { ignoreRestSiblings: true, argsIgnorePattern: '^_' },
       ],
       '@typescript-eslint/no-unnecessary-type-parameters': 'off',
       '@typescript-eslint/no-confusing-void-expression': 'off',

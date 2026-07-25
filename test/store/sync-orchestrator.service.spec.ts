@@ -100,6 +100,7 @@ function makeOrchestrator(
     timezone: 'Europe/Kyiv',
     maxParallelTracks: 4,
     storeTimeoutMs: 900000,
+    browserStoreTimeoutMs: 2700000,
     ...over,
   } as SyncConfig;
 
@@ -288,6 +289,23 @@ describe('SyncOrchestratorService.startStoreSync', () => {
 
     expect(outcome.success).toBe(false);
     expect(outcome.error).toContain('timed out');
+  });
+
+  it('gives a browser-tier store the larger time budget', async () => {
+    const { orchestrator, syncLogs, scrape } = makeOrchestrator(
+      makeStore({ slug: 'rozetka', needsBrowser: true }),
+      { storeTimeoutMs: 20, browserStoreTimeoutMs: 3_600_000 },
+    );
+
+    scrape.collectStore.mockReturnValue(new Promise<SiteResult>(() => {}));
+
+    const pending = orchestrator.startStoreSync('rozetka', SyncTrigger.MANUAL);
+
+    await pending;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    // The HTTP budget would already have expired; the browser one has not.
+    expect(syncLogs.finish).not.toHaveBeenCalled();
   });
 
   it('mirrors listing progress into the sync-log row', async () => {

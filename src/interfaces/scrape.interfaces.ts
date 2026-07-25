@@ -254,6 +254,15 @@ export interface ScrapeAdapter {
   enrichDetail(snap: ProductSnapshot): Promise<boolean>;
 
   /**
+   * Waits out the store's jittered politeness delay. The adapter paces its own
+   * listing pagination; this exposes the same delay to the detail-enrichment
+   * loop, which the engine drives.
+   *
+   * @returns Resolves once the delay has elapsed.
+   */
+  sleep(): Promise<void>;
+
+  /**
    * Releases the adapter's resources (HTTP client, browser).
    *
    * @returns Resolves once everything is closed.

@@ -98,13 +98,21 @@ pnpm start        # nest start (watch) — API on http://localhost:4000
 | `pnpm migration:run` / `:revert` | Apply / roll back migrations                                                                      |
 | `pnpm clean-names`               | Maintenance: normalize existing product names                                                     |
 
-Dry-run the in-process scraper for one store without writing (adapters exist
-today for the 19 Zakaz.ua networks, `maudau` and `okwine`; the rest are ported
-in later migration steps):
+Dry-run the in-process scraper for one store without writing (every store the
+project scrapes has an adapter — the 19 Zakaz.ua networks, `maudau`, `okwine`,
+`winewine`, `wine-point`, `goodwine` and `rozetka`; only the disabled `silpo`
+is left out):
 
 ```bash
 pnpm exec ts-node -r tsconfig-paths/register scripts/scrape-dry-run.ts <slug> \
   [--json]
+```
+
+`rozetka` is the one store that drives a real browser, so it needs a local
+Chromium once (the Docker image installs its own):
+
+```bash
+pnpm exec playwright install chromium
 ```
 
 Compare a store's output against the legacy Python scraper before flipping it
@@ -291,3 +299,5 @@ log) surfaces problems.
 - The endpoint/field map for the frontend is [`MIGRATION.md`](MIGRATION.md).
 - Python → TypeScript scraper parity results and the per-store sign-off rule
   are in [`PARITY.md`](PARITY.md).
+- Known defects that are deliberately postponed until the scrape migration is
+  finished are in [`FOLLOWUPS.md`](FOLLOWUPS.md).

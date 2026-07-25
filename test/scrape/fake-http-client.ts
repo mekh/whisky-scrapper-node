@@ -5,13 +5,20 @@ import type {
 } from '../../src/scrape/http/http-client.interfaces';
 
 /**
- * One canned response of the fake client.
+ * One canned response of the fake client. Exactly one of `body` / `text`
+ * carries the payload: `body` for the JSON-API stores, `text` for the ones
+ * whose adapters parse raw HTML.
  */
 export interface FakeHttpReply {
   /**
-   * The JSON body the response yields.
+   * A value serialized to JSON as the response body.
    */
-  body: unknown;
+  body?: unknown;
+
+  /**
+   * A verbatim response body, used as-is (HTML fixtures).
+   */
+  text?: string;
 
   /**
    * Response headers, lower-cased.
@@ -58,7 +65,7 @@ export class FakeHttpClient implements ScrapeHttpClient {
     this.calls.push({ url, params: { ...options?.params } });
 
     const reply = this.handler(url, options);
-    const body = JSON.stringify(reply.body);
+    const body = reply.text ?? JSON.stringify(reply.body);
 
     return {
       status: 200,

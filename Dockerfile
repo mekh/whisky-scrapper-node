@@ -15,7 +15,10 @@ RUN pnpm i --frozen-lockfile --ignore-scripts --prod
 RUN pnpm store prune
 
 FROM base AS service_run
-RUN pwd
+
+# Browsers live outside any home directory so the unprivileged user can read
+# them (same layout the legacy scraper image uses).
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 COPY --from=service_build /app/package.json /app/pnpm-lock.yaml ./
 COPY --from=service_build /app/dist ./dist
@@ -23,6 +26,24 @@ COPY --from=service_build /app/node_modules ./node_modules
 
 RUN apt update
 RUN apt install -y mc nano iputils-ping net-tools telnet
-# CMD ["ping", "-i", "600", "google.com"]
+
+# The browser tier (`rozetka`) needs a real Chromium plus its shared libraries
+# (--with-deps installs libatk and friends). `playwright` is pinned to an exact
+# version in package.json, so the browser build installed here always matches
+# the client that drives it.
+#
+# UNVERIFIED: this stage has never been built (the daemon on the dev machine
+# cannot pull `node:24`). It mirrors ../scrapper/Dockerfile, which runs the same
+# browser in production, but nothing here is proven — including whether the
+# container's default /dev/shm is large enough for Chromium. Build it, run
+# Chromium as appuser, and do one real `rozetka` sync in the container before
+# flipping that store to `ts`. See FOLLOWUPS.md, item 2.
+RUN ./node_modules/.bin/playwright install --with-deps chromium
+
+# Chromium's sandbox refuses to run as root; the user owns the code and the
+# browsers.
+RUN useradd --create-home --uid 10001 appuser \
+    && chown -R appuser:appuser /app /ms-playwright
+USER appuser
 
 CMD ["node", "dist/src/main.js"]

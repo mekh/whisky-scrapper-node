@@ -57,6 +57,7 @@ function rawSnap(over: Partial<ProductSnapshot>): ProductSnapshot {
 function makeService(
   adapter: ScrapeAdapter,
   persist: { persist: jest.Mock },
+  skusWithAbv: Set<string> = new Set<string>(),
 ): ScrapeService {
   const stores = {
     findWithConfigBySlug: jest.fn().mockResolvedValue(STORE),
@@ -67,7 +68,7 @@ function makeService(
   } as unknown as CoreStoreConfigService;
 
   const products = {
-    skusWithAbv: jest.fn().mockResolvedValue(new Set<string>()),
+    skusWithAbv: jest.fn().mockResolvedValue(skusWithAbv),
   } as unknown as CoreProductService;
 
   const factory: ScrapeAdapterFactory = { create: () => adapter };
@@ -99,6 +100,7 @@ describe('ScrapeService.collectStore', () => {
         rawSnap({ storeSku: 'b', inStock: false }),
       ]),
       enrichDetail: jest.fn(),
+      sleep: jest.fn().mockResolvedValue(undefined),
       close,
     };
     const persist = { persist: jest.fn() };
@@ -127,6 +129,7 @@ describe('ScrapeService.collectStore', () => {
         rawSnap({ storeSku: 'gone', inStock: false }),
       ]),
       enrichDetail: jest.fn(),
+      sleep: jest.fn().mockResolvedValue(undefined),
       close: jest.fn().mockResolvedValue(undefined),
     };
     const persist = {
@@ -154,5 +157,61 @@ describe('ScrapeService.collectStore', () => {
       added: 1,
       removed: 1,
     });
+  });
+
+  it(
+    'enriches only the items whose ABV is not stored, and paces them',
+    async () => {
+      const sleep = jest.fn().mockResolvedValue(undefined);
+      const enrichDetail = jest.fn().mockResolvedValue(true);
+      const adapter: ScrapeAdapter = {
+        slug: 'faux',
+        supportsDetail: true,
+        fetchListing: jest.fn().mockResolvedValue([
+          rawSnap({ storeSku: 'known' }),
+          rawSnap({ storeSku: 'fresh' }),
+        ]),
+        enrichDetail,
+        sleep,
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+
+      const service = makeService(
+        adapter,
+        { persist: jest.fn() },
+        new Set(['known']),
+      );
+
+      await service.collectStore('faux', { dryRun: true });
+
+      expect(enrichDetail).toHaveBeenCalledTimes(1);
+      expect(enrichDetail).toHaveBeenCalledWith(
+        expect.objectContaining({ storeSku: 'fresh' }),
+      );
+      expect(sleep).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('a failing detail page does not abort the enrichment pass', async () => {
+    const enrichDetail = jest.fn()
+      .mockRejectedValueOnce(new Error('502'))
+      .mockResolvedValue(true);
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: true,
+      fetchListing: jest.fn().mockResolvedValue([
+        rawSnap({ storeSku: 'a' }),
+        rawSnap({ storeSku: 'b' }),
+      ]),
+      enrichDetail,
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const result = await makeService(adapter, { persist: jest.fn() })
+      .collectStore('faux', { dryRun: true });
+
+    expect(enrichDetail).toHaveBeenCalledTimes(2);
+    expect(result.found).toBe(2);
   });
 });

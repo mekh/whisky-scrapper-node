@@ -12,8 +12,12 @@ import type {
 import { HttpClientFactory } from '../http/http-client.factory';
 import { NormalizeService } from '../normalize/normalize.service';
 
+import { GoodwineAdapter } from './goodwine';
 import { MaudauAdapter } from './maudau';
 import { OkwineAdapter } from './okwine';
+import { RozetkaAdapter } from './rozetka';
+import { WinePointAdapter } from './wine-point';
+import { WinewineAdapter } from './winewine';
 import { ZakazAdapter } from './zakaz';
 
 import type { AdapterDeps } from './adapter-registry.interfaces';
@@ -21,7 +25,8 @@ import type { AdapterDeps } from './adapter-registry.interfaces';
 /**
  * Builders for stores that run their own platform, keyed by slug. Every
  * Zakaz.ua network is served by the parameterized `ZakazAdapter` instead and
- * is therefore absent here.
+ * is therefore absent here, and so is `silpo`: it stays disabled and owned by
+ * the legacy Python scraper, so `SilpoAdapter` is deliberately not registered.
  */
 const SPECIALIZED: Record<string, (deps: AdapterDeps) => ScrapeAdapter> = {
   maudau: (deps) =>
@@ -39,13 +44,39 @@ const SPECIALIZED: Record<string, (deps: AdapterDeps) => ScrapeAdapter> = {
       deps.normalizer,
       deps.reporter,
     ),
+  winewine: (deps) =>
+    new WinewineAdapter(
+      deps.spec,
+      deps.delayMultiplier,
+      deps.http,
+      deps.normalizer,
+      deps.reporter,
+    ),
+  'wine-point': (deps) =>
+    new WinePointAdapter(
+      deps.spec,
+      deps.delayMultiplier,
+      deps.http,
+      deps.normalizer,
+      deps.reporter,
+    ),
+  goodwine: (deps) =>
+    new GoodwineAdapter(
+      deps.spec,
+      deps.delayMultiplier,
+      deps.http,
+      deps.normalizer,
+      deps.reporter,
+    ),
+  rozetka: (deps) =>
+    new RozetkaAdapter(deps.spec, deps.delayMultiplier, deps.reporter),
 };
 
 /**
  * Resolves the adapter for a store. Specialized stores are matched by slug and
- * every Zakaz.ua network (a `retailChain`) shares one parameterized adapter —
- * the remaining stores are wired in as they are ported (steps 7-9). An
- * unresolved slug is a configuration error.
+ * every Zakaz.ua network (a `retailChain`) shares one parameterized adapter.
+ * Every store the project scrapes is registered except `silpo`, which is
+ * disabled; an unresolved slug is a configuration error.
  */
 @Injectable()
 export class AdapterRegistryService implements ScrapeAdapterFactory {

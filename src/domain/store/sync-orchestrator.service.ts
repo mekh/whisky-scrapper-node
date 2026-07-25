@@ -210,9 +210,11 @@ export class SyncOrchestratorService implements OnModuleInit {
   }
 
   /**
-   * Collects a store under the per-store time budget. The timeout only ends
-   * the wait: the abandoned collection keeps running until it finishes on its
-   * own, but the run is already recorded as failed and its lock released.
+   * Collects a store under the per-store time budget, which is the larger
+   * browser-tier one for a store that drives a headless browser. The timeout
+   * only ends the wait: the abandoned collection keeps running until it
+   * finishes on its own, but the run is already recorded as failed and its lock
+   * released.
    *
    * @param store - The store to collect.
    * @param logId - The open sync-log row id, for progress touches.
@@ -223,7 +225,9 @@ export class SyncOrchestratorService implements OnModuleInit {
     store: StoreListItem,
     logId: ID,
   ): Promise<SiteResult> {
-    const timeoutMs = this.config.storeTimeoutMs;
+    const timeoutMs = store.needsBrowser === true
+      ? this.config.browserStoreTimeoutMs
+      : this.config.storeTimeoutMs;
     const signal = AbortSignal.timeout(timeoutMs);
     const expired = new Promise<never>((_resolve, reject) => {
       signal.addEventListener(

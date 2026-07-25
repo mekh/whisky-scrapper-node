@@ -1,8 +1,12 @@
 import 'reflect-metadata';
 
 import { AdapterRegistryService } from '../../src/scrape/adapters/adapter-registry.service';
+import { GoodwineAdapter } from '../../src/scrape/adapters/goodwine';
 import { MaudauAdapter } from '../../src/scrape/adapters/maudau';
 import { OkwineAdapter } from '../../src/scrape/adapters/okwine';
+import { RozetkaAdapter } from '../../src/scrape/adapters/rozetka';
+import { WinePointAdapter } from '../../src/scrape/adapters/wine-point';
+import { WinewineAdapter } from '../../src/scrape/adapters/winewine';
 import { ZakazAdapter } from '../../src/scrape/adapters/zakaz';
 import { NormalizeService } from '../../src/scrape/normalize/normalize.service';
 
@@ -100,12 +104,31 @@ describe('AdapterRegistryService', () => {
 
     expect(registry.create(spec('maudau'))).toBeInstanceOf(MaudauAdapter);
     expect(registry.create(spec('okwine'))).toBeInstanceOf(OkwineAdapter);
+    expect(registry.create(spec('winewine'))).toBeInstanceOf(WinewineAdapter);
+    expect(registry.create(spec('wine-point')))
+      .toBeInstanceOf(WinePointAdapter);
+    expect(registry.create(spec('goodwine', { tier: 2 })))
+      .toBeInstanceOf(GoodwineAdapter);
+    expect(registry.create(spec('rozetka', { tier: 3, needsBrowser: true })))
+      .toBeInstanceOf(RozetkaAdapter);
   });
 
-  it('rejects a store with neither an adapter nor a chain', () => {
+  it('reports which of the detail-page stores fetch product pages', () => {
     const registry = makeRegistry();
 
-    expect(() => registry.create(spec('rozetka'))).toThrow(
+    expect(registry.create(spec('winewine')).supportsDetail).toBe(true);
+    expect(registry.create(spec('wine-point')).supportsDetail).toBe(true);
+    expect(registry.create(spec('goodwine')).supportsDetail).toBe(true);
+    expect(registry.create(spec('rozetka')).supportsDetail).toBe(false);
+    expect(registry.create(spec('maudau')).supportsDetail).toBe(false);
+  });
+
+  it('leaves the disabled silpo store without an adapter', () => {
+    const registry = makeRegistry();
+
+    const silpo = spec('silpo', { tier: 3, needsBrowser: true });
+
+    expect(() => registry.create(silpo)).toThrow(
       'No scrape adapter registered for store',
     );
   });

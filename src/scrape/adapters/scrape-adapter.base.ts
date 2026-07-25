@@ -49,11 +49,12 @@ export abstract class ScrapeAdapterBase implements ScrapeAdapter {
   /**
    * Fills a snapshot's empty fields from its detail page. Default no-op for
    * adapters whose listing already carries every field; detail-capable
-   * adapters override this with a `snap` parameter.
+   * adapters override it.
    *
-   * @returns Always false.
+   * @param _snap - The snapshot that would be enriched; unused here.
+   * @returns Always false — nothing was fetched.
    */
-  public enrichDetail(): Promise<boolean> {
+  public enrichDetail(_snap: ProductSnapshot): Promise<boolean> {
     return Promise.resolve(false);
   }
 
@@ -65,11 +66,12 @@ export abstract class ScrapeAdapterBase implements ScrapeAdapter {
   public abstract close(): Promise<void>;
 
   /**
-   * Sleeps for the store's jittered politeness delay between requests.
+   * Sleeps for the store's jittered politeness delay between requests. Public
+   * because the engine paces the detail-enrichment loop it drives itself.
    *
    * @returns Resolves once the delay has elapsed.
    */
-  protected sleep(): Promise<void> {
+  public sleep(): Promise<void> {
     return politeSleep(
       this.spec.delayFrom,
       this.spec.delayTo,

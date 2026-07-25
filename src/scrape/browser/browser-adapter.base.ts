@@ -5,7 +5,7 @@ import {
   newStealthContext,
 } from './browser-context.factory';
 
-import type { Browser } from 'playwright';
+import type { Browser, Page } from 'playwright';
 
 const NAVIGATION_TIMEOUT_MS = 60_000;
 const SELECTOR_TIMEOUT_MS = 35_000;
@@ -44,11 +44,44 @@ export abstract class BrowserAdapterBase extends ScrapeAdapterBase {
    * @param waitSelector - Optional selector awaited before evaluating.
    * @returns The extractor's result.
    */
-  protected async renderEval(
+  protected renderEval(
     url: string,
     script: string,
     waitSelector?: string,
   ): Promise<unknown> {
+    return this.render(
+      url,
+      waitSelector,
+      (page) => page.evaluate(`(${script})()`),
+    );
+  }
+
+  /**
+   * Navigates to a URL in a fresh stealth context and returns the rendered
+   * HTML, for adapters that parse the DOM outside the browser.
+   *
+   * @param url - Absolute URL to open.
+   * @param waitSelector - Optional selector awaited before reading the DOM.
+   * @returns The page's HTML.
+   */
+  protected renderHtml(url: string, waitSelector?: string): Promise<string> {
+    return this.render(url, waitSelector, (page) => page.content());
+  }
+
+  /**
+   * Opens a page in a fresh stealth context, waits out the Cloudflare
+   * challenge and the store's politeness delay, then reads it.
+   *
+   * @param url - Absolute URL to open.
+   * @param waitSelector - Optional selector awaited before reading.
+   * @param read - Extracts the result from the rendered page.
+   * @returns Whatever `read` produced.
+   */
+  private async render<T>(
+    url: string,
+    waitSelector: string | undefined,
+    read: (page: Page) => Promise<T>,
+  ): Promise<T> {
     const browser = await this.ensureBrowser();
     const context = await newStealthContext(browser);
     const page = await context.newPage();
@@ -69,7 +102,7 @@ export abstract class BrowserAdapterBase extends ScrapeAdapterBase {
 
       await this.sleep();
 
-      return await page.evaluate(`(${script})()`);
+      return await read(page);
     } finally {
       await context.close();
     }

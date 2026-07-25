@@ -344,19 +344,56 @@ wrappers): `scrape/` has its own internal layering.
 - Layout: `normalize/` (regex/keyword port of `normalize.py`; reuses
   `BrandUtils.canonical` + `ProductNameUtils.clean`, no `match_key`/exclude-
   flavors), `http/` (plain fetch / `impit` impersonation / retrying wrapper +
-  `HTTP_STRATEGY_BY_SLUG`), `browser/` (Playwright stealth context, fresh
-  context per page), `llm/` (`@anthropic-ai/sdk` fallback, gated on
-  `ANTHROPIC_API_KEY`), `adapters/` (base classes + `AdapterRegistryService`
-  - one folder per store platform), `persist/` (one-store, one transaction
-    write pipeline over the core services), and `ScrapeService`
-    (`collectStore(slug, { dryRun })`).
-- **Adapters ported so far**: `zakaz/` (one parameterized adapter for all 19
-  Zakaz.ua networks — chain and category come from `store_config`, prices are
-  kopecks), `maudau/` (catalog JSON API, available items only, early stop after
-  2 pages without a new item; the Python RSC-payload fallback is deliberately
-  not ported), `okwine/` (filter API, volume/age from the product's
-  characteristics). The registry resolves a specialized adapter by slug and
-  falls back to `ZakazAdapter` for any store with a `retailChain`/`category`.
+  `HTTP_STRATEGY_BY_SLUG`), `html/` (cheerio helpers for the SSR stores),
+  `browser/` (Playwright stealth context, fresh context per page), `llm/`
+  (`@anthropic-ai/sdk` fallback, gated on `ANTHROPIC_API_KEY`), `adapters/`
+  (base classes + `AdapterRegistryService` - one folder per store platform),
+  `persist/` (one-store, one transaction write pipeline over the core
+  services), and `ScrapeService` (`collectStore(slug, { dryRun })`).
+- **Adapter base classes** (`adapters/`): `ScrapeAdapterBase` (spec, pacing,
+  progress, snapshot defaults) → `HttpAdapterBase` (owns the HTTP client) →
+  `PagedHtmlAdapterBase` (walk `cardSelector` pages until one yields no new
+  SKU; a page that fails ends the walk unless nothing was collected yet, in
+  which case it throws) → `WooCommerceAdapterBase` (shared card markup,
+  `/whiskey/page/N/` pagination and specification table of the two WooCommerce
+  stores). `BrowserAdapterBase` is the parallel branch for the browser tier.
+- **Adapters** — every store the project scrapes now has one: `zakaz/` (one
+  parameterized adapter for all 19 Zakaz.ua networks — chain and category come
+  from `store_config`, prices are kopecks), `maudau/` (catalog JSON API,
+  available items only, early stop after 2 pages without a new item; the Python
+  RSC-payload fallback is deliberately not ported), `okwine/` (filter API,
+  volume/age from the product's characteristics), `winewine/` and `wine-point/`
+  (WooCommerce SSR via cheerio, `supportsDetail`; wine-point takes the
+  single-bottle price only and never the 3+/6+ tiers), `goodwine/` (Magento
+  `data-*` card attributes, `?p=N` pagination, `li.product-attr-item` details),
+  `rozetka/` (browser tier). `silpo/` is ported for structural parity but
+  deliberately **not registered**: the store is inactive and its `engine` stays
+  `python`. The registry resolves a specialized adapter by slug and falls back
+  to `ZakazAdapter` for any store with a `retailChain`/`category`.
+- **selectolax vs cheerio gotcha**: the Python adapters read text with
+  selectolax's `text(strip=True)`, which strips **every descendant text node
+  before joining** — cheerio's `.text()` concatenates them raw. Goodwine splits
+  `Label:Value` out of markup where label and value are separate nodes, so the
+  difference is a real parity bug. `html/html.util.ts` (`strippedText`,
+  `firstText`, `firstAttr`) reproduces the selectolax semantics; use those, not
+  `.text()`.
+- **Browser tier** (`rozetka`): Playwright drives Chromium in-process. Rozetka
+  blocks the second and later navigations inside one browser context, so every
+  page is rendered in a **fresh stealth context** (`BrowserAdapterBase`
+  `renderEval`/`renderHtml`), with one retry per page and the challenge-title
+  wait. The browser is launched lazily and closed by `adapter.close()` in
+  `ScrapeService`'s `finally`.
+  Infrastructure: the `service_run` Docker stage installs Chromium
+  (`playwright install --with-deps chromium`, `PLAYWRIGHT_BROWSERS_PATH=
+  /ms-playwright`) and drops to a non-root `appuser` (uid 10001) because
+  Chromium's sandbox refuses to run as root; compose caps the container with
+  `mem_limit: 2g`. Locally: `pnpm exec playwright install chromium` once.
+- **Detail pages**: an adapter with `supportsDetail` gets `enrichDetail(snap)`
+  calls from `ScrapeService`, gated on `products.skusWithAbv` (only items whose
+  ABV is not stored yet) and paced with `adapter.sleep()` between items — the
+  same gate and pacing as the Python `collect_site._enrich_details`. Enrichment
+  only ever fills fields that are still null, so listing values and manual
+  edits win.
 - **Parity harness**: `scripts/scrape-parity-diff.ts <slug> [--python <dump>]
   [--ts <dump>] [--out <dir>]` runs the legacy Python scraper
   (`scripts/scrape-parity-dump.py` through `../scrapper/.venv`) and the TS
@@ -391,7 +428,8 @@ wrappers): `scrape/` has its own internal layering.
   only `error.message`, so nothing else survives). A `manual` run is
   fire-and-forget (the endpoint answers `202`); a `cron` run is awaited.
 - `runStoreSync` races `collectStore` against `AbortSignal.timeout(
-  SYNC_STORE_TIMEOUT_MS)` and closes the row in `finally` — closing it releases
+  SYNC_STORE_TIMEOUT_MS)` — or `SYNC_BROWSER_STORE_TIMEOUT_MS` when the store
+  is `needsBrowser` — and closes the row in `finally`; closing it releases
   the lock, so it must happen exactly once, and the lock path is never wrapped
   in `@Transactional()` (the ALS context would leak into the background run).
   A timed-out collection is abandoned, not aborted: the row is already closed.
@@ -470,8 +508,10 @@ consumed by `@toxicoder/nestjs-valkey` (`VALKEY_HOST`, `VALKEY_PORT`,
 `ANTHROPIC_API_KEY` — LLM fallback, unset = disabled); sync vars in
 `SyncConfig` — `SYNC_CRON_ENABLED` (default false), `SYNC_CRON_EXPRESSION`
 (default `0 12 * * *`), `SYNC_TIMEZONE` (default `Europe/Kyiv`),
-`SYNC_MAX_PARALLEL_TRACKS` (4), `SYNC_STORE_TIMEOUT_MS` (900000). The two cron
-vars are read only by the scheduler added in a later step.
+`SYNC_MAX_PARALLEL_TRACKS` (4), `SYNC_STORE_TIMEOUT_MS` (900000),
+`SYNC_BROWSER_STORE_TIMEOUT_MS` (2700000 — the budget for a `needsBrowser`
+store, which needs ~20 min for a full pass and would never fit the HTTP one).
+The two cron vars are read only by the scheduler added in a later step.
 
 ## Errors
 
@@ -589,19 +629,26 @@ moved out of `../scrapper` into `src/scrape/` (plan:
 `~/.claude/plans/hazy-greeting-pearl.md`, 12 steps). Done: feasibility spike
 (GO — every store reachable from a datacenter IP), the schema overhaul
 (`group`/`engine`/`capturedOn` + `sync_log` lock), the core write path, the
-scrape engine (`normalize`/`http`/`browser`/`llm`/`persist` +
+scrape engine (`normalize`/`http`/`html`/`browser`/`llm`/`persist` +
 `ScrapeService.collectStore`), the sync orchestrator + on-demand/status
-endpoints (see "Sync orchestration"), and the tier-1a adapters (19 Zakaz.ua
-networks, `maudau`, `okwine`) with their golden tests and the parity harness.
-Pending: the remaining adapters (`winewine`/`wine-point`, `goodwine`,
-`rozetka`), the internal `@nestjs/schedule` cron, the web "Sync" button, and
-the Python decommission. **No production store is flipped yet** — every
+endpoints (see "Sync orchestration"), and **every adapter** — the 19 Zakaz.ua
+networks, `maudau`, `okwine`, `winewine`, `wine-point`, `goodwine`, `rozetka` —
+with golden tests and the parity harness (`silpo` is ported but unregistered
+and stays on Python).
+Pending: the internal `@nestjs/schedule` cron, the web "Sync" button, the
+release-day parity sweep + cutover, and the Python decommission. **No production store is flipped yet** — every
 `store_config.engine` is still `python`, so the Python collector remains the
 live writer everywhere. Until each store's `store_config.engine` is flipped to
 `ts`, the **Python collector remains the live writer** — same-day dual-writing
-is benign (the snapshot upsert is last-write-wins). Follow-up flagged in code:
-`HTTP_STRATEGY_BY_SLUG` (in `scrape/http/http-client.factory.ts`) should move to
-a `store_config` column.
+is benign (the snapshot upsert is last-write-wins).
+
+**Deferred defects live in [`FOLLOWUPS.md`](FOLLOWUPS.md)** — read it before
+touching the scrape engine. It currently holds `goodwine`'s truncating page cap,
+the never-built browser Docker stage, and `rozetka`'s wrong in-stock count. They
+are held back because the migration requires byte-identical output from both
+engines, not because they are acceptable. One more follow-up is flagged in code
+only: `HTTP_STRATEGY_BY_SLUG` (in `scrape/http/http-client.factory.ts`) should
+move to a `store_config` column.
 
 Still open:
 

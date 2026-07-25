@@ -183,7 +183,8 @@ export class ScrapeService {
 
   /**
    * Fetches detail pages for items whose ABV is not already stored (new or
-   * incomplete). One failing item does not stop the rest.
+   * incomplete), pacing the requests with the store's politeness delay. One
+   * failing item does not stop the rest.
    *
    * @param adapter - The store adapter.
    * @param storeId - The store id.
@@ -218,6 +219,8 @@ export class ScrapeService {
       if (done % ENRICH_PROGRESS_EVERY === 0 || done === pending.length) {
         reporter?.({ kind: 'enrich', done, pending: pending.length });
       }
+
+      await adapter.sleep();
     }
   }
 

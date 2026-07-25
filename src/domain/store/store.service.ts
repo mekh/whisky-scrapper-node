@@ -3,8 +3,16 @@ import { Injectable } from '@nestjs/common';
 import { CoreProductService } from '~core/product';
 import { CoreStoreService } from '~core/store';
 import { CoreSyncLogService } from '~core/sync-log';
+import { SyncTrigger } from '~enums';
 import { NotFoundError, ServerError } from '~errors';
-import { StoreDetail, StoreListItem } from '~types';
+import {
+  EntitySyncLog,
+  StoreDetail,
+  StoreListItem,
+  StoreSyncStatus,
+} from '~types';
+
+import { SyncOrchestratorService } from './sync-orchestrator.service';
 
 const RECENT_SYNC_LIMIT = 10;
 
@@ -14,6 +22,7 @@ export class StoreService {
     private readonly stores: CoreStoreService,
     private readonly products: CoreProductService,
     private readonly syncLogs: CoreSyncLogService,
+    private readonly orchestrator: SyncOrchestratorService,
   ) {}
 
   /**
@@ -97,5 +106,36 @@ export class StoreService {
     const lastSyncs = await this.syncLogs.lastSuccessfulByStore();
 
     return { ...item, lastSuccessfulSyncAt: lastSyncs.get(item.id) ?? null };
+  }
+
+  /**
+   * Starts an on-demand sync of one store. Returns as soon as the run is
+   * registered — the collection itself continues in the background.
+   *
+   * @param slug - Store slug.
+   * @returns The open sync-log row.
+   * @throws {NotFoundError} When no store has the slug.
+   * @throws {BadRequestError} When the store cannot be synced by this engine.
+   * @throws {DuplicateError} When the store or its group is already syncing.
+   */
+  public async sync(slug: string): Promise<EntitySyncLog> {
+    return this.orchestrator.startStoreSync(slug, SyncTrigger.MANUAL);
+  }
+
+  /**
+   * Lists the syncs currently in flight, for the stores page to poll.
+   *
+   * @returns One entry per running sync, oldest first.
+   */
+  public async syncStatus(): Promise<StoreSyncStatus[]> {
+    const running = await this.syncLogs.findRunning();
+
+    return running.map((run) => ({
+      storeId: run.storeId,
+      storeSlug: run.storeSlug,
+      group: run.group,
+      startedAt: run.startedAt,
+      total: run.total,
+    }));
   }
 }

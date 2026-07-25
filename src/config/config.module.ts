@@ -6,6 +6,7 @@ import { DbConfig } from './parts/db.config';
 import { JwtAccessConfig } from './parts/jwt-access.config';
 import { LoggerConfig } from './parts/logger.config';
 import { ScrapeConfig } from './parts/scrape.config';
+import { SyncConfig } from './parts/sync.config';
 import { ValidationConfig } from './parts/validation.config';
 
 const providers = [
@@ -15,6 +16,7 @@ const providers = [
   JwtAccessConfig,
   LoggerConfig,
   ScrapeConfig,
+  SyncConfig,
   ValidationConfig,
 ];
 

@@ -96,6 +96,34 @@ export interface StoreLastSync {
   lastAt: Date;
 }
 
+export interface StoreSyncStatus {
+  /**
+   * Id of the store currently being synced.
+   */
+  storeId: string;
+
+  /**
+   * Slug of the store currently being synced.
+   */
+  storeSlug: string;
+
+  /**
+   * The run's concurrency group, or null when the store is its own domain.
+   * Every store sharing this group is blocked while the run is open.
+   */
+  group: string | null;
+
+  /**
+   * When the run started.
+   */
+  startedAt: Date;
+
+  /**
+   * Products written so far, from the latest progress touch.
+   */
+  total: number;
+}
+
 export interface StoreDetail extends StoreListItem {
   /**
    * When the store first appeared (backfilled from earliest product).

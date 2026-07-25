@@ -66,6 +66,13 @@ const run = async (): Promise<void> => {
     SwaggerModule.setup('docs', app, document);
   }
 
+  /**
+   * Lets Nest run `onModuleDestroy`/`beforeApplicationShutdown` on SIGTERM, so
+   * a deploy stops the app cleanly; an in-flight sync's lock is released by
+   * the boot sweep of the next process.
+   */
+  app.enableShutdownHooks();
+
   await app.listen(config.port, config.host);
 };
 

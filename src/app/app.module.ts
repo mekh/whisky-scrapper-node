@@ -22,6 +22,7 @@ import { DomainStoreModule } from '~domain/store';
 import { DomainUserModule } from '~domain/user';
 import { ServerError } from '~errors';
 import { LoggerModule } from '~lib/logger';
+import { ScrapeModule } from '~scrape';
 
 import { ContextModule } from './context';
 import { ExceptionFilter } from './filters';
@@ -57,6 +58,7 @@ import { LogInterceptor, ValidationInterceptor } from './interceptors';
     DomainMetaModule,
     DomainStoreModule,
     DomainProductModule,
+    ScrapeModule,
   ],
   providers: [
     {

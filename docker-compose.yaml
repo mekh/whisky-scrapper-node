@@ -28,6 +28,8 @@ services:
       - LOG_COLORS=true
     ports:
       - '4000:4000'
+    # A sync may be in flight on SIGTERM; give it time to wind down.
+    stop_grace_period: 60s
     networks:
       - whisky-be
       - whisky-db

@@ -44,6 +44,8 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 | `GET /api/config`                                                                     | `GET /store` (sites + config) + fixed constants in `/meta`                                                                                   | admin              |
 | `GET /api/stores/{slug}`                                                              | `GET /store/{slug}`                                                                                                                          | admin              |
 | `PATCH /api/stores/{slug}` `{active}`                                                 | `PATCH /store/{slug}` `{active}`                                                                                                             | admin              |
+| — (new)                                                                               | `POST /store/{slug}/sync` — starts an on-demand sync, `202` + the open sync-log row                                                          | `store:sync`       |
+| — (new)                                                                               | `GET /store/sync-status` — the syncs currently in flight                                                                                     | admin              |
 | — (new)                                                                               | `POST /product/update` `{id, name?, countryCode?, typeName?, age?, abv?, volumeMl?}` — edit product overrides (undefined fields untouched)   | `product:edit`     |
 | `GET/POST /api/users`, `POST /api/users/{id}/active`, `POST /api/users/{id}/password` | existing `user` module: `GET/POST /user`, `GET/PATCH/DELETE /user/:id`, `POST /user/password[/:userId]`, `GET/PUT /user/:userId/permissions` | admin              |
 | `GET /` + static                                                                      | unchanged — the frontend is hosted separately (point it at this API's base URL)                                                              | —                  |
@@ -55,8 +57,33 @@ offset }` (was `{rows, title, latest_date, count, page, per_page, total_pages}`
 The read endpoints (`GET /meta`, `GET /report/{kind}`, `GET /report/history`,
 `GET /store`, `GET /store/{slug}`) send `Cache-Control: private, max-age=600`
 so the browser caches them for 10 minutes; a hard reload bypasses it. Mutations
-(`POST /product/update`, `PATCH /store/{slug}`) and `auth`/`user` endpoints are
-uncached.
+(`POST /product/update`, `PATCH /store/{slug}`, `POST /store/{slug}/sync`) and
+`auth`/`user` endpoints are uncached; `GET /store/sync-status` is explicitly
+uncacheable (`private, no-cache, no-store, must-revalidate`) because the web
+client polls it while a sync runs.
+
+### Sync endpoints
+
+`POST /store/{slug}/sync` (permission `store:sync`) starts a sync of one store
+and returns `202` immediately with the freshly opened `sync_log` row — the
+collection itself continues in the background. Failure cases: `404` unknown
+slug; `400` when the store is inactive, has no scrape configuration, or is
+still owned by the legacy Python scraper; `409` when the store — or any store
+of its concurrency `group` — is already syncing (the message names the
+blocker).
+
+`GET /store/sync-status` (permission `store:list`) returns the runs currently
+in flight, oldest first:
+
+| Field       | Notes                                                       |
+| ----------- | ----------------------------------------------------------- |
+| `storeId`   | Store being synced                                          |
+| `storeSlug` | Its slug                                                    |
+| `group`     | Concurrency group, or `null`                                |
+| `startedAt` | When the run started                                        |
+| `total`     | Products written so far (updated as the run progresses)     |
+
+An empty array means nothing is running.
 
 ## Field maps
 

@@ -364,6 +364,32 @@ wrappers): `scrape/` has its own internal layering.
   writing: `ts-node -r tsconfig-paths/register scripts/scrape-dry-run.ts <slug>
   [--json]`.
 
+## Sync orchestration (`domain/store`)
+
+`SyncOrchestratorService` owns every sync run; `ScrapeService` only collects.
+
+- `startStoreSync(slug, trigger)` validates the store (404 unknown, 400
+  inactive / no config / `engine !== 'ts'`), then `tryStart` inserts the open
+  `sync_log` row — that INSERT **is** the lock. A rejected insert becomes a 409
+  whose message names the blocking store/group (the exception filter serializes
+  only `error.message`, so nothing else survives). A `manual` run is
+  fire-and-forget (the endpoint answers `202`); a `cron` run is awaited.
+- `runStoreSync` races `collectStore` against `AbortSignal.timeout(
+  SYNC_STORE_TIMEOUT_MS)` and closes the row in `finally` — closing it releases
+  the lock, so it must happen exactly once, and the lock path is never wrapped
+  in `@Transactional()` (the ALS context would leak into the background run).
+  A timed-out collection is abandoned, not aborted: the row is already closed.
+- `runFullSync()` (used by the cron in a later step) splits active `ts` stores
+  into tracks (`group ?? id`), runs tracks in `SYNC_MAX_PARALLEL_TRACKS`-sized
+  chunks and the stores inside a track strictly sequentially; a store that
+  cannot start is warned and skipped.
+- `onModuleInit` sweeps orphaned locks — single instance, so any open row at
+  boot belongs to a dead process. `main.ts` calls `enableShutdownHooks()` and
+  compose gives the container `stop_grace_period: 60s`.
+- Endpoints: `POST /store/:slug/sync` (`202`, `[Resource.STORE, Action.SYNC]`)
+  and `GET /store/sync-status` (`@CacheControl('no-cache')`, polled by the web
+  client). `sync-status` must stay declared **before** the `:slug` routes.
+
 ## Auth and permissions
 
 Model: a permission is `Resource` × `Action` (enums in `~enums`), stored per
@@ -425,10 +451,11 @@ default 600); logger vars consumed by `@toxicoder/nestjs-pino` (`LOG_LEVEL`,
 consumed by `@toxicoder/nestjs-valkey` (`VALKEY_HOST`, `VALKEY_PORT`,
 `VALKEY_DB`, `VALKEY_PASSWORD`, `VALKEY_MODE`, `VALKEY_PREFIX`,
 `VALKEY_INJECT_KEY`); scrape vars (`SCRAPE_DELAY_MULTIPLIER` default 1,
-`ANTHROPIC_API_KEY` — LLM fallback, unset = disabled). The sync-orchestration
-step adds `SYNC_CRON_ENABLED`/`SYNC_CRON_EXPRESSION` (default `0 12 * * *`)/
-`SYNC_TIMEZONE` (default `Europe/Kyiv`)/`SYNC_MAX_PARALLEL_TRACKS`/
-`SYNC_STORE_TIMEOUT_MS`.
+`ANTHROPIC_API_KEY` — LLM fallback, unset = disabled); sync vars in
+`SyncConfig` — `SYNC_CRON_ENABLED` (default false), `SYNC_CRON_EXPRESSION`
+(default `0 12 * * *`), `SYNC_TIMEZONE` (default `Europe/Kyiv`),
+`SYNC_MAX_PARALLEL_TRACKS` (4), `SYNC_STORE_TIMEOUT_MS` (900000). The two cron
+vars are read only by the scheduler added in a later step.
 
 ## Errors
 
@@ -547,10 +574,10 @@ moved out of `../scrapper` into `src/scrape/` (plan:
 (GO — every store reachable from a datacenter IP), the schema overhaul
 (`group`/`engine`/`capturedOn` + `sync_log` lock), the core write path, and the
 scrape engine (`normalize`/`http`/`browser`/`llm`/`persist` +
-`ScrapeService.collectStore`). Pending: the sync orchestrator + on-demand/
-status endpoints, the concrete store adapters (ported + parity-checked in
-batches), the internal `@nestjs/schedule` cron, the web "Sync" button, and the
-Python decommission. Until each store's `store_config.engine` is flipped to
+`ScrapeService.collectStore`), and the sync orchestrator + on-demand/status
+endpoints (see "Sync orchestration"). Pending: the concrete store adapters
+(ported + parity-checked in batches), the internal `@nestjs/schedule` cron, the
+web "Sync" button, and the Python decommission. Until each store's `store_config.engine` is flipped to
 `ts`, the **Python collector remains the live writer** — same-day dual-writing
 is benign (the snapshot upsert is last-write-wins). Follow-up flagged in code:
 `HTTP_STRATEGY_BY_SLUG` (in `scrape/http/http-client.factory.ts`) should move to

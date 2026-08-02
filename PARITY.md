@@ -174,15 +174,74 @@ integration lane because it needs a browser) plus unit tests for the guard on
 both sides (`test/scrape/rozetka.adapter.spec.ts`,
 `../scrapper/tests/test_rozetka.py`).
 
+## Whole-catalog sweep against a production dump (2026-07-26)
+
+The strongest evidence so far, and a different method from the porting runs: no
+side-by-side Python run, but **production's own numbers** for the same calendar
+day. A fresh production dump (`whisky_20260726_150513Z.dump`, taken 15:05 UTC)
+was restored locally, its three pending migrations applied, every store flipped
+to `ts`, and one full sync driven by the internal cron — then the TS
+`sync_log` rows (`trigger = 'cron'`) were compared with production's Python rows
+(`trigger IS NULL`) from the same day's 12:00 Kyiv run, roughly six hours
+earlier.
+
+**Two facts this run established about production itself:**
+
+- **Production runs the pre-overhaul schema.** The dump carries only `Init` and
+  `WhiskyDomain`; `store-config-group-engine`, `sync-log-lock` and
+  `price-snapshot-captured-on` have **never been applied there**. The cutover
+  must run `pnpm migration:run` in production _before_ anything else. Applying
+  them to the dump was clean: `"group" = 'zakaz'` on 11 rows, **0** duplicate
+  `(productId, capturedOn)` pairs (so production's Python has not been racing
+  itself), `capturedOn = "createdAt"::date` everywhere, all 253 771 snapshots
+  preserved, no open `sync_log` row.
+- **Production has 17 stores, not 26 — and 11 Zakaz.ua chains, not 19.** The
+  extra 9 stores in the older local database (`silpo`, `grono`, `torba`,
+  `vostorg`, `ideal`, `kharkiv`, `onde`, `tavriav`, `chudomarket`) came from the
+  legacy SQLite import and do not exist in production. Every figure of "19
+  chains"/"26 stores" in this file and in the plan describes that local set, not
+  the live one. All 17 live stores have a registered adapter.
+
+**Result: 17 of 17 stores succeeded, 0 failed, 0 skipped, in 23 m 06 s** with
+the default `SYNC_MAX_PARALLEL_TRACKS = 4` (7 tracks) — against 1 h 04 m for
+production's strictly sequential Python pass, a 2.8× speed-up. Per-track:
+`zakaz` 8 m 29 s (11 stores sequential), `wine-point` 14 m 37 s, `winewine`
+14 m 09 s, `rozetka` 11 m 47 s, `goodwine` 6 m 51 s, `okwine` 2 m 25 s,
+`maudau` 1 m 36 s.
+
+**14 of 17 stores matched production's `total` exactly.** The three that did not
+are catalog drift over the six-hour gap, not engine differences:
+
+| Store        | Python `total` | TS `total` | Δ  | Why                                                                           |
+| ------------ | -------------- | ---------- | -- | ----------------------------------------------------------------------------- |
+| `maudau`     | 706            | 702        | −4 | lists in-stock items only; 4 went out of stock (kept, not deleted, as Python) |
+| `rozetka`    | 2319           | 2328       | +9 | 9 more tiles in the catalog                                                   |
+| `wine-point` | 336            | 341        | +5 | 5 more products listed                                                        |
+
+`added`/`removed` agree in kind everywhere (both engines delete for the same
+stores and neither deletes for `maudau`). The one number to watch at the
+cutover is **`rozetka` `removed`: 55 here against Python's 36 that morning** —
+same order, same cause (its catalog rotates and `deleteGone` cascades the
+history of a rotated-out SKU), but it is the largest destructive figure in the
+run. See `FOLLOWUPS.md` §3.
+
+**No unit or normalisation drift.** Of the 5 949 products holding both a Python
+price (2026-07-25) and a TS price (2026-07-26), **5 938 are identical** and 11
+moved; no store shows a price ratio above 2× in either direction, so nothing
+resembling a kopecks/hryvnia error survives anywhere.
+
+Afterwards every store was flipped back to `python` and no `sync_log` row was
+left open. Baseline CSVs and the comparison SQL: `~/whisky-parity-20260726/`.
+
 ## Release sweep (step 10)
 
-Re-run for every store with a registered adapter — the 19 Zakaz.ua chains,
+Re-run for every store with a registered adapter — the 11 Zakaz.ua chains,
 `maudau`, `okwine`, `winewine`, `wine-point`, `goodwine`, `rozetka` — on a
 different calendar day than the porting runs, immediately before the cutover.
 
-| Date | Stores | Result      |
-| ---- | ------ | ----------- |
-| —    | —      | not run yet |
+| Date       | Stores | Result                                                      |
+| ---------- | ------ | ----------------------------------------------------------- |
+| 2026-07-26 | 17/17  | clean against production's own same-day numbers (see above) |
 
 ## Production flips
 

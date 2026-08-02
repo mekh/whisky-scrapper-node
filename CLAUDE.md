@@ -289,9 +289,11 @@ entity/repository/service/module shape:
 - `store` (`slug` unique, `name`, `baseUrl`, `color?`, `active`) and
   `store-config` (1:1 → store via `storeId` unique + `fk_store_config_store`;
   `tier`, `delayFrom`/`delayTo` reals, `needsBrowser`, `retailChain?`,
-  `category?`, `group?` (sync-concurrency group; `zakaz` for the 19 Zakaz.ua
-  networks), `engine` (`python`|`ts`|`python-api`, default `python`) — this is
-  scrape-config, unrelated to product category).
+  `category?`, `group?` (sync-concurrency group; `zakaz` for the Zakaz.ua
+  networks — **11 of them in production**, 19 in the older local database seeded
+  from the legacy SQLite import, see [`PARITY.md`](PARITY.md)), `engine`
+  (`python`|`ts`|`python-api`, default `python`) — this is scrape-config,
+  unrelated to product category.
 - `product` — `storeId`, `sku`, `url`, `name`, `age?`, `abv?`, `volumeMl?`,
   FKs `brandId?`/`typeId?`/`countryId?`, `firstSeen`/`lastSeen` (date). Unique
   `(storeId, sku)`. Many-to-many `flavors` via the `product_flavor` join table.

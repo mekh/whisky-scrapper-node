@@ -280,7 +280,8 @@ export interface ReportCurrentRow {
   currency: string;
 
   /**
-   * Whether the latest snapshot reported the product in stock.
+   * Whether the product is currently in stock at its store. List reads only
+   * ever return in-stock rows; the history endpoint can report `false`.
    */
   inStock: boolean;
 

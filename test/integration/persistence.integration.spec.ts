@@ -177,24 +177,70 @@ describe('persistence write path (integration)', () => {
     expect([100, 200]).toContain(rows[0].price);
   });
 
-  it('deletes out-of-stock products by sku, not on empty', async () => {
+  it('flags explicit out-of-stock products by sku, not on empty', async () => {
     await products.upsertFromScrape(baseProduct({ sku: 'keep' }));
     await products.upsertFromScrape(baseProduct({ sku: 'gone' }));
 
-    const removedOnEmpty = await products.deleteBySkus(storeId, []);
+    const flaggedOnEmpty = await products.markOutOfStockBySkus(storeId, []);
 
-    expect(removedOnEmpty).toBe(0);
+    expect(flaggedOnEmpty).toBe(0);
 
-    const removed = await products.deleteBySkus(storeId, ['gone']);
+    const flagged = await products.markOutOfStockBySkus(storeId, ['gone']);
 
-    expect(removed).toBe(1);
+    expect(flagged).toBe(1);
 
     const rows = await dataSource.query(
-      'SELECT sku FROM product WHERE "storeId" = $1 ORDER BY sku',
+      `SELECT sku FROM product
+       WHERE "storeId" = $1 AND "inStock" ORDER BY sku`,
       [storeId],
     ) as { sku: string }[];
 
     expect(rows.map((row) => row.sku)).toEqual(['keep']);
+  });
+
+  it('sweeps all not seen in stock; a re-upsert revives it', async () => {
+    await products.upsertFromScrape(baseProduct({ sku: 'seen' }));
+    await products.upsertFromScrape(baseProduct({ sku: 'vanished' }));
+
+    const swept = await products.markOutOfStockExcept(storeId, ['seen']);
+
+    expect(swept).toBe(1);
+
+    const revived = await products.upsertFromScrape(
+      baseProduct({ sku: 'vanished' }),
+    );
+
+    expect(revived.isNew).toBe(false);
+
+    const rows = await dataSource.query(
+      `SELECT sku FROM product
+       WHERE "storeId" = $1 AND "inStock" ORDER BY sku`,
+      [storeId],
+    ) as { sku: string }[];
+
+    expect(rows.map((row) => row.sku)).toEqual(['seen', 'vanished']);
+  });
+
+  it('hides out-of-stock products from lists, keeps detail', async () => {
+    const { id } = await products.upsertFromScrape(baseProduct({ sku: 'oos' }));
+
+    await snapshots.upsertForDate(id, DAY, {
+      price: 100,
+      oldPrice: null,
+      currency: 'UAH',
+      inStock: true,
+      promo: false,
+    });
+
+    await products.markOutOfStockBySkus(storeId, ['oos']);
+
+    const listed = await products.findCurrentRows({ stores: [SLUG] });
+
+    expect(listed).toHaveLength(0);
+
+    const detail = await products.findCurrentRowById(id);
+
+    expect(detail?.inStock).toBe(false);
   });
 
   it('lets only one concurrent run start in the same group', async () => {

@@ -114,6 +114,7 @@ export interface EntityProduct extends EntityBaseRich {
   brandId?: ID;
   typeId?: ID;
   countryId?: ID;
+  inStock: boolean;
   firstSeen: string;
   lastSeen: string;
 }

@@ -50,15 +50,33 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
   }
 
   /**
-   * Deletes a store's out-of-stock products by SKU; a no-op when the list is
-   * empty.
+   * Flags a store's products as out of stock by SKU; a no-op when the list is
+   * empty. The rows and their price history are kept.
    *
    * @param storeId - Store id.
-   * @param skus - SKUs to delete.
-   * @returns How many products were deleted.
+   * @param skus - SKUs to flag.
+   * @returns How many products were flagged.
    */
-  public async deleteBySkus(storeId: ID, skus: string[]): Promise<number> {
-    return this.repo.deleteBySkus(storeId, skus);
+  public async markOutOfStockBySkus(
+    storeId: ID,
+    skus: string[],
+  ): Promise<number> {
+    return this.repo.markOutOfStockBySkus(storeId, skus);
+  }
+
+  /**
+   * Flags every in-stock product of a store as out of stock except the given
+   * SKUs (the sweep after a full listing).
+   *
+   * @param storeId - Store id.
+   * @param keepSkus - SKUs seen in stock this run, to leave untouched.
+   * @returns How many products were flagged.
+   */
+  public async markOutOfStockExcept(
+    storeId: ID,
+    keepSkus: string[],
+  ): Promise<number> {
+    return this.repo.markOutOfStockExcept(storeId, keepSkus);
   }
 
   /**
@@ -161,10 +179,10 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
   }
 
   /**
-   * Counts the products currently tracked for a store.
+   * Counts the in-stock products of a store.
    *
    * @param storeId - Store id.
-   * @returns The product count.
+   * @returns The in-stock product count.
    */
   public async countByStore(storeId: ID): Promise<number> {
     return this.repo.countByStore(storeId);

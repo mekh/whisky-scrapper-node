@@ -126,10 +126,10 @@ export class RozetkaAdapter extends BrowserAdapterBase {
    * tiles, retrying once when the page comes back empty or unrecognized.
    *
    * Every tile must carry either the buy button or an out-of-stock label. A
-   * tile with neither means the markup changed under us, and guessing would be
-   * destructive: an unavailable verdict feeds `deleteGone`, which would drop
-   * the store's products and cascade their price history. So the page is
-   * retried and then the whole run fails loudly instead.
+   * tile with neither means the markup changed under us, and guessing would
+   * mass-flag the store's products out of stock (recoverable — the flag flips
+   * back on the next good run — but the reports would be wrong meanwhile). So
+   * the page is retried and then the whole run fails loudly instead.
    *
    * @param url - The listing page URL.
    * @returns The page's rows; empty when both attempts came back empty.

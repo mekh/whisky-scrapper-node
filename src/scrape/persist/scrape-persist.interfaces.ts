@@ -1,5 +1,5 @@
 /**
- * How many products a persist pass stored, added and removed.
+ * How many products a persist pass stored, added and flagged out of stock.
  */
 export interface PersistCounts {
   /**
@@ -13,7 +13,7 @@ export interface PersistCounts {
   added: number;
 
   /**
-   * Out-of-stock products removed this pass.
+   * Products marked out of stock this pass (rows are kept, never deleted).
    */
   removed: number;
 }

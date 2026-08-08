@@ -329,7 +329,8 @@ export interface SiteResult {
   added: number;
 
   /**
-   * How many out-of-stock products were removed.
+   * How many products were marked out of stock (rows are kept, never
+   * deleted).
    */
   removed: number;
 

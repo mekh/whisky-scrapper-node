@@ -55,7 +55,7 @@ container before the cutover flips that store to `ts`.
 ## 3. `rozetka` walks the whole catalog to collect a 7-page prefix
 
 **Status**: open. **Blocked by**: nothing technical — it needs a decision on
-what `total` and `deleteGone` should mean once the walk stops early.
+what `total` should mean once the walk stops early.
 
 Everything in stock sits in the **first ~7 of ~38 pages** (2026-07-25: 60, 60,
 57, 60, 60, 60, 50 available, then nothing on pages 8 and 20), yet the adapter
@@ -69,13 +69,15 @@ been proven — pages 9-19 and 21-38 were never sampled — so confirm it first 
 logging in-stock counts per page during a normal full run, which costs no extra
 requests.
 
-Two consequences to settle before switching it on, neither of them cosmetic:
+One consequence to settle before switching it on:
 
 - `total` (the `sync_log` counter and the `found` figure) drops from ~2330 to
   ~600, so any threshold or eyeballed comparison against history changes basis.
-- the deep out-of-stock SKUs stop reaching `deleteGone`, which today is the only
-  thing that removes a product. Cleanup would have to move to a `lastSeen`
-  staleness rule instead.
+
+The other former blocker is gone (2026-08-08): products are no longer deleted
+on unavailability — the persist sweep flags everything not seen in stock this
+run as `product."inStock" = false`, so the deep out-of-stock SKUs are handled
+without ever visiting their pages.
 
 **Availability detection itself is fixed** (2026-07-25, both engines): the tile's
 buy button is now the positive marker, see [`PARITY.md`](PARITY.md).

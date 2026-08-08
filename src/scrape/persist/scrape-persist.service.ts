@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Transactional } from 'typeorm-transactional';
 
+import { PERSIST_SWEEP_GUARD_RATIO } from '~constants';
 import { CoreBrandService } from '~core/brand';
 import { CoreCountryService } from '~core/country';
 import { CoreFlavorService } from '~core/flavor';
@@ -14,13 +15,16 @@ import type { ID, ProductSnapshot } from '~types';
 import type { PersistCounts } from './scrape-persist.interfaces';
 
 /**
- * Writes a store's scraped in-stock snapshots plus its out-of-stock removals in
- * a single transaction, mirroring the Python `store_snapshots` +
- * `delete_products`. Lookup names are resolved to ids in batch up front, then
- * each product is upserted with its flavors and today's price snapshot.
+ * Writes a store's scraped in-stock snapshots and flags its out-of-stock
+ * products in a single transaction. Lookup names are resolved to ids in batch
+ * up front, then each product is upserted with its flavors and today's price
+ * snapshot. Nothing is ever deleted — availability is the `product.inStock`
+ * flag, so price history survives out-of-stock periods.
  */
 @Injectable()
 export class ScrapePersistService {
+  private readonly logger = new Logger(ScrapePersistService.name);
+
   private readonly brands: CoreBrandService;
 
   private readonly types: CoreTypeService;
@@ -50,14 +54,15 @@ export class ScrapePersistService {
   }
 
   /**
-   * Persists a store's collection: upserts every in-stock snapshot and removes
-   * the out-of-stock products, all in one transaction.
+   * Persists a store's collection: upserts every in-stock snapshot and flags
+   * the products the run did not see in stock, all in one transaction.
    *
    * @param storeId - The store being written.
    * @param inStock - Normalized in-stock snapshots to upsert.
-   * @param oosSkus - SKUs the listing returned as out of stock, to delete.
+   * @param oosSkus - SKUs the listing explicitly returned as out of stock.
    * @param capturedOn - The capture day (`YYYY-MM-DD`) for the snapshots.
-   * @returns How many products were stored, added (new) and removed.
+   * @returns How many products were stored, added (new) and flagged out of
+   * stock.
    */
   @Transactional()
   public async persist(
@@ -66,6 +71,8 @@ export class ScrapePersistService {
     oosSkus: string[],
     capturedOn: string,
   ): Promise<PersistCounts> {
+    const inStockBefore = await this.products.countByStore(storeId);
+
     const brandIds = await this.brands.resolveByName(
       this.distinct(inStock.map((snap) => snap.brand)),
     );
@@ -124,9 +131,53 @@ export class ScrapePersistService {
       }
     }
 
-    const removed = await this.products.deleteBySkus(storeId, oosSkus);
+    const removed = await this.flagOutOfStock(
+      storeId,
+      inStock.map((snap) => snap.storeSku),
+      oosSkus,
+      inStockBefore,
+    );
 
     return { stored, added, removed };
+  }
+
+  /**
+   * Flags this run's unavailable products. Normally a sweep: every product of
+   * the store not seen in stock this run (explicitly out of stock or missing
+   * from the listing) is flagged. When the run's in-stock count is
+   * suspiciously low against the pre-run baseline — a likely truncated
+   * listing — the sweep is skipped and only the explicit out-of-stock SKUs
+   * are flagged. A store that legitimately shrank past the guard keeps
+   * warning on every run until its stock recovers or the rows are fixed
+   * manually; a wrongly flagged product self-heals on the next run.
+   *
+   * @param storeId - The store being written.
+   * @param inStockSkus - SKUs seen in stock this run.
+   * @param oosSkus - SKUs the listing explicitly returned as out of stock.
+   * @param baseline - The store's in-stock product count before this run.
+   * @returns How many products were flagged out of stock.
+   */
+  private async flagOutOfStock(
+    storeId: ID,
+    inStockSkus: string[],
+    oosSkus: string[],
+    baseline: number,
+  ): Promise<number> {
+    const sweepIsSafe =
+      inStockSkus.length >= baseline * PERSIST_SWEEP_GUARD_RATIO;
+
+    if (sweepIsSafe) {
+      return this.products.markOutOfStockExcept(storeId, inStockSkus);
+    }
+
+    this.logger.warn(
+      'Listing looks truncated (%d in stock vs %d stored); '
+        + 'flagging only the explicit out-of-stock SKUs',
+      inStockSkus.length,
+      baseline,
+    );
+
+    return this.products.markOutOfStockBySkus(storeId, oosSkus);
   }
 
   /**

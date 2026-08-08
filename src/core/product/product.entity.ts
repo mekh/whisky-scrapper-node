@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsDateString,
   IsInt,
   IsNumber,
@@ -84,6 +85,10 @@ export class ProductEntity extends BaseRichEntity implements EntityProduct {
 
   @GuidV7Column({ nullable: true })
   public countryId?: ID;
+
+  @IsBoolean()
+  @Column({ type: 'boolean', default: true })
+  public inStock!: boolean;
 
   @IsDateString()
   @Column({ type: 'date' })

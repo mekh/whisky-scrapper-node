@@ -15,12 +15,14 @@ import { ProductEntity } from './product.entity';
 
 // Latest snapshot per product (+ the immediately previous price) joined to the
 // lookup tables. `rn = 1` keeps only the newest snapshot; `LEAD` reaches the
-// one before it. Numeric columns are cast to float8 and dates to text so the
-// raw driver returns JS numbers/`YYYY-MM-DD` strings rather than strings/Dates.
+// one before it. The row's `inStock` comes from the product (its current
+// availability), not from the snapshot. Numeric columns are cast to float8 and
+// dates to text so the raw driver returns JS numbers/`YYYY-MM-DD` strings
+// rather than strings/Dates.
 const CURRENT_SQL = `
   WITH ranked AS (
     SELECT s."productId",
-           s.price, s."oldPrice", s.currency, s."inStock", s.promo,
+           s.price, s."oldPrice", s.currency, s.promo,
            s."createdAt"::date AS captured,
            ROW_NUMBER() OVER w AS rn,
            LEAD(s.price) OVER w AS prev
@@ -35,7 +37,7 @@ const CURRENT_SQL = `
          c.icon AS "countryIcon",
          r.price::float8 AS price,
          r."oldPrice"::float8 AS "oldPrice",
-         r.currency, r."inStock", r.promo,
+         r.currency, p."inStock", r.promo,
          r.prev::float8 AS "previousPrice",
          r.captured::text AS "capturedDate",
          COALESCE((
@@ -57,10 +59,12 @@ const CURRENT_SQL = `
 export class ProductRepository extends BaseRepository<ProductEntity> {
   /**
    * Inserts or updates a product by its `(storeId, sku)` identity. On conflict
-   * only `url`, `nameOrig`, `lastSeen` and `brandId` change — `brandId` via
-   * COALESCE so a later null never clears a known brand — while `name`, the
-   * type/country/age/abv/volume fields and `firstSeen` are written once on
-   * insert and then left untouched, so manual edits survive later scrapes.
+   * only `url`, `nameOrig`, `lastSeen`, `brandId` and `inStock` change —
+   * `brandId` via COALESCE so a later null never clears a known brand, and
+   * `inStock` back to true since only in-stock items are upserted — while
+   * `name`, the type/country/age/abv/volume fields and `firstSeen` are written
+   * once on insert and then left untouched, so manual edits survive later
+   * scrapes.
    *
    * @param input - The resolved product to write.
    * @returns The product id and whether it was newly inserted.
@@ -77,6 +81,7 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
          url = EXCLUDED.url,
          "nameOrig" = EXCLUDED."nameOrig",
          "brandId" = COALESCE(EXCLUDED."brandId", product."brandId"),
+         "inStock" = true,
          "lastSeen" = EXCLUDED."lastSeen",
          "updatedAt" = now()
        RETURNING id, (xmax = 0) AS "isNew"`,
@@ -116,24 +121,52 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
   }
 
   /**
-   * Deletes a store's products by SKU (the out-of-stock items the latest
-   * listing returned); snapshots and flavor links cascade. Deletes nothing
-   * when the list is empty. Mirrors the Python `delete_products`.
+   * Flags a store's products as out of stock by SKU (the items the latest
+   * listing explicitly returned as unavailable). The rows and their price
+   * history are kept. Flags nothing when the list is empty.
    *
    * @param storeId - Store id.
-   * @param skus - SKUs to delete.
-   * @returns How many products were deleted.
+   * @param skus - SKUs to flag.
+   * @returns How many products were flagged.
    */
-  public async deleteBySkus(storeId: ID, skus: string[]): Promise<number> {
+  public async markOutOfStockBySkus(
+    storeId: ID,
+    skus: string[],
+  ): Promise<number> {
     if (!skus.length) {
       return 0;
     }
 
     const result = await this.createQueryBuilder()
-      .delete()
-      .from(ProductEntity)
+      .update(ProductEntity)
+      .set({ inStock: false })
       .where('"storeId" = :storeId', { storeId })
+      .andWhere('"inStock"')
       .andWhere('sku = ANY(:skus)', { skus })
+      .execute();
+
+    return result.affected ?? 0;
+  }
+
+  /**
+   * Flags every in-stock product of a store as out of stock except the given
+   * SKUs (the sweep after a full listing: whatever the run did not see in
+   * stock is no longer available). The rows and their price history are kept.
+   *
+   * @param storeId - Store id.
+   * @param keepSkus - SKUs seen in stock this run, to leave untouched.
+   * @returns How many products were flagged.
+   */
+  public async markOutOfStockExcept(
+    storeId: ID,
+    keepSkus: string[],
+  ): Promise<number> {
+    const result = await this.createQueryBuilder()
+      .update(ProductEntity)
+      .set({ inStock: false })
+      .where('"storeId" = :storeId', { storeId })
+      .andWhere('"inStock"')
+      .andWhere('NOT (sku = ANY(:keepSkus))', { keepSkus })
       .execute();
 
     return result.affected ?? 0;
@@ -171,8 +204,9 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
 
   /**
    * Loads the current state (latest snapshot + previous price + joins) of
-   * every product matching the filter. Filtering runs in SQL; report-specific
-   * logic and pagination are applied by the caller.
+   * every in-stock product matching the filter — out-of-stock products are
+   * always excluded here. Filtering runs in SQL; report-specific logic and
+   * pagination are applied by the caller.
    *
    * @param filter - The report filter; empty fields mean no constraint.
    * @returns One row per matching product.
@@ -200,6 +234,7 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
     ];
 
     const sql = `${CURRENT_SQL}
+      AND p."inStock"
       AND ($1::text[] IS NULL OR st.slug = ANY($1))
       AND ($2::float8 IS NULL OR r.price >= $2)
       AND ($3::float8 IS NULL OR r.price <= $3)
@@ -223,7 +258,9 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
   }
 
   /**
-   * Loads the current row for a single product by id.
+   * Loads the current row for a single product by id. Unlike the list query,
+   * out-of-stock products are returned too (with `inStock: false`) so their
+   * price history stays reachable.
    *
    * @param id - Product id.
    * @returns The product's current row, or null when it has no snapshot.
@@ -333,8 +370,8 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
   }
 
   /**
-   * Lists the distinct countries referenced by at least one product, for the
-   * catalog filter chips.
+   * Lists the distinct countries referenced by at least one in-stock product,
+   * for the catalog filter chips.
    *
    * @returns Countries present in the catalog, ordered by Ukrainian name.
    */
@@ -342,20 +379,24 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
     return this.query(
       `SELECT c.code, c."nameUa", c.icon
        FROM country c
-       WHERE EXISTS (SELECT 1 FROM product p WHERE p."countryId" = c.id)
+       WHERE EXISTS (
+         SELECT 1 FROM product p
+         WHERE p."countryId" = c.id AND p."inStock"
+       )
        ORDER BY c."nameUa"`,
     ) as Promise<MetaCountry[]>;
   }
 
   /**
-   * Counts the products currently tracked for a store.
+   * Counts the in-stock products of a store.
    *
    * @param storeId - Store id.
-   * @returns The product count.
+   * @returns The in-stock product count.
    */
   public async countByStore(storeId: ID): Promise<number> {
     const rows = await this.query(
-      'SELECT COUNT(*)::int AS count FROM product WHERE "storeId" = $1',
+      `SELECT COUNT(*)::int AS count FROM product
+       WHERE "storeId" = $1 AND "inStock"`,
       [storeId],
     ) as { count: number }[];
 
@@ -365,6 +406,8 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
   /**
    * Resolves a product id from a search term: an exact id, otherwise the
    * most recently seen product whose name or URL contains the term.
+   * Out-of-stock products still resolve (their history stays reachable), but
+   * an in-stock match wins a name collision.
    *
    * @param term - A product id or a name/URL substring.
    * @returns The matching product id, or null when nothing matches.
@@ -380,7 +423,7 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
       : await this.query(
         `SELECT id FROM product
          WHERE name ILIKE '%' || $1 || '%' OR url ILIKE '%' || $1 || '%'
-         ORDER BY "lastSeen" DESC
+         ORDER BY "inStock" DESC, "lastSeen" DESC
          LIMIT 1`,
         [term],
       ) as { id: ID }[];

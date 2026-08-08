@@ -313,8 +313,15 @@ entity/repository/service/module shape:
   (`python`|`ts`|`python-api`, default `python`) — this is scrape-config,
   unrelated to product category.
 - `product` — `storeId`, `sku`, `url`, `name`, `age?`, `abv?`, `volumeMl?`,
-  FKs `brandId?`/`typeId?`/`countryId?`, `firstSeen`/`lastSeen` (date). Unique
+  FKs `brandId?`/`typeId?`/`countryId?`, `inStock` (bool, default true —
+  current availability), `firstSeen`/`lastSeen` (date). Unique
   `(storeId, sku)`. Many-to-many `flavors` via the `product_flavor` join table.
+  **Out-of-stock products are never deleted** — the persist pipeline flips
+  `inStock` instead, so price history survives out-of-stock periods and a
+  returning product keeps its identity (`firstSeen`, manual edits). List reads
+  (`findCurrentRows`, `/report/*`, `/meta` countries, `/store/:slug`
+  `productCount`) filter on `inStock = true`; the single-product history path
+  (`findCurrentRowById`, `/report/history`) still returns flagged rows.
 - `price-snapshot` — `productId`, `price`/`oldPrice?` (`NumericColumn`),
   `currency`, `inStock`, `promo`, `capturedOn` (date, default `CURRENT_DATE`).
   **One row per product per day**, enforced by the unique index
@@ -335,9 +342,9 @@ consumed by the Python scraper/enrich utilities, never by the API).
 
 Migrations: `1783840439247-init` (`user`, `permission`),
 `1783840751031-whisky-domain` (all of the above), then the sync overhaul —
-`store-config-group-engine`, `sync-log-lock`, `price-snapshot-captured-on` — all
-applied, formatted per the `typeorm-migration-format` skill, and drift-free
-against the entities.
+`store-config-group-engine`, `sync-log-lock`, `price-snapshot-captured-on` —
+and `product-in-stock` (the availability flag) — all applied, formatted per
+the `typeorm-migration-format` skill, and drift-free against the entities.
 
 Data migration: `scripts/sync-from-sqlite.ts` (uses the `better-sqlite3`
 devDependency) reads the legacy SQLite DB and upserts into Postgres by natural
@@ -369,7 +376,13 @@ wrappers): `scrape/` has its own internal layering.
   (`@anthropic-ai/sdk` fallback, gated on `ANTHROPIC_API_KEY`), `adapters/`
   (base classes + `AdapterRegistryService` - one folder per store platform),
   `persist/` (one-store, one transaction write pipeline over the core
-  services), and `ScrapeService` (`collectStore(slug, { dryRun })`).
+  services: upserts the in-stock items, then **flags** everything the run did
+  not see in stock as `product."inStock" = false` — explicit out-of-stock SKUs
+  and items missing from the listing alike; nothing is deleted. A run whose
+  in-stock count falls below `PERSIST_SWEEP_GUARD_RATIO` of the store's
+  current in-stock count is treated as a truncated listing: the sweep is
+  skipped with a warning and only the explicit out-of-stock SKUs are flagged),
+  and `ScrapeService` (`collectStore(slug, { dryRun })`).
 - **Adapter base classes** (`adapters/`): `ScrapeAdapterBase` (spec, pacing,
   progress, snapshot defaults) → `HttpAdapterBase` (owns the HTTP client) →
   `PagedHtmlAdapterBase` (walk `cardSelector` pages until one yields no new
@@ -409,8 +422,10 @@ wrappers): `scrape/` has its own internal layering.
   [`PARITY.md`](PARITY.md)). Since a positive marker fails closed, the extractor
   also reports whether a known out-of-stock label is present, and a page holding
   tiles with **neither** signal is retried once and then fails the run — the
-  alternative is `deleteGone` wiping the store's products and price history on a
-  markup change. Keep that invariant in mind before touching `EXTRACT_JS`; the
+  alternative is the persist sweep mass-flagging the store's products
+  `inStock = false` on a markup change (recoverable, but the reports would be
+  wrong until the next good run). Keep that invariant in mind before touching
+  `EXTRACT_JS`; the
   golden test (`test/scrape/rozetka-extract.integration.spec.ts`) runs the real
   extractor in Chromium against captured tiles. The browser is launched lazily and closed by `adapter.close()` in
   `ScrapeService`'s `finally`.
@@ -709,12 +724,10 @@ networks, `maudau`, `okwine`, `winewine`, `wine-point`, `goodwine`, `rozetka` �
 with golden tests and the parity harness (`silpo` is ported but unregistered
 and stays on Python), and the internal daily cron — which **ships disabled**
 (`SYNC_CRON_ENABLED` unset), so the Python system cron still owns the schedule.
-Pending: the web "Sync" button, the release-day parity sweep + cutover, and the
-Python decommission. **No production store is flipped yet** — every
-`store_config.engine` is still `python`, so the Python collector remains the
-live writer everywhere. Until each store's `store_config.engine` is flipped to
-`ts`, the **Python collector remains the live writer** — same-day dual-writing
-is benign (the snapshot upsert is last-write-wins).
+Pending: the web "Sync" button and the Python decommission. **The cutover is
+done** — as of 2026-08-08 every production store runs `store_config.engine =
+'ts'`, so the TypeScript engine is the live writer everywhere and the parity
+gate no longer blocks behavioral fixes.
 
 **Deferred defects live in [`FOLLOWUPS.md`](FOLLOWUPS.md)** — read it before
 touching the scrape engine. It currently holds `goodwine`'s truncating page cap,

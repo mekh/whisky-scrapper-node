@@ -1,0 +1,9 @@
+.git
+.idea
+node_modules
+dist
+.env*
+!.env.dev
+*.dump
+*.db
+*.log

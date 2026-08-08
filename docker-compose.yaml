@@ -1,48 +1,74 @@
-version: '3.9'
-
 services:
+  migrate:
+    container_name: whisky-be-migrate
+    # Reuses the image built by `service`; there is no registry, so a missing
+    # local image must fail loudly instead of triggering a pull.
+    image: whisky-be
+    pull_policy: never
+    command: ['node', 'dist/scripts/migrate.js']
+    environment:
+      - DB_HOST=whisky-db
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:?DB_NAME is required}
+      - DB_USER=${DB_USER:?DB_USER is required}
+      - DB_PASS=${DB_PASS:?DB_PASS is required}
+    networks:
+      - whisky_db
+    restart: 'no'
+
   service:
     container_name: whisky-be
+    image: whisky-be
     build:
       context: .
       dockerfile: Dockerfile
+    # The app container may only START after migrations succeed. NB: a bare
+    # `up -d --build` still replaces the old container during the create
+    # phase, so a failed migration leaves the app stopped (`Created`, never
+    # started). Deploy with scripts/deploy.sh (build -> run migrate -> up) to
+    # keep the previous version serving when a migration fails.
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     environment:
       - APP_PORT=4000
       - APP_HOST=0.0.0.0
-      - SWAGGER_ENABLED=true
       - VALKEY_HOST=whisky-valkey
       - VALKEY_PORT=6379
       - VALKEY_DB=0
       - DB_LOGGING=false
       - DB_HOST=whisky-db
       - DB_PORT=5432
-      - DB_NAME=whisky
-      - DB_USER=user
-      - DB_PASS=<SECRET>
+      - DB_NAME=${DB_NAME:?DB_NAME is required}
+      - DB_USER=${DB_USER:?DB_USER is required}
+      - DB_PASS=${DB_PASS:?DB_PASS is required}
       - DB_SLOW_QUERY_MS=2500
-      - JWT_ACCESS_SECRET=<SECRET>
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
       - LOG_LEVEL=trace
       - LOG_JSON=false
       - LOG_PRETTY=false
       - LOG_CALLSITES=false
       - LOG_COLORS=true
+      - SWAGGER_ENABLED=true
     ports:
-      - '4000:4000'
-    # A sync may be in flight on SIGTERM; give it time to wind down.
-    stop_grace_period: 60s
-    # A `rozetka` sync runs Chromium inside this container: cap it so a browser
-    # leak cannot starve the host. One context at a time needs far less.
-    mem_limit: 2g
+      - '192.168.179.2:9977:4000'
     networks:
       - whisky-be
-      - whisky-db
-      - whisky-valkey
+      - whisky_db
+      - whisky_valkey
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+        reservations:
+          memory: 256M
+    stop_grace_period: 60s
     restart: unless-stopped
 
 networks:
   whisky-be:
     name: whisky-be
-  whisky-db:
+  whisky_db:
     external: true
-  whisky-valkey:
+  whisky_valkey:
     external: true

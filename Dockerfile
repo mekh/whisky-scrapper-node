@@ -32,12 +32,15 @@ RUN apt install -y mc nano iputils-ping net-tools telnet
 # version in package.json, so the browser build installed here always matches
 # the client that drives it.
 #
-# UNVERIFIED: this stage has never been built (the daemon on the dev machine
-# cannot pull `node:24`). It mirrors ../scrapper/Dockerfile, which runs the same
-# browser in production, but nothing here is proven — including whether the
-# container's default /dev/shm is large enough for Chromium. Build it, run
-# Chromium as appuser, and do one real `rozetka` sync in the container before
-# flipping that store to `ts`. See FOLLOWUPS.md, item 2.
+# PARTIALLY VERIFIED (2026-08-08): the stage builds on the dev machine
+# (podman/arm64 — the old "cannot pull node:24" failure was stale docker.io
+# credentials forwarded by compose; `podman pull` the base image first) and
+# the app boots and serves from the resulting image. It mirrors
+# ../scrapper/Dockerfile, which runs the same browser in production. Still
+# unproven: Chromium actually running as appuser and one real `rozetka` sync
+# inside the container (including whether the default /dev/shm is large
+# enough). Do both before flipping that store to `ts`. See FOLLOWUPS.md,
+# item 2.
 RUN ./node_modules/.bin/playwright install --with-deps chromium
 
 # Chromium's sandbox refuses to run as root; the user owns the code and the

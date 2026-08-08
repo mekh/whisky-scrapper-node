@@ -166,8 +166,65 @@ which pins generated/created files to `./migrations/` and injects
 
 - [`Dockerfile`](Dockerfile) — production image.
 - [`docker-compose.yaml`](docker-compose.yaml) — runs the API container against
-  an **external** PostgreSQL + Valkey: it joins their networks and reads `DB_*`
-  / `VALKEY_*` (plus the secrets) from its `environment` block.
+  an **external** PostgreSQL + Valkey: it joins their networks (`whisky_db` /
+  `whisky_valkey`) and reads non-secret config from its `environment` block.
+  Secrets and DB identity (`DB_NAME` / `DB_USER` / `DB_PASS` /
+  `JWT_ACCESS_SECRET`) are interpolated from the git-ignored `.env` in this
+  directory — compose fails fast when one of them is missing.
+
+### Migrations on deploy
+
+Migrations run **automatically before the app starts**. The `migrate` compose
+service runs `dist/scripts/migrate.js` (waits for the database, applies every
+pending migration, exits) from the same image as the app, and `service`
+declares `depends_on: migrate: condition: service_completed_successfully` —
+the app container can never start against an unmigrated schema. All pending
+migrations apply in one transaction (Postgres transactional DDL), so a
+mid-batch failure rolls the schema back to its previous state.
+
+Deploy with the script:
+
+```bash
+./scripts/deploy.sh   # compose build -> compose run --rm migrate -> compose up -d
+```
+
+The two-phase order matters. A bare `docker compose up -d --build` also runs
+migrations before starting the app, but when a migration **fails** it leaves
+the app **down**, not on the old version: compose replaces the old container
+during its create phase and the gate then blocks the new one from starting
+(`up` exits `1`, the app container is left `Created`, never started). The
+script instead applies migrations via a one-off container first, so a failure
+aborts the deploy while the **previous version keeps serving**; the gate
+stays as a safety net for direct `up` invocations.
+
+Manual operations (from `be/`; the image has no ts-node — everything runs
+plain `node`):
+
+```bash
+# Apply pending migrations by hand (normally automatic on deploy)
+docker compose run --rm migrate
+
+# Show applied vs. pending migrations
+docker compose run --rm migrate \
+  node node_modules/typeorm/cli.js migration:show -d dist/typeorm.config.js
+
+# Roll back the last applied migration
+docker compose run --rm migrate \
+  node node_modules/typeorm/cli.js migration:revert -d dist/typeorm.config.js
+```
+
+### First deploy on a host
+
+1. `docker compose version` must be **≥ 2.20**
+   (`depends_on: condition: service_completed_successfully` support).
+2. Create `.env` in this directory with the production `DB_NAME` / `DB_USER` /
+   `DB_PASS` / `JWT_ACCESS_SECRET`.
+3. Run `./scripts/deploy.sh` — on the first run the migrate step applies
+   every pending migration; watch its output.
+4. Deploy the backend **before** `../web`: the web deploy fetches the OpenAPI
+   schema from the live backend (`../web/deploy/deploy.env`'s `BACKEND_URL`
+   and the host nginx `proxy_pass` must point at the port this compose file
+   publishes).
 
 ## Database backups
 

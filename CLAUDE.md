@@ -31,6 +31,10 @@ pnpm migration:create <name>     # empty skeleton in ./migrations/
 pnpm migration:run
 pnpm migration:revert
 
+node dist/scripts/migrate.js     # prod runner (no ts-node): waits for the DB,
+                                 # applies pending migrations, exits 0/1
+scripts/deploy.sh                # prod deploy: build -> run migrate -> up -d
+
 # One-time import of the legacy SQLite DB into Postgres. Path resolution:
 # <sqlite-path> arg > $LEGACY_SQLITE_PATH > ./whisky.db (be root); fails fast
 # if the file does not exist.
@@ -47,6 +51,20 @@ through `scripts/migration.ts`, a thin wrapper over the TypeORM CLI that pins
 the output to `./migrations/` (so generated/created files never land in the
 project root) and injects `-d ./typeorm.config.ts`. Extra flags after the name
 are forwarded to the CLI (e.g. `pnpm migration:generate init --dryrun`).
+
+In production the image carries no ts-node (a devDependency), so migrations
+run through the compiled `dist/scripts/migrate.js` instead: the `migrate`
+service in `docker-compose.yaml` runs it from the same image as the app, and
+the app service may only start after it exits successfully
+(`depends_on: condition: service_completed_successfully`). Deploy via
+`scripts/deploy.sh` (build → `compose run --rm migrate` → `up -d`): the gate
+alone only blocks the new container's **start** — during a bare
+`up -d --build` compose still replaces the old container in its create phase,
+so a failed migration leaves the app stopped, while the script keeps the
+previous version serving. `typeorm.config.ts` anchors its entity/migration
+globs to `__dirname` so the one DataSource file works both from the TS
+sources (ts-node, dev) and from `dist/` (compiled, prod image) — keep any new
+globs anchored the same way.
 
 Local infrastructure: `docker-compose.dev.yaml` starts **PostgreSQL 18**
 (host port **5431**, db `db`, user `user`, password `1`) and **Valkey 8**

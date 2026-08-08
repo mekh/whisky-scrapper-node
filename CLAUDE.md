@@ -579,6 +579,12 @@ store, which needs ~20 min for a full pass and would never fit the HTTP one).
 `SYNC_CRON_ENABLED`/`SYNC_CRON_EXPRESSION`/`SYNC_TIMEZONE` are read by
 `SyncCronService` at bootstrap (see "Sync orchestration"): with the flag unset
 no job is registered at all, and changing any of the three needs a restart.
+In production every `SYNC_*` var is forwarded from the host `.env` by the
+`environment` block of `docker-compose.yaml` — compose reads `.env` only to
+interpolate `${...}` in that file, and the image carries no `.env` of its own
+(`.dockerignore` excludes it), so a var that is not listed there never reaches
+the process. Add any new config var to that block, or it will silently keep
+its default in production.
 
 ## Errors
 
@@ -683,7 +689,7 @@ React frontend — update it alongside any API contract change.
 endpoints get the `{ data, total, limit, offset }` envelope with `data` items
 `$ref`-ing the item DTO), so `/docs-json` fully describes every response. The
 web frontend generates its client by fetching `/docs-json` over HTTP at deploy
-(`../web/deploy/deploy.sh`), so **prod must run with `SWAGGER_ENABLED=true`** (the
+(`../web/scripts/deploy.sh`), so **prod must run with `SWAGGER_ENABLED=true`** (the
 route is gated by that flag — see `main.ts` — and blocked publicly by nginx +
 iptables). `pnpm openapi` (server up) still snapshots it to a git-ignored local
 `./openapi.json` for manual inspection. `@fastify/helmet` is registered in `main.ts` (its CSP is relaxed

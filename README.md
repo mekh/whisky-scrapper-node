@@ -230,7 +230,7 @@ docker compose run --rm migrate \
    from the old stack, follow the sequence in `ROLLBACK.md` §2 instead — it
    orders the old-stack shutdown for near-zero downtime.)
 5. Deploy the backend **before** `../web`: the web deploy fetches the OpenAPI
-   schema from the live backend (`../web/deploy/deploy.env`'s `BACKEND_URL`
+   schema from the live backend (`../web/scripts/deploy.env`'s `BACKEND_URL`
    and the host nginx `proxy_pass` must point at the port this compose file
    publishes).
 

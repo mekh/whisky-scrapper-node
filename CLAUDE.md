@@ -434,6 +434,11 @@ wrappers): `scrape/` has its own internal layering.
   /ms-playwright`) and drops to a non-root `appuser` (uid 10001) because
   Chromium's sandbox refuses to run as root; compose caps the container with
   `mem_limit: 2g`. Locally: `pnpm exec playwright install chromium` once.
+  **Bumping `playwright` in `package.json` also requires bumping the
+  `PLAYWRIGHT_VERSION` ARG in the Dockerfile** — that ARG is the whole cache
+  key of the ~500 MB Chromium layer (`npx playwright@<v> install`), which is
+  what keeps a code-only deploy from re-downloading the browser. A build-time
+  assertion fails the build if the two drift apart.
 - **Detail pages**: an adapter with `supportsDetail` gets `enrichDetail(snap)`
   calls from `ScrapeService`, gated on `products.skusWithAbv` (only items whose
   ABV is not stored yet) and paced with `adapter.sleep()` between items — the

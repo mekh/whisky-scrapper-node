@@ -34,23 +34,31 @@ extra pages really do parse (the run gets ~48 SKUs longer).
 
 ## 2. The browser tier's Docker build was never verified
 
-**Status**: open. **Blocked by**: nothing technical — the local Docker daemon
-could not pull `node:24` (registry authentication) when the change was written.
+**Status**: partially closed (2026-08-08). **Blocked by**: nothing technical —
+the original "cannot pull `node:24`" failure was stale docker.io credentials.
 
-The `service_run` stage now installs Chromium (`playwright install --with-deps
+The `service_run` stage installs Chromium (`playwright install --with-deps
 chromium`, `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright`) and drops to a non-root
-`appuser` (uid 10001). This mirrors `../scrapper/Dockerfile`, which runs the
-same browser in production today, but **this image has not been built or run
-even once**. Everything about it is therefore unproven: that the browser
-installs against the pruned production `node_modules`, that `appuser` can read
-`/ms-playwright`, that Chromium's sandbox is happy, and that the container has
-enough shared memory for it (a browser in Docker classically needs a larger
-`/dev/shm` or `--disable-dev-shm-usage`; neither is configured, because the
-Python image does not need them).
+`appuser` (uid 10001), mirroring `../scrapper/Dockerfile`, which runs the same
+browser in production today.
 
-**Fix**: build the image, run it as `appuser`, and launch Chromium inside it
-with the engine's own launch arguments — then run one real `rozetka` sync in the
-container before the cutover flips that store to `ts`.
+Verified on the dev machine (podman, arm64): the image builds, the app boots
+and serves from it, `appuser` can read `/ms-playwright`, and Chromium launches
+and renders a page inside the container under the engine's own launch
+arguments (`--disable-blink-features=AutomationControlled`, no `--no-sandbox`)
+— so the sandbox is happy without extra flags. Note the browser no longer
+installs against the production `node_modules` at all: it is installed by
+`npx playwright@<pinned>` in a layer keyed only on the version, with a
+build-time assertion that the version matches `package.json`.
+
+Still unproven: the same on the amd64 production host, and one real `rozetka`
+sync in the container — in particular whether the default `/dev/shm` holds up
+under a full walk (a browser in Docker classically needs a larger `/dev/shm`
+or `--disable-dev-shm-usage`; neither is configured, because the Python image
+does not need them).
+
+**Fix**: build and run on the production host, then run one real `rozetka` sync
+in the container before that store is trusted on `ts`.
 
 ## 3. `rozetka` walks the whole catalog to collect a 7-page prefix
 

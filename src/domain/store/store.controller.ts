@@ -9,7 +9,6 @@ import {
   Post,
 } from '@nestjs/common';
 
-import { READ_CACHE_MAX_AGE_SECONDS } from '~constants';
 import { CacheControl } from '~decorators/http';
 import { Plain } from '~decorators/types';
 import { Action, Resource } from '~enums';
@@ -38,7 +37,7 @@ export class StoreController {
   public constructor(private readonly storeService: StoreService) {}
 
   @Get()
-  @CacheControl(READ_CACHE_MAX_AGE_SECONDS)
+  @CacheControl('no-cache')
   @Plain([StoreListItemType], [Resource.STORE, Action.LIST])
   public list(): Promise<StoreListItem[]> {
     return this.storeService.list();
@@ -52,7 +51,7 @@ export class StoreController {
   }
 
   @Get(':slug')
-  @CacheControl(READ_CACHE_MAX_AGE_SECONDS)
+  @CacheControl('no-cache')
   @Plain(StoreDetailType, [Resource.STORE, Action.READ])
   public detail(@Param() params: StoreSlugParamsDto): Promise<StoreDetail> {
     return this.storeService.detail(params.slug);

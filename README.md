@@ -171,6 +171,10 @@ which pins generated/created files to `./migrations/` and injects
   Secrets and DB identity (`DB_NAME` / `DB_USER` / `DB_PASS` /
   `JWT_ACCESS_SECRET`) are interpolated from the git-ignored `.env` in this
   directory — compose fails fast when one of them is missing.
+- [`ROLLBACK.md`](ROLLBACK.md) — emergency rollback runbook (restore the old
+  stack, revert migrations, restore a dump). Its **pre-flight section is
+  mandatory before every risky upgrade** — it is what makes every rollback
+  path a one-command affair.
 
 ### Migrations on deploy
 
@@ -219,9 +223,13 @@ docker compose run --rm migrate \
    (`depends_on: condition: service_completed_successfully` support).
 2. Create `.env` in this directory with the production `DB_NAME` / `DB_USER` /
    `DB_PASS` / `JWT_ACCESS_SECRET`.
-3. Run `./scripts/deploy.sh` — on the first run the migrate step applies
-   every pending migration; watch its output.
-4. Deploy the backend **before** `../web`: the web deploy fetches the OpenAPI
+3. Run the pre-flight from [`ROLLBACK.md`](ROLLBACK.md) (state capture,
+   fresh DB dump, restore dry run).
+4. Run `./scripts/deploy.sh` — on the first run the migrate step applies
+   every pending migration; watch its output. (For the very first cutover
+   from the old stack, follow the sequence in `ROLLBACK.md` §2 instead — it
+   orders the old-stack shutdown for near-zero downtime.)
+5. Deploy the backend **before** `../web`: the web deploy fetches the OpenAPI
    schema from the live backend (`../web/deploy/deploy.env`'s `BACKEND_URL`
    and the host nginx `proxy_pass` must point at the port this compose file
    publishes).

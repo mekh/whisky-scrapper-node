@@ -38,6 +38,8 @@ function makeClient(
     llmApiKey: 'key',
     llmBaseUrl: 'https://openrouter.ai/api/v1',
     llmModel: 'openai/gpt-4o-mini',
+    llmAppName: 'Whisky dev',
+    llmAppUrl: 'https://example.test/whisky',
     ...over,
   } as unknown as ScrapeConfig);
 }
@@ -62,6 +64,10 @@ describe('LlmClientService', () => {
     expect(constructed).toHaveBeenCalledWith({
       apiKey: 'key',
       baseURL: 'https://openrouter.ai/api/v1',
+      defaultHeaders: {
+        'HTTP-Referer': 'https://example.test/whisky',
+        'X-Title': 'Whisky dev',
+      },
     });
     expect(create).toHaveBeenCalledWith({
       model: 'openai/gpt-4o-mini',
@@ -71,6 +77,19 @@ describe('LlmClientService', () => {
       messages: [{ role: 'user', content: 'prompt' }],
       reasoning: { enabled: false },
     });
+  });
+
+  it('identifies the environment to OpenRouter', async () => {
+    // Without the attribution pair every call is logged as `Unknown`.
+    create.mockResolvedValue(reply('["a"]'));
+
+    await makeClient({ llmAppName: 'Whisky prod' }).askJsonArray('p', 512);
+
+    expect(constructed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        defaultHeaders: expect.objectContaining({ 'X-Title': 'Whisky prod' }),
+      }),
+    );
   });
 
   it('lets the model reason when explicitly enabled', async () => {

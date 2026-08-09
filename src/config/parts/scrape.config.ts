@@ -16,6 +16,15 @@ import { BaseConfig } from '../base.config';
  */
 const DEFAULT_LLM_BASE_URL = 'https://openrouter.ai/api/v1';
 
+/**
+ * Default OpenRouter attribution. The name is the local one on purpose:
+ * `docker-compose.yaml` defaults the deployed service to `Whisky prod`, so
+ * whatever falls through to here is a run from a checkout — neither side needs
+ * configuring, and neither can be mislabelled by a forgotten variable.
+ */
+const DEFAULT_LLM_APP_NAME = 'Whisky dev';
+const DEFAULT_LLM_APP_URL = 'https://whisky.vlm.com.ua/';
+
 @Injectable()
 export class ScrapeConfig extends BaseConfig {
   @IsNumber()
@@ -28,11 +37,27 @@ export class ScrapeConfig extends BaseConfig {
   public readonly llmApiKey = this.asString('LLM_API_KEY');
 
   @IsString()
-  public readonly llmBaseUrl = this.readBaseUrl();
+  public readonly llmBaseUrl = this.nonEmpty('LLM_BASE_URL')
+    ?? DEFAULT_LLM_BASE_URL;
 
   @IsString()
   @IsOptional()
   public readonly llmModel = this.asString('LLM_MODEL');
+
+  /**
+   * Attribution sent with every LLM call, as OpenRouter's `X-Title` and
+   * `HTTP-Referer`. Its activity log and rankings read those two headers and
+   * file everything else under `Unknown`, so the name carries the environment:
+   * a local backfill run is then distinguishable from a production sync.
+   * Other OpenAI-compatible gateways ignore both headers.
+   */
+  @IsString()
+  public readonly llmAppName = this.nonEmpty('LLM_APP_NAME')
+    ?? DEFAULT_LLM_APP_NAME;
+
+  @IsString()
+  public readonly llmAppUrl = this.nonEmpty('LLM_APP_URL')
+    ?? DEFAULT_LLM_APP_URL;
 
   /**
    * Whether the model may spend tokens on reasoning. Off by default: both
@@ -45,17 +70,16 @@ export class ScrapeConfig extends BaseConfig {
   public readonly llmReasoning = this.asBoolean('LLM_REASONING') ?? false;
 
   /**
-   * Reads the endpoint, falling back to the default. An **empty** value counts
-   * as unset: compose forwards the var as an empty string when the host `.env`
-   * omits it, and an empty base URL is not a usable endpoint.
+   * Reads a variable that has a default, treating an **empty** value as unset:
+   * compose forwards a var as an empty string when the host `.env` omits it,
+   * and neither an empty endpoint nor an empty app name is usable.
    *
-   * @returns The OpenAI-compatible base URL to call.
+   * @param envName - The variable to read.
+   * @returns The configured value, or undefined when unset or empty.
    */
-  private readBaseUrl(): string {
-    const value = this.asString('LLM_BASE_URL');
+  private nonEmpty(envName: string): string | undefined {
+    const value = this.asString(envName);
 
-    return value !== undefined && value !== ''
-      ? value
-      : DEFAULT_LLM_BASE_URL;
+    return value !== undefined && value !== '' ? value : undefined;
   }
 }

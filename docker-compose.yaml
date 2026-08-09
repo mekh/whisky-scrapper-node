@@ -60,6 +60,8 @@ services:
       - LLM_BASE_URL=${LLM_BASE_URL:-}
       - LLM_MODEL=${LLM_MODEL:-}
       - LLM_REASONING=${LLM_REASONING:-}
+      - LLM_APP_NAME=${LLM_APP_NAME:-Whisky prod}
+      - LLM_APP_URL=${LLM_APP_URL:-}
     ports:
       - '192.168.179.2:9977:4000'
     networks:

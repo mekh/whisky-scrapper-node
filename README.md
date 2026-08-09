@@ -72,6 +72,10 @@ LLM_BASE_URL=https://openrouter.ai/api/v1
 LLM_MODEL=
 # Leave reasoning off unless you know the model needs it — see below.
 LLM_REASONING=false
+# OpenRouter attribution (its `App` column). Defaults to `Whisky dev` here and
+# to `Whisky prod` for the deployed container; override only to rename.
+LLM_APP_NAME=Whisky dev
+LLM_APP_URL=https://whisky.vlm.com.ua/
 ```
 
 Only `JWT_ACCESS_SECRET` is mandatory; the rest have sensible defaults (see

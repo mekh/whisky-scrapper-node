@@ -111,7 +111,19 @@ export class LlmClientService {
       throw new Error('LLM is not configured');
     }
 
-    const client = new OpenAI({ apiKey: llmApiKey, baseURL: llmBaseUrl });
+    /**
+     * `HTTP-Referer` and `X-Title` are OpenRouter's attribution pair: they
+     * fill the `App` column of its activity log, which reads `Unknown`
+     * without them. Any other OpenAI-compatible gateway ignores them.
+     */
+    const client = new OpenAI({
+      apiKey: llmApiKey,
+      baseURL: llmBaseUrl,
+      defaultHeaders: {
+        'HTTP-Referer': this.config.llmAppUrl,
+        'X-Title': this.config.llmAppName,
+      },
+    });
 
     /**
      * Both passes are extraction, not composition: the answer is a function of

@@ -714,7 +714,12 @@ consumed by `@toxicoder/nestjs-valkey` (`VALKEY_HOST`, `VALKEY_PORT`,
 unset = both disabled; `LLM_BASE_URL` defaults to
 `https://openrouter.ai/api/v1`, set it to `https://api.openai.com/v1` or any
 other OpenAI-compatible gateway to switch provider; `LLM_REASONING` default
-false — see the reasoning note under "Scraping engine"); sync vars in
+false — see the reasoning note under "Scraping engine"; `LLM_APP_NAME` /
+`LLM_APP_URL` — sent as OpenRouter's `X-Title` / `HTTP-Referer` attribution
+pair, which fills the `App` column of its activity log. Default `Whisky dev`,
+with `docker-compose.yaml` defaulting the deployed service to `Whisky prod`,
+so a checkout and the prod container are told apart without either being
+configured); sync vars in
 `SyncConfig` — `SYNC_CRON_ENABLED` (default false), `SYNC_CRON_EXPRESSION`
 (default `0 12 * * *`), `SYNC_TIMEZONE` (default `Europe/Kyiv`),
 `SYNC_MAX_PARALLEL_TRACKS` (4), `SYNC_STORE_TIMEOUT_MS` (900000),

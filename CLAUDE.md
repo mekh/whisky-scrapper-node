@@ -406,6 +406,34 @@ entity/repository/service/module shape:
   set's other bottles: told to return "the product", the model answered
   `Jura Journey` for a three-bottle set, and token validation passed it because
   every word it kept was in the raw name.
+  **Insert-only also froze the gaps of every earlier parser**, and those gaps
+  cannot be re-derived from the row — a country the row never had is not in the
+  row. `pnpm backfill` (`scripts/backfill-nulls.ts`, `--dry-run` /
+  `--store <slug>`, repeatable) therefore re-runs the real collection pipeline
+  with `collectStore(slug, { backfill: true })`, which changes exactly three
+  things: `ProductRepository` uses `BACKFILL_UPSERT_SQL`, whose update clause
+  adds `name`/`typeId`/`countryId`/`age`/`abv`/`volumeMl` as
+  `COALESCE(product.x, EXCLUDED.x)` — the stored value always wins, so this is
+  a fill, never an overwrite; the detail-page gate becomes `skusWithCoreDetails`
+  (ABV **and** volume **and** type **and** country stored) instead of
+  `skusWithAbv`; and the LLM enrichment trigger adds a still-null type or
+  country to `needsLlm`. **Age is deliberately in neither widening**: a NAS
+  bottling has no age to find, so including it would re-fetch and re-ask about
+  the same items on every run forever. The script prints per-store and total
+  before/after null counts, keeps going when one store fails, and **bypasses the
+  `sync_log` lock** — nothing may sync those stores while it runs. It is a full
+  scrape, so its sweep flags out-of-stock rows exactly as a normal sync does,
+  and a full sequential pass over every store takes a few hours (no track
+  parallelism, and the detail-page stores fetch far more pages than usual under
+  the wider gate).
+  Measured over a copy of production, 6 990 rows across the 17 stocked stores:
+  `brandId` 1 533 → 187, `typeId` 1 690 → 262, `countryId` 828 → 157, `abv`
+  103 → 92, `volumeMl` 7 → 5. `age` barely moved (4 451 → 4 437) and that is
+  the expected result — those rows are NAS bottlings, not gaps. Of what is
+  left, roughly a third sits on out-of-stock rows the run never saw (only a
+  listed product can be re-scraped); the rest are in-stock items neither the
+  keyword pass nor the LLM could place — a bottler's own series with no brand
+  in the catalogue, or a name that states nothing about type or origin.
 - `price-snapshot` — `productId`, `price`/`oldPrice?` (`NumericColumn`),
   `currency`, `inStock`, `promo`, `capturedOn` (date, default `CURRENT_DATE`).
   **One row per product per day**, enforced by the unique index
@@ -427,8 +455,13 @@ consumed by the Python scraper/enrich utilities, never by the API).
 Migrations: `1783840439247-init` (`user`, `permission`),
 `1783840751031-whisky-domain` (all of the above), then the sync overhaul —
 `store-config-group-engine`, `sync-log-lock`, `price-snapshot-captured-on` —
-and `product-in-stock` (the availability flag) — all applied, formatted per
-the `typeorm-migration-format` skill, and drift-free against the entities.
+`product-in-stock` (the availability flag), and `silpo-store` (a data
+migration seeding the `silpo` store + config; its `down()` un-onboards the
+store, cascading into its products and snapshots) — all applied, formatted
+per the `typeorm-migration-format` skill, and drift-free against the
+entities. Store onboarding is done this way on purpose: **every DB change —
+schema or data — ships as a migration**, never as ad-hoc SQL, so prod picks
+it up through the deploy's migrate gate.
 
 Data migration: `scripts/sync-from-sqlite.ts` (uses the `better-sqlite3`
 devDependency) reads the legacy SQLite DB and upserts into Postgres by natural
@@ -518,10 +551,14 @@ wrappers): `scrape/` has its own internal layering.
   (WooCommerce SSR via cheerio, `supportsDetail`; wine-point takes the
   single-bottle price only and never the 3+/6+ tiers), `goodwine/` (Magento
   `data-*` card attributes, `?p=N` pagination, `li.product-attr-item` details),
-  `rozetka/` (browser tier). `silpo/` is ported for structural parity but
-  deliberately **not registered**: the store is inactive and its `engine` stays
-  `python`. The registry resolves a specialized adapter by slug and falls back
-  to `ZakazAdapter` for any store with a `retailChain`/`category`.
+  `rozetka/` (browser tier), `silpo/` (catalog JSON API on
+  `sf-ecom-api.silpo.ua` — the HTML site hides behind a Cloudflare Turnstile,
+  but the API host answers plain requests, so the store is tier 1 despite the
+  legacy tier-3 classification; the zero-UUID "guest" branch is queried,
+  out-of-stock items stay listed with `stock: 0` and feed `inStock` directly,
+  volume comes from `displayRatio`, brand from `brandTitle`). The registry
+  resolves a specialized adapter by slug and falls back to `ZakazAdapter` for
+  any store with a `retailChain`/`category`.
 - **selectolax vs cheerio gotcha**: the Python adapters read text with
   selectolax's `text(strip=True)`, which strips **every descendant text node
   before joining** — cheerio's `.text()` concatenates them raw. Goodwine splits
@@ -573,6 +610,19 @@ wrappers): `scrape/` has its own internal layering.
   normal). One clean run accepts a store's adapter; a release sweep re-runs
   every store on another day right before the cutover. Results and per-store
   state live in [`PARITY.md`](PARITY.md).
+- **Brand from the name.** Only three adapters (`goodwine`, `winewine`,
+  `wine-point`) read a brand off the page, so `rozetka` and `okwine` stored none
+  at all. `ScrapeService` now loads the catalogue's brand names once per run and
+  hands `NormalizeService.normalize` a match index; a snapshot without a brand
+  gets one from its name (longest key first, both sides space-wrapped so a key
+  only matches whole words, apostrophes stripped on both sides so
+  `Jack Daniels` finds `Jack Daniel's`). The index is built from the **`brand`
+  table**, not from `BRAND_KEYS`: those keys are already stripped, and
+  title-casing one back would mint a second row beside the spelling the
+  catalogue uses. It is passed per call rather than cached on the service —
+  `NormalizeService` is a singleton and `runFullSync` collects stores
+  concurrently. Only the brand is new; `detectBrandInfo` still reads country and
+  type off `BRAND_INFO`, and now benefits from the brand being filled first.
 - **Regex gotcha**: JS `\b`/`\w` stay ASCII even under the `u` flag (Python's
   are Unicode). Cyrillic units use explicit lookaheads / classes — see the
   header of `normalize.service.ts`.
@@ -854,9 +904,10 @@ moved out of `../scrapper` into `src/scrape/` (plan:
 scrape engine (`normalize`/`http`/`html`/`browser`/`llm`/`persist` +
 `ScrapeService.collectStore`), the sync orchestrator + on-demand/status
 endpoints (see "Sync orchestration"), and **every adapter** — the 19 Zakaz.ua
-networks, `maudau`, `okwine`, `winewine`, `wine-point`, `goodwine`, `rozetka` —
-with golden tests and the parity harness (`silpo` is ported but unregistered
-and stays on Python), and the internal daily cron — which **ships disabled**
+networks, `maudau`, `okwine`, `winewine`, `wine-point`, `goodwine`, `rozetka`,
+and `silpo` (added 2026-08-09, straight to the TS engine via its open catalog
+JSON API — no Python counterpart ever ran it in production) —
+with golden tests and the parity harness, and the internal daily cron — which **ships disabled**
 (`SYNC_CRON_ENABLED` unset), so the Python system cron still owns the schedule.
 Pending: the web "Sync" button and the Python decommission. **The cutover is
 done** — as of 2026-08-08 every production store runs `store_config.engine =

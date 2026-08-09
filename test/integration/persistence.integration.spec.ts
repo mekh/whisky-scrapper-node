@@ -5,6 +5,7 @@ import { CoreBrandService } from '~core/brand';
 import { CorePriceSnapshotService } from '~core/price-snapshot';
 import { CoreProductService } from '~core/product';
 import { CoreSyncLogService } from '~core/sync-log';
+import { CoreTypeService } from '~core/type';
 import { SyncTrigger } from '~enums';
 import type { ID, ProductUpsertInput } from '~types';
 
@@ -23,7 +24,9 @@ describe('persistence write path (integration)', () => {
   let snapshots: CorePriceSnapshotService;
   let syncLogs: CoreSyncLogService;
   let brands: CoreBrandService;
+  let types: CoreTypeService;
   let storeId: ID;
+  let countryId: ID;
 
   const baseProduct = (
     over: Partial<ProductUpsertInput>,
@@ -61,6 +64,7 @@ describe('persistence write path (integration)', () => {
     snapshots = moduleRef.get(CorePriceSnapshotService, { strict: false });
     syncLogs = moduleRef.get(CoreSyncLogService, { strict: false });
     brands = moduleRef.get(CoreBrandService, { strict: false });
+    types = moduleRef.get(CoreTypeService, { strict: false });
 
     const rows = await dataSource.query(
       `INSERT INTO store (slug, name, "baseUrl", active)
@@ -77,6 +81,15 @@ describe('persistence write path (integration)', () => {
        VALUES ($1, 1, 0, 0, false, 'ts')`,
       [storeId],
     );
+
+    const countryRows = await dataSource.query(
+      `INSERT INTO country (code, "nameUa")
+       VALUES ('it', 'IT Country')
+       ON CONFLICT (code) DO UPDATE SET "nameUa" = EXCLUDED."nameUa"
+       RETURNING id`,
+    ) as { id: ID }[];
+
+    countryId = countryRows[0].id;
   });
 
   afterEach(async () => {
@@ -145,6 +158,87 @@ describe('persistence write path (integration)', () => {
     expect(row.nameOrig).toBe('Віскі Renamed 0.7л');
     expect(row.url).toBe('https://example.test/p1-v2');
     expect(row.lastSeen).toBe('2026-07-26');
+  });
+
+  it("fills a stored row's still-null columns in backfill mode", async () => {
+    await products.upsertFromScrape(baseProduct({ abv: 40 }));
+
+    await products.upsertFromScrape(
+      baseProduct({
+        age: 12,
+        volumeMl: 700,
+        seenOn: '2026-07-26',
+      }),
+      true,
+    );
+
+    const row = await productRow('sku-1');
+
+    expect(row.age).toBe(12);
+    expect(row.volumeMl).toBe(700);
+    expect(row.abv).toBe(40);
+  });
+
+  it('never overwrites a stored value in backfill mode', async () => {
+    await products.upsertFromScrape(
+      baseProduct({ abv: 40, age: 12, volumeMl: 700 }),
+    );
+
+    await products.upsertFromScrape(
+      baseProduct({
+        name: 'Renamed Later',
+        abv: 99,
+        age: 1,
+        volumeMl: 50,
+        seenOn: '2026-07-26',
+      }),
+      true,
+    );
+
+    const row = await productRow('sku-1');
+
+    expect(row.name).toBe('Sample 0.7l');
+    expect(row.abv).toBe(40);
+    expect(row.age).toBe(12);
+    expect(row.volumeMl).toBe(700);
+  });
+
+  it('leaves the nulls alone without the backfill flag', async () => {
+    await products.upsertFromScrape(baseProduct({}));
+
+    await products.upsertFromScrape(
+      baseProduct({ abv: 40, age: 12, volumeMl: 700, seenOn: '2026-07-26' }),
+    );
+
+    const row = await productRow('sku-1');
+
+    expect(row.abv).toBeNull();
+    expect(row.age).toBeNull();
+    expect(row.volumeMl).toBeNull();
+  });
+
+  it('gates the backfill detail fetch on all four stored fields', async () => {
+    const typeMap = await types.resolveByName(['single malt']);
+    const complete = {
+      abv: 40,
+      volumeMl: 700,
+      typeId: typeMap.get('single malt') ?? null,
+      countryId,
+    };
+
+    await products.upsertFromScrape(baseProduct({ sku: 'full', ...complete }));
+    await products.upsertFromScrape(
+      // No age: a bottling without an age statement still counts as complete.
+      baseProduct({ sku: 'no-age', ...complete, age: null }),
+    );
+    await products.upsertFromScrape(
+      baseProduct({ sku: 'no-country', ...complete, countryId: null }),
+    );
+    await products.upsertFromScrape(baseProduct({ sku: 'abv-only', abv: 40 }));
+
+    const gate = await products.skusWithCoreDetails(storeId);
+
+    expect([...gate].sort()).toEqual(['full', 'no-age']);
   });
 
   it('keeps one snapshot per product per day under concurrency', async () => {

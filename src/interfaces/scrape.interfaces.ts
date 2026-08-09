@@ -306,6 +306,18 @@ export interface CollectOptions {
   dryRun?: boolean;
 
   /**
+   * When true, the run repairs the rows it already stored instead of only
+   * writing new ones: the upsert fills the columns a normal run leaves alone
+   * (name, type, country, age, abv, volume) wherever the stored row is still
+   * null, the detail-page gate widens from "has an ABV" to "has ABV, volume,
+   * type and country", and the LLM pass also picks up items whose type or
+   * country is still missing. A stored value is never overwritten either way.
+   * Used by the one-time `backfill-nulls` script; a normal sync leaves it
+   * unset and behaves exactly as before.
+   */
+  backfill?: boolean;
+
+  /**
    * Optional progress sink.
    */
   reporter?: ScrapeProgressReporter;

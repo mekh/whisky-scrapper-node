@@ -61,6 +61,8 @@ export class ScrapePersistService {
    * @param inStock - Normalized in-stock snapshots to upsert.
    * @param oosSkus - SKUs the listing explicitly returned as out of stock.
    * @param capturedOn - The capture day (`YYYY-MM-DD`) for the snapshots.
+   * @param backfill - Whether the upsert also fills the still-null columns of
+   * the rows it updates.
    * @returns How many products were stored, added (new) and flagged out of
    * stock.
    */
@@ -70,6 +72,7 @@ export class ScrapePersistService {
     inStock: ProductSnapshot[],
     oosSkus: string[],
     capturedOn: string,
+    backfill = false,
   ): Promise<PersistCounts> {
     const inStockBefore = await this.products.countByStore(storeId);
 
@@ -107,7 +110,7 @@ export class ScrapePersistService {
         abv: snap.abv,
         volumeMl: snap.volumeMl,
         seenOn: capturedOn,
-      });
+      }, backfill);
 
       await this.products.setFlavors(
         result.id,

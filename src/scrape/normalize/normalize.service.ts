@@ -12,7 +12,7 @@ import {
 } from './brand-info.constants';
 
 import type { ProductSnapshot } from '~types';
-import type { BrandDetection } from './normalize.interfaces';
+import type { BrandDetection, BrandMatchEntry } from './normalize.interfaces';
 
 // Cyrillic letters, used in place of ASCII-only \w / \b (JS keeps those ASCII
 // even under the u flag, unlike Python's Unicode-aware regex). The trailing
@@ -357,15 +357,73 @@ export class NormalizeService {
   }
 
   /**
+   * Builds the brand match index from the catalogue's known brand names. The
+   * table is the source, not the `BRAND_INFO` keys: those are stripped match
+   * keys, and title-casing one back into a brand would mint a second row next
+   * to the spelling the catalogue already uses ("Jack Daniels" beside
+   * "Jack Daniel's").
+   *
+   * @param names - Canonical brand names, as stored in the `brand` table.
+   * @returns The index, longest key first; duplicate keys keep the first name.
+   */
+  public buildBrandIndex(names: string[]): BrandMatchEntry[] {
+    const seen = new Set<string>();
+    const entries: BrandMatchEntry[] = [];
+
+    names.forEach((name) => {
+      const key = this.brandHaystack(name).trim();
+
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        entries.push({ key, name });
+      }
+    });
+
+    return entries.sort((left, right) => right.key.length - left.key.length);
+  }
+
+  /**
+   * Finds the brand a product name states. Longest key first, so a specific
+   * brand wins over a shorter one contained in it ("Highland Park" over
+   * "Highland"), and both sides are space-wrapped, so a key only matches whole
+   * words ("Arran" never matches inside "arrangement"). Reads the name alone —
+   * a description mentions other brands.
+   *
+   * @param name - The product name.
+   * @param index - The brand index (see {@link buildBrandIndex}).
+   * @returns The canonical brand name, or null when none matched.
+   */
+  public detectBrandFromName(
+    name: string,
+    index: BrandMatchEntry[],
+  ): string | null {
+    const haystack = this.brandHaystack(name);
+
+    const match = index.find((entry) => haystack.includes(` ${entry.key} `));
+
+    return match?.name ?? null;
+  }
+
+  /**
    * Enriches a snapshot with derived fields without overwriting values the
    * site already provided. Age and type are read only from the name (a
    * description's "N years" usually means brand history, not maturation).
    *
    * @param snap - The snapshot to enrich (mutated in place).
+   * @param brandIndex - Known brand names to read a missing brand from; empty
+   * disables that pass. Passed in per run rather than cached here, since the
+   * service is a singleton and stores sync concurrently.
    * @returns The same snapshot.
    */
-  public normalize(snap: ProductSnapshot): ProductSnapshot {
+  public normalize(
+    snap: ProductSnapshot,
+    brandIndex: BrandMatchEntry[] = [],
+  ): ProductSnapshot {
     snap.brand = BrandUtils.canonical(snap.brand);
+
+    if (snap.brand === null && brandIndex.length > 0) {
+      snap.brand = this.detectBrandFromName(snap.name, brandIndex);
+    }
 
     const haystack = this.haystack(snap);
 

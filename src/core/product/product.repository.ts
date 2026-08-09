@@ -55,6 +55,50 @@ const CURRENT_SQL = `
   WHERE r.rn = 1
 `;
 
+// Written once on insert, then left untouched: `name`, the type/country/
+// age/abv/volume fields and `firstSeen` are absent from the update clause on
+// purpose, so manual edits survive later scrapes. `brandId` is the exception —
+// COALESCE(new, old) keeps a known brand when a run reports none.
+const UPSERT_SQL = `
+  INSERT INTO product
+     ("storeId", "brandId", "typeId", "countryId", age, abv, "volumeMl",
+      sku, url, name, "nameOrig", "firstSeen", "lastSeen")
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+   ON CONFLICT ("storeId", sku) DO UPDATE SET
+     url = EXCLUDED.url,
+     "nameOrig" = EXCLUDED."nameOrig",
+     "brandId" = COALESCE(EXCLUDED."brandId", product."brandId"),
+     "inStock" = true,
+     "lastSeen" = EXCLUDED."lastSeen",
+     "updatedAt" = now()
+   RETURNING id, (xmax = 0) AS "isNew"
+`;
+
+// Backfill variant: the same write, plus the columns a normal run leaves
+// alone — but only where the stored row is still null (COALESCE(old, new), so
+// the existing value always wins). This is what fills rows written before the
+// parser knew how to read a field, without touching anything already set.
+const BACKFILL_UPSERT_SQL = `
+  INSERT INTO product
+     ("storeId", "brandId", "typeId", "countryId", age, abv, "volumeMl",
+      sku, url, name, "nameOrig", "firstSeen", "lastSeen")
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+   ON CONFLICT ("storeId", sku) DO UPDATE SET
+     url = EXCLUDED.url,
+     "nameOrig" = EXCLUDED."nameOrig",
+     "brandId" = COALESCE(EXCLUDED."brandId", product."brandId"),
+     name = COALESCE(product.name, EXCLUDED.name),
+     "typeId" = COALESCE(product."typeId", EXCLUDED."typeId"),
+     "countryId" = COALESCE(product."countryId", EXCLUDED."countryId"),
+     age = COALESCE(product.age, EXCLUDED.age),
+     abv = COALESCE(product.abv, EXCLUDED.abv),
+     "volumeMl" = COALESCE(product."volumeMl", EXCLUDED."volumeMl"),
+     "inStock" = true,
+     "lastSeen" = EXCLUDED."lastSeen",
+     "updatedAt" = now()
+   RETURNING id, (xmax = 0) AS "isNew"
+`;
+
 @TypeormRepository(ProductEntity)
 export class ProductRepository extends BaseRepository<ProductEntity> {
   /**
@@ -64,27 +108,19 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
    * `inStock` back to true since only in-stock items are upserted — while
    * `name`, the type/country/age/abv/volume fields and `firstSeen` are written
    * once on insert and then left untouched, so manual edits survive later
-   * scrapes.
+   * scrapes. In backfill mode those fields are additionally filled where the
+   * stored row is still null; a stored value is never overwritten.
    *
    * @param input - The resolved product to write.
+   * @param backfill - Whether to fill still-null columns on conflict.
    * @returns The product id and whether it was newly inserted.
    */
   public async upsertFromScrape(
     input: ProductUpsertInput,
+    backfill = false,
   ): Promise<ProductUpsertResult> {
     const rows = await this.query(
-      `INSERT INTO product
-         ("storeId", "brandId", "typeId", "countryId", age, abv, "volumeMl",
-          sku, url, name, "nameOrig", "firstSeen", "lastSeen")
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
-       ON CONFLICT ("storeId", sku) DO UPDATE SET
-         url = EXCLUDED.url,
-         "nameOrig" = EXCLUDED."nameOrig",
-         "brandId" = COALESCE(EXCLUDED."brandId", product."brandId"),
-         "inStock" = true,
-         "lastSeen" = EXCLUDED."lastSeen",
-         "updatedAt" = now()
-       RETURNING id, (xmax = 0) AS "isNew"`,
+      backfill ? BACKFILL_UPSERT_SQL : UPSERT_SQL,
       [
         input.storeId,
         input.brandId,
@@ -114,6 +150,31 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
   public async skusWithAbv(storeId: ID): Promise<Set<string>> {
     const rows = await this.query(
       'SELECT sku FROM product WHERE "storeId" = $1 AND abv IS NOT NULL',
+      [storeId],
+    ) as { sku: string }[];
+
+    return new Set(rows.map((row) => row.sku));
+  }
+
+  /**
+   * SKUs of a store's products whose detail-page fields — ABV, volume, type
+   * and country — are all filled already. The backfill run uses this instead
+   * of {@link skusWithAbv}, so an old row that has an ABV but no country still
+   * gets its detail page fetched. Age is deliberately not part of the gate: a
+   * no-age-statement bottling legitimately never gets one, and requiring it
+   * would re-fetch those detail pages on every run forever.
+   *
+   * @param storeId - Store id.
+   * @returns The set of SKUs whose detail-page fields are complete.
+   */
+  public async skusWithCoreDetails(storeId: ID): Promise<Set<string>> {
+    const rows = await this.query(
+      `SELECT sku FROM product
+       WHERE "storeId" = $1
+         AND abv IS NOT NULL
+         AND "volumeMl" IS NOT NULL
+         AND "typeId" IS NOT NULL
+         AND "countryId" IS NOT NULL`,
       [storeId],
     ) as { sku: string }[];
 

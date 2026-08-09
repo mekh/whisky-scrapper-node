@@ -222,6 +222,57 @@ describe('NormalizeService.detectBrandInfo', () => {
   });
 });
 
+describe('NormalizeService brand detection from the name', () => {
+  const index = n.buildBrandIndex([
+    'Highland',
+    'Highland Park',
+    "Jack Daniel's",
+    'Arran',
+    'Highland Park',
+  ]);
+
+  it('builds a deduplicated index, longest key first', () => {
+    expect(index.map((entry) => entry.key)).toEqual([
+      'highland park',
+      'jack daniels',
+      'highland',
+      'arran',
+    ]);
+  });
+
+  it('prefers the longest matching brand', () => {
+    expect(n.detectBrandFromName('Віскі Highland Park 12yo 0,7л', index))
+      .toBe('Highland Park');
+  });
+
+  it('matches across apostrophe spelling', () => {
+    expect(n.detectBrandFromName('Jack Daniels Old No.7 40% 0,7л', index))
+      .toBe("Jack Daniel's");
+  });
+
+  it('does not match a brand inside a longer word', () => {
+    expect(n.detectBrandFromName('Whisky arrangement gift box', index))
+      .toBeNull();
+  });
+
+  it('fills only a missing brand, and only with an index', () => {
+    const detected = n.normalize(snap('Віскі Arran Quarter Cask 0,7л'), index);
+
+    expect(detected.brand).toBe('Arran');
+
+    const scraped = n.normalize(
+      snap('Віскі Arran Quarter Cask 0,7л', { brand: 'arran distillery' }),
+      index,
+    );
+
+    expect(scraped.brand).toBe('Arran Distillery');
+
+    const noIndex = n.normalize(snap('Віскі Arran Quarter Cask 0,7л'));
+
+    expect(noIndex.brand).toBeNull();
+  });
+});
+
 describe('NormalizeService.extractVolumeMl — gift sets', () => {
   it('sums the bottles of a set joined with a plus', () => {
     expect(

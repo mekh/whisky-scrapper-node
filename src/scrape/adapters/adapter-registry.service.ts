@@ -16,6 +16,7 @@ import { GoodwineAdapter } from './goodwine';
 import { MaudauAdapter } from './maudau';
 import { OkwineAdapter } from './okwine';
 import { RozetkaAdapter } from './rozetka';
+import { SilpoAdapter } from './silpo';
 import { WinePointAdapter } from './wine-point';
 import { WinewineAdapter } from './winewine';
 import { ZakazAdapter } from './zakaz';
@@ -25,8 +26,7 @@ import type { AdapterDeps } from './adapter-registry.interfaces';
 /**
  * Builders for stores that run their own platform, keyed by slug. Every
  * Zakaz.ua network is served by the parameterized `ZakazAdapter` instead and
- * is therefore absent here, and so is `silpo`: it stays disabled and owned by
- * the legacy Python scraper, so `SilpoAdapter` is deliberately not registered.
+ * is therefore absent here.
  */
 const SPECIALIZED: Record<string, (deps: AdapterDeps) => ScrapeAdapter> = {
   maudau: (deps) =>
@@ -70,13 +70,21 @@ const SPECIALIZED: Record<string, (deps: AdapterDeps) => ScrapeAdapter> = {
     ),
   rozetka: (deps) =>
     new RozetkaAdapter(deps.spec, deps.delayMultiplier, deps.reporter),
+  silpo: (deps) =>
+    new SilpoAdapter(
+      deps.spec,
+      deps.delayMultiplier,
+      deps.http,
+      deps.normalizer,
+      deps.reporter,
+    ),
 };
 
 /**
  * Resolves the adapter for a store. Specialized stores are matched by slug and
  * every Zakaz.ua network (a `retailChain`) shares one parameterized adapter.
- * Every store the project scrapes is registered except `silpo`, which is
- * disabled; an unresolved slug is a configuration error.
+ * Every store the project scrapes is registered; an unresolved slug is a
+ * configuration error.
  */
 @Injectable()
 export class AdapterRegistryService implements ScrapeAdapterFactory {

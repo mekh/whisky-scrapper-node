@@ -13,15 +13,19 @@ import type { ScrapeHttpClient } from './http-client.interfaces';
 /**
  * Per-store HTTP strategy, filled from the feasibility spike. Stores absent
  * here use plain fetch; browser-tier stores (`needsBrowser`) bypass this
- * factory entirely. The CF-fronted HTML stores use impersonation: `winewine`
+ * factory entirely. The CF-fronted stores use impersonation: `winewine`
  * because plain fetch 403s from a datacenter IP, `wine-point`/`goodwine`
- * pre-emptively as the same WooCommerce/Magento-behind-Cloudflare family.
+ * pre-emptively as the same WooCommerce/Magento-behind-Cloudflare family,
+ * and `silpo` pre-emptively too — its API host is CF-fronted and passes
+ * plain fetch from a residential IP, but the datacenter behavior is
+ * unproven.
  */
 // TODO: move this to the `store_config`
 export const HTTP_STRATEGY_BY_SLUG: Partial<Record<string, HttpStrategy>> = {
   winewine: HttpStrategy.IMPERSONATE,
   'wine-point': HttpStrategy.IMPERSONATE,
   goodwine: HttpStrategy.IMPERSONATE,
+  silpo: HttpStrategy.IMPERSONATE,
 };
 
 /**

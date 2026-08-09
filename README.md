@@ -112,6 +112,7 @@ pnpm start        # nest start (watch) — API on http://localhost:4000
 | `pnpm clean-names`               | Maintenance: rewrite `product.name` to brand + expression (see below)                             |
 | `pnpm fix-age`                   | Maintenance: clear `product.age` values no source ever stated (see below)                         |
 | `pnpm fix-volume`                | Maintenance: re-derive `volumeMl` for multi-bottle gift sets (see below)                          |
+| `pnpm backfill`                  | Maintenance: re-scrape stores to fill the columns left null on insert (see below)                 |
 
 Rewrite the stored product names (brand + expression only; the age, ABV and
 volume are kept in their own columns and re-appended by the web client). New
@@ -201,6 +202,43 @@ production:
 
 ```bash
 docker compose run --rm service node dist/scripts/fix-bundle-volume.js --dry-run
+```
+
+Fill the columns an older, weaker parser left null — `typeId`, `countryId`,
+`abv`, `volumeMl`, `brandId`, and `age` where a name really states one:
+
+```bash
+pnpm backfill --dry-run                 # project the result, write nothing
+pnpm backfill --store maudau            # one store
+pnpm backfill                           # every active `ts` store, in sequence
+```
+
+The other maintenance scripts re-derive a value from data already stored; this
+one goes back to the stores, because a country or an ABV the row never had
+cannot be recovered from the row. It re-runs the real collection pipeline with
+`backfill: true`, which changes three things: the upsert also writes
+`name`/`typeId`/`countryId`/`age`/`abv`/`volumeMl` **where the stored row is
+still null** (`COALESCE(old, new)`, so a stored value and a manual edit are
+never overwritten), the detail-page gate widens from "this SKU has an ABV" to
+"it has ABV, volume, type and country", and the LLM pass also picks up items
+whose type or country is missing. Age is deliberately not part of either
+widening: a bottling without an age statement legitimately has none, so it
+would make every run chase the same items forever.
+
+It prints per-store and total before/after null counts. A dry run scrapes and
+reports an upper bound without writing (a country name the `country` table does
+not know is counted as fillable but would not be stored). Re-running is safe:
+counts hold at their floor, give or take the LLM's ~1 % run-to-run disagreement.
+
+Two things to know before running it. The script **bypasses the `sync_log`
+lock**, so no cron or manual sync may touch the same stores meanwhile. And it is
+a full scrape — the sweep flags whatever a store no longer lists as out of
+stock, exactly as a normal sync would, and a full pass over all stores takes
+roughly as long as a full sync (`rozetka`, the browser tier, dominates). In
+production:
+
+```bash
+docker compose run --rm service node dist/scripts/backfill-nulls.js --dry-run
 ```
 
 Dry-run the in-process scraper for one store without writing (every store the

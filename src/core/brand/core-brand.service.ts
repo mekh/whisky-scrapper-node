@@ -26,4 +26,16 @@ export class CoreBrandService extends CoreBaseService<BrandEntity> {
   public async resolveByName(names: string[]): Promise<Map<string, ID>> {
     return this.repo.getOrCreateByName(names);
   }
+
+  /**
+   * Every canonical brand name in the catalogue. The scrape engine matches
+   * product names against these to recover a brand the store did not state.
+   *
+   * @returns All brand names, in no particular order.
+   */
+  public async listNames(): Promise<string[]> {
+    const rows = await this.findMany(undefined, { select: { name: true } });
+
+    return rows.map((row) => row.name);
+  }
 }

@@ -148,6 +148,7 @@ describe('ScrapePersistService.persist', () => {
         name: 'Aberlour',
         nameOrig: 'Віскі Aberlour 12 років 40% 0,7л',
       }),
+      false,
     );
   });
 
@@ -163,7 +164,19 @@ describe('ScrapePersistService.persist', () => {
 
       expect(products.upsertFromScrape).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'Aberlour' }),
+        false,
       );
     },
   );
+
+  it('passes the backfill flag down to the upsert', async () => {
+    const { service, products } = makeService(1);
+
+    await service.persist(STORE_ID, [snap('a')], [], DAY, true);
+
+    expect(products.upsertFromScrape).toHaveBeenCalledWith(
+      expect.anything(),
+      true,
+    );
+  });
 });

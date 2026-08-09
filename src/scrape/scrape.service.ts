@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { SCRAPE_ADAPTER_FACTORY } from '~constants';
+import { CoreBrandService } from '~core/brand';
 import { CoreProductService } from '~core/product';
 import { CoreStoreService } from '~core/store';
 import { CoreStoreConfigService } from '~core/store-config';
@@ -40,6 +41,8 @@ export class ScrapeService {
 
   private readonly products: CoreProductService;
 
+  private readonly brands: CoreBrandService;
+
   private readonly adapters: ScrapeAdapterFactory;
 
   private readonly normalizer: NormalizeService;
@@ -54,6 +57,7 @@ export class ScrapeService {
     stores: CoreStoreService,
     storeConfigs: CoreStoreConfigService,
     products: CoreProductService,
+    brands: CoreBrandService,
     @Inject(SCRAPE_ADAPTER_FACTORY) adapters: ScrapeAdapterFactory,
     normalizer: NormalizeService,
     llm: LlmEnrichmentService,
@@ -63,6 +67,7 @@ export class ScrapeService {
     this.stores = stores;
     this.storeConfigs = storeConfigs;
     this.products = products;
+    this.brands = brands;
     this.adapters = adapters;
     this.normalizer = normalizer;
     this.llm = llm;
@@ -74,7 +79,7 @@ export class ScrapeService {
    * Collects one store by slug.
    *
    * @param slug - Store slug.
-   * @param options - Dry-run flag and optional progress reporter.
+   * @param options - Dry-run and backfill flags, optional progress reporter.
    * @returns The collection outcome.
    * @throws {NotFoundError} When no store has the slug.
    * @throws {ServerError} When the store has no scrape configuration.
@@ -89,10 +94,19 @@ export class ScrapeService {
       throw new NotFoundError('Store not found', { slug });
     }
 
+    const backfill = options.backfill ?? false;
     const spec = await this.buildSpec(store);
-    const snaps = await this.scrape(spec, store.id, options.reporter);
+    const brandNames = await this.brands.listNames();
+    const brandIndex = this.normalizer.buildBrandIndex(brandNames);
 
-    snaps.forEach((snap) => this.normalizer.normalize(snap));
+    const snaps = await this.scrape(
+      spec,
+      store.id,
+      backfill,
+      options.reporter,
+    );
+
+    snaps.forEach((snap) => this.normalizer.normalize(snap, brandIndex));
 
     const found = snaps.length;
     const inStock = snaps.filter((snap) => snap.inStock);
@@ -104,7 +118,7 @@ export class ScrapeService {
       inStock: inStock.length,
     });
 
-    await this.runLlm(inStock);
+    await this.runLlm(inStock, backfill);
     await this.runNameExtraction(store.id, inStock);
 
     if (options.dryRun) {
@@ -124,6 +138,7 @@ export class ScrapeService {
       inStock,
       outOfStock.map((snap) => snap.storeSku),
       capturedOn,
+      backfill,
     );
 
     return { slug, found, ...counts };
@@ -164,12 +179,14 @@ export class ScrapeService {
    *
    * @param spec - The scrape spec.
    * @param storeId - The store id (for the detail-fetch gate).
+   * @param backfill - Whether the wider backfill detail gate applies.
    * @param reporter - Optional progress reporter.
    * @returns The raw scraped snapshots.
    */
   private async scrape(
     spec: StoreScrapeSpec,
     storeId: ID,
+    backfill: boolean,
     reporter?: ScrapeProgressReporter,
   ): Promise<ProductSnapshot[]> {
     const adapter = this.adapters.create(spec, reporter);
@@ -178,7 +195,7 @@ export class ScrapeService {
       const snaps = await adapter.fetchListing();
 
       if (adapter.supportsDetail && snaps.length > 0) {
-        await this.enrichDetails(adapter, storeId, snaps, reporter);
+        await this.enrichDetails(adapter, storeId, snaps, backfill, reporter);
       }
 
       return snaps;
@@ -188,13 +205,15 @@ export class ScrapeService {
   }
 
   /**
-   * Fetches detail pages for items whose ABV is not already stored (new or
-   * incomplete), pacing the requests with the store's politeness delay. One
-   * failing item does not stop the rest.
+   * Fetches detail pages for items whose stored fields are still incomplete,
+   * pacing the requests with the store's politeness delay. One failing item
+   * does not stop the rest. A normal run only chases a missing ABV; a backfill
+   * run also chases a missing volume, type or country.
    *
    * @param adapter - The store adapter.
    * @param storeId - The store id.
    * @param snaps - The scraped snapshots.
+   * @param backfill - Whether the wider backfill detail gate applies.
    * @param reporter - Optional progress reporter.
    * @returns Resolves once enrichment is done.
    */
@@ -202,10 +221,14 @@ export class ScrapeService {
     adapter: ScrapeAdapter,
     storeId: ID,
     snaps: ProductSnapshot[],
+    backfill: boolean,
     reporter?: ScrapeProgressReporter,
   ): Promise<void> {
-    const haveAbv = await this.products.skusWithAbv(storeId);
-    const pending = snaps.filter((snap) => !haveAbv.has(snap.storeSku));
+    const complete = backfill
+      ? await this.products.skusWithCoreDetails(storeId)
+      : await this.products.skusWithAbv(storeId);
+
+    const pending = snaps.filter((snap) => !complete.has(snap.storeSku));
 
     if (!pending.length) {
       return;
@@ -232,17 +255,28 @@ export class ScrapeService {
 
   /**
    * Runs the LLM fallback for in-stock items still missing key fields, when
-   * enabled.
+   * enabled. A backfill run also asks about a missing type or country, which a
+   * normal run leaves to the deterministic pass — for a new row those columns
+   * can still be filled by the next run, but a stored row would keep the gap
+   * forever. Age stays out of the trigger: a bottling without an age statement
+   * legitimately has none, so it would make every run ask about the same items.
    *
    * @param inStock - In-stock snapshots.
+   * @param backfill - Whether the wider backfill trigger applies.
    * @returns Resolves once enrichment has been attempted.
    */
-  private async runLlm(inStock: ProductSnapshot[]): Promise<void> {
+  private async runLlm(
+    inStock: ProductSnapshot[],
+    backfill: boolean,
+  ): Promise<void> {
     if (!this.llm.enabled) {
       return;
     }
 
-    const pending = inStock.filter((snap) => this.normalizer.needsLlm(snap));
+    const pending = inStock.filter((snap) =>
+      this.normalizer.needsLlm(snap)
+      || (backfill && (snap.whiskyType === null || snap.country === null))
+    );
 
     if (pending.length > 0) {
       await this.llm.enrich(pending);

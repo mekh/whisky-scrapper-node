@@ -3,6 +3,7 @@ import 'reflect-metadata';
 import { NormalizeService } from '../../src/scrape/normalize/normalize.service';
 import { ScrapeService } from '../../src/scrape/scrape.service';
 
+import type { CoreBrandService } from '~core/brand';
 import type { CoreProductService } from '~core/product';
 import type { CoreStoreService } from '~core/store';
 import type { CoreStoreConfigService } from '~core/store-config';
@@ -32,6 +33,32 @@ const STORE: StoreListItem = {
   lastSuccessfulSyncAt: null,
 };
 
+/**
+ * What a test wants to vary about the collaborators; everything omitted gets
+ * an inert default (no stored SKUs, both LLM passes disabled).
+ */
+interface HarnessOptions {
+  skusWithAbv: Set<string>;
+  skusWithCoreDetails: Set<string>;
+  existingSkus: Set<string>;
+  brandNames: string[];
+  names: { enabled: boolean; extractNames: jest.Mock };
+  llm: { enabled: boolean; enrich: jest.Mock };
+  persist: { persist: jest.Mock };
+}
+
+/**
+ * The service under test plus the mocks a test needs to assert against.
+ */
+interface Harness extends HarnessOptions {
+  service: ScrapeService;
+  products: {
+    skusWithAbv: jest.Mock;
+    skusWithCoreDetails: jest.Mock;
+    existingSkus: jest.Mock;
+  };
+}
+
 function rawSnap(over: Partial<ProductSnapshot>): ProductSnapshot {
   return {
     storeSlug: 'faux',
@@ -55,16 +82,21 @@ function rawSnap(over: Partial<ProductSnapshot>): ProductSnapshot {
   };
 }
 
-function makeService(
+function makeHarness(
   adapter: ScrapeAdapter,
-  persist: { persist: jest.Mock },
-  skusWithAbv: Set<string> = new Set<string>(),
-  names: { enabled: boolean; extractNames: jest.Mock } = {
-    enabled: false,
-    extractNames: jest.fn(),
-  },
-  existingSkus: Set<string> = new Set<string>(),
-): ScrapeService {
+  over: Partial<HarnessOptions> = {},
+): Harness {
+  const options: HarnessOptions = {
+    skusWithAbv: new Set<string>(),
+    skusWithCoreDetails: new Set<string>(),
+    existingSkus: new Set<string>(),
+    brandNames: [],
+    names: { enabled: false, extractNames: jest.fn() },
+    llm: { enabled: false, enrich: jest.fn() },
+    persist: { persist: jest.fn() },
+    ...over,
+  };
+
   const stores = {
     findWithConfigBySlug: jest.fn().mockResolvedValue(STORE),
   } as unknown as CoreStoreService;
@@ -74,27 +106,38 @@ function makeService(
   } as unknown as CoreStoreConfigService;
 
   const products = {
-    skusWithAbv: jest.fn().mockResolvedValue(skusWithAbv),
-    existingSkus: jest.fn().mockResolvedValue(existingSkus),
-  } as unknown as CoreProductService;
+    skusWithAbv: jest.fn().mockResolvedValue(options.skusWithAbv),
+    skusWithCoreDetails: jest.fn()
+      .mockResolvedValue(options.skusWithCoreDetails),
+    existingSkus: jest.fn().mockResolvedValue(options.existingSkus),
+  };
+
+  const brands = {
+    listNames: jest.fn().mockResolvedValue(options.brandNames),
+  } as unknown as CoreBrandService;
 
   const factory: ScrapeAdapterFactory = { create: () => adapter };
 
-  const llm = {
-    enabled: false,
-    enrich: jest.fn(),
-  } as unknown as LlmEnrichmentService;
-
-  return new ScrapeService(
+  const service = new ScrapeService(
     stores,
     storeConfigs,
-    products,
+    products as unknown as CoreProductService,
+    brands,
     factory,
     new NormalizeService(),
-    llm,
-    names as unknown as LlmNameExtractionService,
-    persist as unknown as ScrapePersistService,
+    options.llm as unknown as LlmEnrichmentService,
+    options.names as unknown as LlmNameExtractionService,
+    options.persist as unknown as ScrapePersistService,
   );
+
+  return { ...options, products, service };
+}
+
+function makeService(
+  adapter: ScrapeAdapter,
+  over: Partial<HarnessOptions> = {},
+): ScrapeService {
+  return makeHarness(adapter, over).service;
 }
 
 describe('ScrapeService.collectStore', () => {
@@ -113,7 +156,7 @@ describe('ScrapeService.collectStore', () => {
     };
     const persist = { persist: jest.fn() };
 
-    const service = makeService(adapter, persist);
+    const service = makeService(adapter, { persist });
 
     const result = await service.collectStore('faux', { dryRun: true });
 
@@ -144,20 +187,18 @@ describe('ScrapeService.collectStore', () => {
       persist: jest.fn().mockResolvedValue({ stored: 1, added: 1, removed: 1 }),
     };
 
-    const service = makeService(adapter, persist);
+    const service = makeService(adapter, { persist });
 
     const result = await service.collectStore('faux');
 
     expect(persist.persist).toHaveBeenCalledTimes(1);
-    const [storeId, inStock, oosSkus] = persist.persist.mock.calls[0] as [
-      string,
-      ProductSnapshot[],
-      string[],
-    ];
+    const [storeId, inStock, oosSkus, , backfill] = persist.persist.mock
+      .calls[0] as [string, ProductSnapshot[], string[], string, boolean];
 
     expect(storeId).toBe('store-1');
     expect(inStock.map((snap) => snap.storeSku)).toEqual(['a']);
     expect(oosSkus).toEqual(['gone']);
+    expect(backfill).toBe(false);
     expect(result).toEqual({
       slug: 'faux',
       found: 2,
@@ -184,11 +225,9 @@ describe('ScrapeService.collectStore', () => {
         close: jest.fn().mockResolvedValue(undefined),
       };
 
-      const service = makeService(
-        adapter,
-        { persist: jest.fn() },
-        new Set(['known']),
-      );
+      const service = makeService(adapter, {
+        skusWithAbv: new Set(['known']),
+      });
 
       await service.collectStore('faux', { dryRun: true });
 
@@ -216,7 +255,7 @@ describe('ScrapeService.collectStore', () => {
       close: jest.fn().mockResolvedValue(undefined),
     };
 
-    const result = await makeService(adapter, { persist: jest.fn() })
+    const result = await makeService(adapter)
       .collectStore('faux', { dryRun: true });
 
     expect(enrichDetail).toHaveBeenCalledTimes(2);
@@ -237,13 +276,10 @@ describe('ScrapeService.collectStore', () => {
     };
     const names = { enabled: true, extractNames: jest.fn() };
 
-    const service = makeService(
-      adapter,
-      { persist: jest.fn() },
-      new Set<string>(),
+    const service = makeService(adapter, {
       names,
-      new Set(['known']),
-    );
+      existingSkus: new Set(['known']),
+    });
 
     await service.collectStore('faux', { dryRun: true });
 
@@ -265,15 +301,117 @@ describe('ScrapeService.collectStore', () => {
     };
     const names = { enabled: false, extractNames: jest.fn() };
 
-    const service = makeService(
-      adapter,
-      { persist: jest.fn() },
-      new Set<string>(),
-      names,
-    );
+    const service = makeService(adapter, { names });
 
     await service.collectStore('faux', { dryRun: true });
 
     expect(names.extractNames).not.toHaveBeenCalled();
+  });
+
+  it('reads a missing brand off the name via the brand index', async () => {
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: false,
+      fetchListing: jest.fn().mockResolvedValue([rawSnap({ storeSku: 'a' })]),
+      enrichDetail: jest.fn(),
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const service = makeService(adapter, {
+      brandNames: ['Aberlour', 'Highland Park'],
+    });
+
+    const result = await service.collectStore('faux', { dryRun: true });
+
+    expect(result.items?.[0].brand).toBe('Aberlour');
+  });
+});
+
+describe('ScrapeService.collectStore in backfill mode', () => {
+  it('gates detail fetches on the wider set of stored fields', async () => {
+    const enrichDetail = jest.fn().mockResolvedValue(true);
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: true,
+      fetchListing: jest.fn().mockResolvedValue([
+        rawSnap({ storeSku: 'complete' }),
+        rawSnap({ storeSku: 'partial' }),
+      ]),
+      enrichDetail,
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const harness = makeHarness(adapter, {
+      skusWithAbv: new Set(['complete', 'partial']),
+      skusWithCoreDetails: new Set(['complete']),
+    });
+
+    await harness.service.collectStore('faux', {
+      dryRun: true,
+      backfill: true,
+    });
+
+    expect(harness.products.skusWithAbv).not.toHaveBeenCalled();
+    expect(enrichDetail).toHaveBeenCalledTimes(1);
+    expect(enrichDetail).toHaveBeenCalledWith(
+      expect.objectContaining({ storeSku: 'partial' }),
+    );
+  });
+
+  it('tells the persist step to fill still-null columns', async () => {
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: false,
+      fetchListing: jest.fn().mockResolvedValue([rawSnap({ storeSku: 'a' })]),
+      enrichDetail: jest.fn(),
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    const persist = {
+      persist: jest.fn().mockResolvedValue({ stored: 1, added: 0, removed: 0 }),
+    };
+
+    await makeService(adapter, { persist })
+      .collectStore('faux', { backfill: true });
+
+    expect(persist.persist).toHaveBeenCalledWith(
+      'store-1',
+      expect.anything(),
+      [],
+      expect.any(String),
+      true,
+    );
+  });
+
+  it('asks the LLM about a missing type or country as well', async () => {
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: false,
+      fetchListing: jest.fn().mockResolvedValue([
+        // ABV and volume are in the name, so only type/country stay missing.
+        rawSnap({ storeSku: 'a', name: 'Nomad Outland 40% 0.7л' }),
+      ]),
+      enrichDetail: jest.fn(),
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    const llm = { enabled: true, enrich: jest.fn() };
+
+    const plain = makeService(adapter, { llm });
+
+    await plain.collectStore('faux', { dryRun: true });
+
+    expect(llm.enrich).not.toHaveBeenCalled();
+
+    const backfilling = makeService(adapter, { llm });
+
+    await backfilling.collectStore('faux', {
+      dryRun: true,
+      backfill: true,
+    });
+
+    expect(llm.enrich).toHaveBeenCalledTimes(1);
   });
 });

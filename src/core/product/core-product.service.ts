@@ -27,15 +27,18 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
 
   /**
    * Inserts or updates a product by its `(storeId, sku)` identity, preserving
-   * first-insert and manually-edited fields on conflict.
+   * first-insert and manually-edited fields on conflict. In backfill mode the
+   * still-null columns of an existing row are filled as well.
    *
    * @param input - The resolved product to write.
+   * @param backfill - Whether to fill still-null columns on conflict.
    * @returns The product id and whether it was newly inserted.
    */
   public async upsertFromScrape(
     input: ProductUpsertInput,
+    backfill = false,
   ): Promise<ProductUpsertResult> {
-    return this.repo.upsertFromScrape(input);
+    return this.repo.upsertFromScrape(input, backfill);
   }
 
   /**
@@ -47,6 +50,17 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
    */
   public async skusWithAbv(storeId: ID): Promise<Set<string>> {
     return this.repo.skusWithAbv(storeId);
+  }
+
+  /**
+   * SKUs of a store's products whose ABV, volume, type and country are all
+   * filled (the backfill run's wider detail-fetch gate).
+   *
+   * @param storeId - Store id.
+   * @returns The set of SKUs whose detail-page fields are complete.
+   */
+  public async skusWithCoreDetails(storeId: ID): Promise<Set<string>> {
+    return this.repo.skusWithCoreDetails(storeId);
   }
 
   /**

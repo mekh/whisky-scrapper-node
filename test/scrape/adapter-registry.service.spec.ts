@@ -5,6 +5,7 @@ import { GoodwineAdapter } from '../../src/scrape/adapters/goodwine';
 import { MaudauAdapter } from '../../src/scrape/adapters/maudau';
 import { OkwineAdapter } from '../../src/scrape/adapters/okwine';
 import { RozetkaAdapter } from '../../src/scrape/adapters/rozetka';
+import { SilpoAdapter } from '../../src/scrape/adapters/silpo';
 import { WinePointAdapter } from '../../src/scrape/adapters/wine-point';
 import { WinewineAdapter } from '../../src/scrape/adapters/winewine';
 import { ZakazAdapter } from '../../src/scrape/adapters/zakaz';
@@ -111,6 +112,7 @@ describe('AdapterRegistryService', () => {
       .toBeInstanceOf(GoodwineAdapter);
     expect(registry.create(spec('rozetka', { tier: 3, needsBrowser: true })))
       .toBeInstanceOf(RozetkaAdapter);
+    expect(registry.create(spec('silpo'))).toBeInstanceOf(SilpoAdapter);
   });
 
   it('reports which of the detail-page stores fetch product pages', () => {
@@ -123,12 +125,12 @@ describe('AdapterRegistryService', () => {
     expect(registry.create(spec('maudau')).supportsDetail).toBe(false);
   });
 
-  it('leaves the disabled silpo store without an adapter', () => {
+  it('rejects a store no adapter is registered for', () => {
     const registry = makeRegistry();
 
-    const silpo = spec('silpo', { tier: 3, needsBrowser: true });
+    const unknown = spec('unknown-store');
 
-    expect(() => registry.create(silpo)).toThrow(
+    expect(() => registry.create(unknown)).toThrow(
       'No scrape adapter registered for store',
     );
   });

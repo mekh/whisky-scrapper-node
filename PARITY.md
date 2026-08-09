@@ -73,7 +73,7 @@ compared field.
 | `wine-point`       | 1    | step 7    | 2026-07-25 clean — 220 / 220                       |
 | `goodwine`         | 2    | step 7    | 2026-07-25 clean — 717 / 717                       |
 | `rozetka`          | 3    | step 7    | 2026-07-25 clean — 443 / 444, re-run 393 / 393     |
-| `silpo`            | 3    | step 7    | structure only — not registered, stays on `python` |
+| `silpo`            | 1    | post-mig. | 2026-08-09 — rebuilt on the open catalog JSON API (tier 1, no browser) and registered; no parity run — the Python adapter never ran in production, so there is nothing to be parity with |
 
 `metro` and `novus` stand in for all 19 Zakaz.ua networks: they share one
 parameterized adapter, and `novus` is the category-slug exception (`whiskey`

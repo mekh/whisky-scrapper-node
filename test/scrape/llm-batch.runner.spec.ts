@@ -50,18 +50,21 @@ describe('LlmBatchRunner.run', () => {
     expect(failures).toEqual([1, 1]);
   });
 
-  it('does not retry a failure that is not a budget failure', async () => {
-    let calls = 0;
-    const errors: unknown[] = [];
+  it('halves a malformed answer down to the failing item', async () => {
+    // A broken JSON array used to cost the whole batch its extracted names.
+    const failures: number[] = [];
 
-    await LlmBatchRunner.run(items(8), 8, () => {
-      calls += 1;
+    await LlmBatchRunner.run(
+      items(8),
+      8,
+      (batch) =>
+        batch.includes(3)
+          ? Promise.reject(new SyntaxError("Expected ',' or ']'"))
+          : Promise.resolve(),
+      (_error, batch) => failures.push(batch.length),
+    );
 
-      return Promise.reject(new Error('429 rate limited'));
-    }, (error) => errors.push(error));
-
-    expect(calls).toBe(1);
-    expect(errors).toHaveLength(1);
+    expect(failures).toEqual([1]);
   });
 
   it('keeps mutations made to the items of a retried batch', async () => {

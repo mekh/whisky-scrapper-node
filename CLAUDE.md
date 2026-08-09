@@ -484,10 +484,12 @@ wrappers): `scrape/` has its own internal layering.
   catalogue still disagreed on ~1 % of rows (mostly whether a vintage year is
   part of the name) — so anything that must be stable across runs belongs in
   the deterministic pass, not in the prompt.
-  **`LlmBatchRunner` batches both passes (40) and halves a batch that still
-  exhausted the budget**, retrying the halves — an OpenRouter slug is served by
-  several upstream providers and not all of them honour the switch, so one
-  stubborn batch degrades to smaller ones instead of losing 40 names. Prompts
+  **`LlmBatchRunner` batches both passes (40) and halves **any** failing batch**,
+  retrying the halves until a single item fails alone. It began as a
+  budget-error-only retry — an OpenRouter slug is served by several upstream
+  providers and not all of them honour the reasoning switch — but a run then
+  lost 40 names in silence to one malformed JSON array, so the rule is now the
+  simpler one: whatever the provider does wrong, it costs one item, not a batch. Prompts
   are English-only even though the data is Ukrainian; the enrichment prompt
   still asks for `country` **in Ukrainian** because persist matches it against
   `country.nameUa`), `adapters/`

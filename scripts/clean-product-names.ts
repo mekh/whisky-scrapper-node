@@ -26,6 +26,12 @@ const SAMPLE_SIZE = 20;
 const PROGRESS_EVERY = 500;
 
 /**
+ * Mirrors `CHUNK_SIZE` in `LlmNameExtractionService`, only to state up front
+ * how many batches the run will take.
+ */
+const LLM_CHUNK_SIZE = 40;
+
+/**
  * Standalone module wiring TypeORM (with the transactional data source), the
  * whisky core graph and the name-extraction service. `ScrapeModule` is not
  * imported: this script needs neither the adapters nor the collector.
@@ -270,6 +276,20 @@ async function resolveStoreId(
 }
 
 /**
+ * Prints the extraction progress, so a run that takes tens of minutes can be
+ * told apart from a hung one. Every batch, not every N items: the interval
+ * between lines is then a direct read on how fast the provider is answering.
+ *
+ * @param done - Names extracted so far.
+ * @param total - Names in the run.
+ */
+function reportProgress(done: number, total: number): void {
+  const percent = Math.floor((done / total) * 100);
+
+  process.stdout.write(`  extracted ${done}/${total} (${percent}%)\n`);
+}
+
+/**
  * Prints a before/after sample of the computed rewrites.
  *
  * @param rewrites - The rewrites the run produced.
@@ -367,9 +387,15 @@ async function main(): Promise<number> {
     );
 
     if (useLlm) {
-      process.stdout.write('Running LLM name extraction...\n');
+      process.stdout.write(
+        `Running LLM name extraction over ${candidates.size} name(s)`
+          + ` in ${Math.ceil(candidates.size / LLM_CHUNK_SIZE)} batch(es)\n`,
+      );
 
-      await llmNames.extractNames([...candidates.values()]);
+      await llmNames.extractNames(
+        [...candidates.values()],
+        (done, total) => reportProgress(done, total),
+      );
     } else {
       process.stdout.write(
         'LLM pass skipped — deterministic cleanup only\n',

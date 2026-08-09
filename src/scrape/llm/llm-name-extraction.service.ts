@@ -105,9 +105,14 @@ export class LlmNameExtractionService {
    * empty; never throws.
    *
    * @param items - Candidates to extract names for (mutated in place).
+   * @param onProgress - Optional progress callback, for the backfill script:
+   *   the whole catalogue is one long silent wait otherwise.
    * @returns Resolves once every chunk has been attempted.
    */
-  public async extractNames(items: LlmNameCandidate[]): Promise<void> {
+  public async extractNames(
+    items: LlmNameCandidate[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<void> {
     if (!this.client.enabled || !items.length) {
       return;
     }
@@ -122,6 +127,7 @@ export class LlmNameExtractionService {
           batch.length,
           error instanceof Error ? error.message : error,
         ),
+      onProgress,
     );
   }
 

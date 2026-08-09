@@ -84,4 +84,18 @@ describe('LlmBatchRunner.run', () => {
 
     expect(list.every((item) => item.done)).toBe(true);
   });
+
+  it('reports progress after each batch', () => {
+    const seen: [number, number][] = [];
+
+    return LlmBatchRunner.run(
+      items(85),
+      40,
+      () => Promise.resolve(),
+      () => undefined,
+      (done, total) => seen.push([done, total]),
+    ).then(() => {
+      expect(seen).toEqual([[40, 85], [80, 85], [85, 85]]);
+    });
+  });
 });

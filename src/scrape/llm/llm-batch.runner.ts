@@ -22,6 +22,9 @@ export class LlmBatchRunner {
    * @param batchSize - Initial batch size.
    * @param handler - Sends one batch to the model.
    * @param onError - Reports a batch that could not be processed.
+   * @param onProgress - Called after each batch with the running count. A full
+   *   catalogue takes tens of minutes in which nothing else is printed, so an
+   *   operator has no way to tell a slow run from a hung one.
    * @returns Resolves once every batch has been attempted.
    */
   public static async run<T>(
@@ -29,9 +32,15 @@ export class LlmBatchRunner {
     batchSize: number,
     handler: (batch: T[]) => Promise<void>,
     onError: (error: unknown, batch: T[]) => void,
+    onProgress?: (done: number, total: number) => void,
   ): Promise<void> {
+    let done = 0;
+
     for (const batch of ArrayUtils.chunkify(items, batchSize)) {
       await LlmBatchRunner.attempt(batch, handler, onError);
+
+      done += batch.length;
+      onProgress?.(done, items.length);
     }
   }
 

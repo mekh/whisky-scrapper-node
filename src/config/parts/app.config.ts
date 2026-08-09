@@ -40,6 +40,6 @@ export class AppConfig extends BaseConfig {
    * production and enable it in local/dev only (needed by `pnpm openapi`).
    */
   @IsBoolean()
-  public readonly swaggerEnabled: boolean =
-    this.asBoolean('SWAGGER_ENABLED') ?? false;
+  public readonly swaggerEnabled: boolean = this.asBoolean('SWAGGER_ENABLED') ??
+    false;
 }

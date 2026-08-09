@@ -1,30 +1,38 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { Injectable, Logger } from '@nestjs/common';
 
-import { ScrapeConfig } from '~config';
 import type { ProductSnapshot } from '~types';
 
-const MODEL = 'claude-fable-5';
-const MAX_TOKENS = 2048;
+import { LlmBatchRunner } from './llm-batch.runner';
+import { LlmClientService } from './llm-client.service';
 
-// Functional model instruction (must stay Ukrainian so the model returns the
-// Ukrainian country names and tags the rest of the pipeline expects). Ported
-// verbatim from the Python `llm._PROMPT`; `{items}` is the numbered listing.
+const MAX_TOKENS = 8192;
+const CHUNK_SIZE = 40;
+
+/**
+ * Model instruction (ported from the Python `llm._PROMPT`, then translated —
+ * prompts are English-only). `country` must still come back **in Ukrainian**:
+ * the persist step resolves it against `country.nameUa`, so the value is a
+ * lookup key, not prose. `{items}` is the numbered listing.
+ */
 const PROMPT =
-  `Ти експерт із віскі. Для кожної назви товару визнач характеристики.
-Поверни ТІЛЬКИ JSON-масив, по об'єкту на кожен вхідний рядок, у тому ж порядку.
-Поля кожного об'єкта:
-- "age_years": ціле число років витримки або null
-- "abv": число (% об.) або null
-- "volume_ml": об'єм у мілілітрах або null
-- "whisky_type": один із "single malt", "blend", "bourbon", "rye", "grain",
-  "tennessee", "malt" — або null, якщо не визначити
-- "country": країна походження українською ("Шотландія", "Ірландія", "США",
-  "Японія", "Канада", "Індія", "Тайвань", "Уельс", "Англія", ...) або null
-- "flavor_tags": масив смакових профілів (напр. "peated", "sherry", "smoky",
-  "vanilla", "fruity"), порожній масив якщо невідомо
+  `You are a whisky expert. Determine the characteristics of each product name
+below. Return ONLY a JSON array, one object per input line, in the same order.
+Fields of each object:
+- "age_years": the age statement in whole years, or null
+- "abv": the alcohol by volume percent as a number, or null
+- "volume_ml": the bottle volume in millilitres, or null
+- "whisky_type": one of "single malt", "blend", "bourbon", "rye", "grain",
+  "tennessee", "malt" — or null when it cannot be determined
+- "country": the country of origin, written in Ukrainian ("Шотландія",
+  "Ірландія", "США", "Японія", "Канада", "Індія", "Тайвань", "Уельс",
+  "Англія", ...), or null
+- "flavor_tags": an array of flavour profiles (e.g. "peated", "sherry",
+  "smoky", "vanilla", "fruity"), an empty array when unknown
 
-Назви товарів:
+The product names are scraped from Ukrainian retail sites, so they mix Latin
+brand names with Cyrillic descriptors.
+
+Product names:
 {items}
 `;
 
@@ -42,27 +50,27 @@ interface LlmInfo {
 
 /**
  * LLM fallback for snapshots the deterministic pass could not fully resolve.
- * Enabled only when `ANTHROPIC_API_KEY` is set; any error is swallowed so a
- * failed LLM call never breaks a sync. Results are cached by the caller (the
+ * Enabled only when the LLM endpoint is configured; any error is swallowed so
+ * a failed call never breaks a sync. Results are cached by the caller (the
  * product's own columns), so each product is LLM-processed at most once.
  */
 @Injectable()
 export class LlmEnrichmentService {
   private readonly logger = new Logger(LlmEnrichmentService.name);
 
-  private readonly config: ScrapeConfig;
+  private readonly client: LlmClientService;
 
-  public constructor(config: ScrapeConfig) {
-    this.config = config;
+  public constructor(client: LlmClientService) {
+    this.client = client;
   }
 
   /**
-   * Whether the LLM fallback is configured (has an API key).
+   * Whether the LLM fallback is configured.
    *
    * @returns True when enrichment can run.
    */
   public get enabled(): boolean {
-    return Boolean(this.config.anthropicApiKey);
+    return this.client.enabled;
   }
 
   /**
@@ -73,64 +81,42 @@ export class LlmEnrichmentService {
    * @returns Resolves once enrichment has been attempted.
    */
   public async enrich(snaps: ProductSnapshot[]): Promise<void> {
-    const apiKey = this.config.anthropicApiKey;
-
-    if (!apiKey || !snaps.length) {
+    if (!this.client.enabled || !snaps.length) {
       return;
     }
 
-    try {
-      const parsed = await this.ask(apiKey, snaps);
-
-      snaps.forEach((snap, index) => this.merge(snap, parsed[index]));
-    } catch (error) {
-      this.logger.warn('LLM enrichment failed: %o', error);
-    }
+    await LlmBatchRunner.run(
+      snaps,
+      CHUNK_SIZE,
+      (batch) => this.enrichChunk(batch),
+      (error, batch) =>
+        this.logger.warn(
+          'LLM enrichment failed for %d item(s): %s',
+          batch.length,
+          error instanceof Error ? error.message : error,
+        ),
+    );
   }
 
   /**
-   * Sends the batch to the model and parses the JSON array it returns.
+   * Sends one chunk to the model and merges the characteristics it returns.
    *
-   * @param apiKey - The Anthropic API key.
-   * @param snaps - Snapshots to describe.
-   * @returns The parsed characteristics, one per snapshot (by index).
-   * @throws {Error} When the response is not a JSON array or the call fails.
+   * @param snaps - Snapshots of this chunk (mutated in place).
+   * @returns Resolves once the chunk has been merged.
+   * @throws {Error} When the call fails — the runner decides whether to retry
+   *   the chunk in halves or give up on it.
    */
-  private async ask(
-    apiKey: string,
-    snaps: ProductSnapshot[],
-  ): Promise<unknown[]> {
-    const client = new Anthropic({ apiKey });
+  private async enrichChunk(snaps: ProductSnapshot[]): Promise<void> {
     const listing = snaps
       .map((snap, index) => `${index + 1}. ${snap.name}`)
       .join('\n');
 
-    const message = await client.messages.create({
-      model: MODEL,
-      max_tokens: MAX_TOKENS,
-      messages: [{ role: 'user', content: PROMPT.replace('{items}', listing) }],
-    });
+    const parsed = await this.client.askJsonArray(
+      PROMPT.replace('{items}', listing),
+      MAX_TOKENS,
+    );
 
-    const block = message.content[0];
-
-    if (!block || block.type !== 'text') {
-      throw new Error('LLM returned no text content');
-    }
-
-    const text = block.text
-      .trim()
-      .replace(/^```json/, '')
-      .replace(/^```/, '')
-      .replace(/```$/, '')
-      .trim();
-
-    const parsed = JSON.parse(text) as unknown;
-
-    if (!Array.isArray(parsed)) {
-      throw new Error('LLM did not return a JSON array');
-    }
-
-    return parsed;
+    snaps.forEach((snap, index) => this.merge(snap, parsed[index]));
   }
 
   /**

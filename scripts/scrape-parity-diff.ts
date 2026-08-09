@@ -190,7 +190,7 @@ async function runTs(slug: string): Promise<ProductSnapshot[]> {
    * The LLM pass is non-deterministic, so it is disabled for both sides: the
    * config reads the key at construction, hence the delete before boot.
    */
-  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.LLM_API_KEY;
 
   initializeTransactionalContext();
 

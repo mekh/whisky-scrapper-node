@@ -47,6 +47,7 @@ function snap(sku: string): ProductSnapshot {
 
 interface ProductMocks {
   countByStore: jest.Mock;
+  upsertFromScrape: jest.Mock;
   markOutOfStockExcept: jest.Mock;
   markOutOfStockBySkus: jest.Mock;
 }
@@ -132,4 +133,37 @@ describe('ScrapePersistService.persist', () => {
     expect(products.markOutOfStockExcept).toHaveBeenCalledWith(STORE_ID, []);
     expect(products.markOutOfStockBySkus).not.toHaveBeenCalled();
   });
+
+  it('writes the extracted name and keeps the raw one alongside', async () => {
+    const { service, products } = makeService(1);
+    const item = snap('a');
+
+    item.name = 'Віскі Aberlour 12 років 40% 0,7л';
+    item.cleanName = 'Aberlour';
+
+    await service.persist(STORE_ID, [item], [], DAY);
+
+    expect(products.upsertFromScrape).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Aberlour',
+        nameOrig: 'Віскі Aberlour 12 років 40% 0,7л',
+      }),
+    );
+  });
+
+  it(
+    'falls back to the deterministic cleanup with no extracted name',
+    async () => {
+      const { service, products } = makeService(1);
+      const item = snap('a');
+
+      item.name = 'Віскі Aberlour 12 років 40% 0,7л';
+
+      await service.persist(STORE_ID, [item], [], DAY);
+
+      expect(products.upsertFromScrape).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Aberlour' }),
+      );
+    },
+  );
 });

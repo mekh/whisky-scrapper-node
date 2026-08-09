@@ -66,8 +66,7 @@ RUN useradd --create-home --uid 10001 appuser \
 
 # Only the layers below change on a code deploy; they are ordered
 # least-to-most volatile. `--chown` avoids a second full copy of node_modules.
-COPY --from=prod_deps --chown=appuser:appuser \
-     /app/package.json /app/pnpm-lock.yaml ./
+COPY --from=prod_deps --chown=appuser:appuser /app/package.json /app/pnpm-lock.yaml ./
 COPY --from=prod_deps --chown=appuser:appuser /app/node_modules ./node_modules
 COPY --from=service_build --chown=appuser:appuser /app/dist ./dist
 

@@ -13,6 +13,7 @@ import type {
   StoreListItem,
 } from '~types';
 import type { LlmEnrichmentService } from '../../src/scrape/llm/llm-enrichment.service';
+import type { LlmNameExtractionService } from '../../src/scrape/llm/llm-name-extraction.service';
 import type { ScrapePersistService } from '../../src/scrape/persist/scrape-persist.service';
 
 const STORE: StoreListItem = {
@@ -58,6 +59,11 @@ function makeService(
   adapter: ScrapeAdapter,
   persist: { persist: jest.Mock },
   skusWithAbv: Set<string> = new Set<string>(),
+  names: { enabled: boolean; extractNames: jest.Mock } = {
+    enabled: false,
+    extractNames: jest.fn(),
+  },
+  existingSkus: Set<string> = new Set<string>(),
 ): ScrapeService {
   const stores = {
     findWithConfigBySlug: jest.fn().mockResolvedValue(STORE),
@@ -69,6 +75,7 @@ function makeService(
 
   const products = {
     skusWithAbv: jest.fn().mockResolvedValue(skusWithAbv),
+    existingSkus: jest.fn().mockResolvedValue(existingSkus),
   } as unknown as CoreProductService;
 
   const factory: ScrapeAdapterFactory = { create: () => adapter };
@@ -85,6 +92,7 @@ function makeService(
     factory,
     new NormalizeService(),
     llm,
+    names as unknown as LlmNameExtractionService,
     persist as unknown as ScrapePersistService,
   );
 }
@@ -213,5 +221,59 @@ describe('ScrapeService.collectStore', () => {
 
     expect(enrichDetail).toHaveBeenCalledTimes(2);
     expect(result.found).toBe(2);
+  });
+
+  it('extracts names only for SKUs the store has never stored', async () => {
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: false,
+      fetchListing: jest.fn().mockResolvedValue([
+        rawSnap({ storeSku: 'known' }),
+        rawSnap({ storeSku: 'fresh' }),
+      ]),
+      enrichDetail: jest.fn(),
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    const names = { enabled: true, extractNames: jest.fn() };
+
+    const service = makeService(
+      adapter,
+      { persist: jest.fn() },
+      new Set<string>(),
+      names,
+      new Set(['known']),
+    );
+
+    await service.collectStore('faux', { dryRun: true });
+
+    expect(names.extractNames).toHaveBeenCalledTimes(1);
+
+    const [pending] = names.extractNames.mock.calls[0] as [ProductSnapshot[]];
+
+    expect(pending.map((snap) => snap.storeSku)).toEqual(['fresh']);
+  });
+
+  it('skips the name-extraction pass when the LLM is disabled', async () => {
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: false,
+      fetchListing: jest.fn().mockResolvedValue([rawSnap({ storeSku: 'a' })]),
+      enrichDetail: jest.fn(),
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    const names = { enabled: false, extractNames: jest.fn() };
+
+    const service = makeService(
+      adapter,
+      { persist: jest.fn() },
+      new Set<string>(),
+      names,
+    );
+
+    await service.collectStore('faux', { dryRun: true });
+
+    expect(names.extractNames).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 
-import { NormalizeService } from '../../src/scrape/normalize/normalize.service';
 import { ZakazAdapter } from '../../src/scrape/adapters/zakaz';
+import { NormalizeService } from '../../src/scrape/normalize/normalize.service';
 import { FakeHttpClient } from './fake-http-client';
 
 import type { ProductSnapshot, StoreScrapeSpec } from '~types';

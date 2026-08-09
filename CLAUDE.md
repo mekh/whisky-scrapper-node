@@ -322,6 +322,90 @@ entity/repository/service/module shape:
   (`findCurrentRows`, `/report/*`, `/meta` countries, `/store/:slug`
   `productCount`) filter on `inStock = true`; the single-product history path
   (`findCurrentRowById`, `/report/history`) still returns flagged rows.
+  **`name` holds the product alone — brand + expression.** The age, ABV and
+  volume live in their own columns and are re-appended by the web client at
+  render time (`entities/report/model/compose-name.ts`), so the user still
+  reads "Aber Falls 40% 0,7л" while the database stores "Aber Falls". Two
+  passes produce it, both at insert time only (`name` is never written on
+  conflict, so manual edits and earlier values survive later scrapes):
+  `LlmNameExtractionService` (`scrape/llm/`) for new SKUs when the LLM
+  endpoint is configured, and `ProductNameUtils.clean` (`~utils`) as the
+  deterministic fallback. `stripSpecs` also runs **over the LLM's answer**, so
+  the result is the same whichever pass produced it.
+  What the deterministic pass fixes is source formatting, and it is all
+  evidence-driven — every rule below was added against a name in the
+  catalogue: a stray look-alike letter (`Вiскi` with Latin `i`, `MaсArthur's`
+  with Cyrillic `с`) folded back into its own script, but only when every
+  minority letter has a look-alike, so a missing space (`ВіскіOld Virginia`)
+  is left to the prefix rule; the dual name (`Віскі Боумор №1 / Bowmore №1`)
+  resolved to the Latin side, decided on **words** with the specs and
+  descriptors removed, because a Roman numeral in the transliteration
+  (`Кінг Джордж V`) and the shared trailing `0.7л, в коробці` both fooled a
+  letter count; the store product code anywhere in the string, four digits
+  minimum so `(NAS)` and a vintage `(1968)` survive; a bundled **accessory**
+  (`+ 2 склянки`, `з двома келихами`) dropped, while `+ <another bottle>` is
+  kept, since a three-bottle set is its own product at its own price;
+  multipack counts, packaging, and the comma that made `Aerstone, Land Cask`
+  and `Aerstone Land Cask` two products.
+  Two judgement calls are worth knowing. **A category word that heads a cask
+  qualifier stays** — `Bushmills Bourbon Finish` names the maturation, and
+  stripping `Bourbon` collided it with `Bushmills Rum Finish`; the guard is
+  `bourbon` only, because extending it protected `Penelope Whiskey Barrel
+  Strength`. **Region words are never stripped** (`Highland Park`, `Islay
+  Barley`, and `Clan Denny Islay` is a different whisky from `Clan Denny
+  Speyside`), only nationality tags at the very end (`Aber Falls Welsh`); the
+  region case that _is_ a provenance tag is settled at catalogue level instead,
+  by `collapseTags` in the backfill script.
+  Because descriptors survive only in `nameOrig`, the report name
+  filter and `resolveIdByTerm` match **both** columns. Existing rows are
+  rewritten by `pnpm clean-names` (`scripts/clean-product-names.ts`,
+  `--dry-run` / `--no-llm` / `--store <slug>`), which is a script and not a
+  migration on purpose: migrations gate every deploy and must not depend on an
+  external API. It does overwrite manual name edits.
+  The script owns the three decisions that need the whole catalogue rather
+  than one name: **one LLM candidate per distinct `nameOrig`** (per-row
+  candidates put the same source name in different chunks and it came back
+  cleaned two ways — 66 times), `canonicalSpelling` (one spelling wins per
+  group of variants that differ only in case, Latin accent, leading article or
+  punctuation — measured on the catalogue, that key produced 65 groups and
+  every one was a single product listed twice), and `collapseTags` (a trailing
+  region/nationality tag comes off only when some store listed the shortened
+  name too, which is what separates `Balblair Highland` → `Balblair` and
+  `Bankhall British` → `Bankhall` from `Clan Denny Islay` and the
+  `North British` distillery, where no bare `Clan Denny` or `North` exists).
+  All three weigh the **whole** catalogue even under `--store`, which only
+  narrows what is rewritten: deriving the evidence from one store let a
+  one-store run undo a catalogue-wide decision.
+  **`age` comes from the name only** (`extractAgeYears(snap.name)`), never from
+  the haystack — a description's "N років" is brand history ("понад 250 років"),
+  not maturation. Both engines get this right today, but early scraper versions
+  did search the description, which recorded NAS bottlings as decades old
+  ("Wild Turkey 101" → 60, "Jim Beam White" → 25, "Kilchoman 100% Islay 15th
+  Edition" → 15 off the edition number), concentrated in the zakaz.ua chains
+  whose listings carry long prose. **Insert-only writes mean those rows were
+  never corrected**: 227 of the 2 764 aged rows in a production snapshot came
+  from before the fix, and a `novus` dry run confirms the current engine now
+  returns no age for exactly those products. `pnpm fix-age`
+  (`scripts/fix-product-age.ts`, `--dry-run` / `--store <slug>`) applies the
+  current rule retroactively — keep an age only where the name states it, or
+  where the store lists it in a spec field (only the `okwine` adapter reads
+  one). Idempotent, no API key; **production still has to be swept once.**
+  Clearing is one-way: a cleared age is **not** re-derived by a later scrape
+  unless the name carries it, so only clear what no source supports.
+  **`volumeMl` is the sum of a gift set's bottles.** `extractVolumeMl` used to
+  take the first match in the name, so a set of three 0.7 л bottles was stored
+  as 0.7 л — and because the report compares by volume, a three-bottle price
+  landed beside single bottles as the worst deal on the page. It now sums the
+  segments a `+` joins, via `ProductNameUtils.bundleSegments`, which returns
+  null for an accessory bundle (`+ 2 склянки`) and for a brand spelled with a
+  `+` (`Roe + Co`) — and strips the product code first, since several codes are
+  themselves `+`-joined. Insert-only again, so `pnpm fix-volume`
+  (`scripts/fix-bundle-volume.ts`, `--dry-run` / `--store <slug>`) sweeps the
+  stored rows; 11 of the 12 sets in a production snapshot were wrong.
+  The same trap is why `LlmNameExtractionService` rejects an answer that drops a
+  set's other bottles: told to return "the product", the model answered
+  `Jura Journey` for a three-bottle set, and token validation passed it because
+  every word it kept was in the raw name.
 - `price-snapshot` — `productId`, `price`/`oldPrice?` (`NumericColumn`),
   `currency`, `inStock`, `promo`, `capturedOn` (date, default `CURRENT_DATE`).
   **One row per product per day**, enforced by the unique index
@@ -373,7 +457,40 @@ wrappers): `scrape/` has its own internal layering.
   flavors), `http/` (plain fetch / `impit` impersonation / retrying wrapper +
   `HTTP_STRATEGY_BY_SLUG`), `html/` (cheerio helpers for the SSR stores),
   `browser/` (Playwright stealth context, fresh context per page), `llm/`
-  (`@anthropic-ai/sdk` fallback, gated on `ANTHROPIC_API_KEY`), `adapters/`
+  (an **OpenAI-compatible** chat-completions call via the `openai` SDK,
+  pointed at any endpoint by `LLM_BASE_URL` — production uses OpenRouter, so
+  the model is a provider slug in `LLM_MODEL`; `LlmClientService` owns the
+  transport and the JSON-array unwrapping, and both passes stay disabled until
+  a key **and** a model are set, since no model name is portable across
+  providers. Two independent passes sit on top of it:
+  `LlmEnrichmentService` fills missing abv/volume/type/country fields, and
+  `LlmNameExtractionService` reduces the name to brand + expression for new
+  SKUs, validated token-by-token against the raw name so a hallucinated word
+  can never be persisted; both swallow every error and fall back to the
+  deterministic pass.
+  **Reasoning is off by default (`LLM_REASONING`), and that is load-bearing**:
+  both passes are mechanical rewrites, but on a reasoning model the chain of
+  thought scales with the batch and eats the entire completion budget before
+  the first answer token — measured on a 40-item chunk: 8192/8192 tokens spent
+  reasoning, `finish_reason: length`, empty content, every item lost. The same
+  chunk answers in ~350 tokens and 3 s with reasoning off. `LlmClientService`
+  therefore sends OpenRouter's normalized `reasoning: {enabled: false}`, and an
+  empty answer is diagnosed rather than reported as "no content".
+  **`temperature: 0` / `top_p: 1` for the same reason**: both passes are
+  extraction, so the answer is a function of the input line. At the provider
+  default a re-run renamed products that had not changed, and one source name
+  could come back two ways. It does not buy exact reproducibility — the
+  provider is not bit-for-bit deterministic, and two full backfills of the same
+  catalogue still disagreed on ~1 % of rows (mostly whether a vintage year is
+  part of the name) — so anything that must be stable across runs belongs in
+  the deterministic pass, not in the prompt.
+  **`LlmBatchRunner` batches both passes (40) and halves a batch that still
+  exhausted the budget**, retrying the halves — an OpenRouter slug is served by
+  several upstream providers and not all of them honour the switch, so one
+  stubborn batch degrades to smaller ones instead of losing 40 names. Prompts
+  are English-only even though the data is Ukrainian; the enrichment prompt
+  still asks for `country` **in Ukrainian** because persist matches it against
+  `country.nameUa`), `adapters/`
   (base classes + `AdapterRegistryService` - one folder per store platform),
   `persist/` (one-store, one transaction write pipeline over the core
   services: upserts the in-stock items, then **flags** everything the run did
@@ -462,7 +579,8 @@ wrappers): `scrape/` has its own internal layering.
   builder's `.execute().affected` for update/delete counts.
 - `SCRAPE_ADAPTER_FACTORY` DI token decouples `ScrapeService` from the registry
   (tests inject a fake). New env: `SCRAPE_DELAY_MULTIPLIER` (default 1),
-  reuses `ANTHROPIC_API_KEY`. Config: `ScrapeConfig` in `config/parts/`.
+  reuses `LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL`. Config: `ScrapeConfig` in
+  `config/parts/`.
 - Integration tests need a live Postgres: `pnpm test:integration`
   (`*.integration.spec.ts`, excluded from `pnpm test`). Dry-run a store without
   writing: `ts-node -r tsconfig-paths/register scripts/scrape-dry-run.ts <slug>
@@ -590,7 +708,11 @@ default 600); logger vars consumed by `@toxicoder/nestjs-pino` (`LOG_LEVEL`,
 consumed by `@toxicoder/nestjs-valkey` (`VALKEY_HOST`, `VALKEY_PORT`,
 `VALKEY_DB`, `VALKEY_PASSWORD`, `VALKEY_MODE`, `VALKEY_PREFIX`,
 `VALKEY_INJECT_KEY`); scrape vars (`SCRAPE_DELAY_MULTIPLIER` default 1,
-`ANTHROPIC_API_KEY` — LLM fallback, unset = disabled); sync vars in
+`LLM_API_KEY` + `LLM_MODEL` — field enrichment and name extraction, either
+unset = both disabled; `LLM_BASE_URL` defaults to
+`https://openrouter.ai/api/v1`, set it to `https://api.openai.com/v1` or any
+other OpenAI-compatible gateway to switch provider; `LLM_REASONING` default
+false — see the reasoning note under "Scraping engine"); sync vars in
 `SyncConfig` — `SYNC_CRON_ENABLED` (default false), `SYNC_CRON_EXPRESSION`
 (default `0 12 * * *`), `SYNC_TIMEZONE` (default `Europe/Kyiv`),
 `SYNC_MAX_PARALLEL_TRACKS` (4), `SYNC_STORE_TIMEOUT_MS` (900000),

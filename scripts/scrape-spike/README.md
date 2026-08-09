@@ -7,9 +7,9 @@ Three clients are compared per store, cheapest first:
 
 | Client       | What it is                                                        |
 | ------------ | ----------------------------------------------------------------- |
-| `plain`      | Node's global `fetch` (undici) with a realistic Chrome header set  |
-| `impit`      | `impit` impersonating Chrome — real browser TLS/JA3 + HTTP/2       |
-| `playwright` | Headless Chromium, stealth context, fresh context per page         |
+| `plain`      | Node's global `fetch` (undici) with a realistic Chrome header set |
+| `impit`      | `impit` impersonating Chrome — real browser TLS/JA3 + HTTP/2      |
+| `playwright` | Headless Chromium, stealth context, fresh context per page        |
 
 The Python scraper uses `curl_cffi` with `impersonate="chrome"` for **every**
 store, so "plain `fetch` is enough" is a hypothesis this spike has to prove,
@@ -79,13 +79,13 @@ apart from "our code broke".
 
 ## Layout
 
-| File                   | Purpose                                              |
-| ---------------------- | ---------------------------------------------------- |
-| `run.ts`               | CLI: argument parsing, matrix/escalation, summary    |
-| `clients.ts`           | The three clients, stealth context, challenge wait   |
-| `probes.ts`            | One probe per store: pagination + parsing            |
-| `spike.interfaces.ts`  | Shared shapes                                        |
-| `RESULTS.md`           | Recorded verdicts per phase                          |
+| File                  | Purpose                                            |
+| --------------------- | -------------------------------------------------- |
+| `run.ts`              | CLI: argument parsing, matrix/escalation, summary  |
+| `clients.ts`          | The three clients, stealth context, challenge wait |
+| `probes.ts`           | One probe per store: pagination + parsing          |
+| `spike.interfaces.ts` | Shared shapes                                      |
+| `RESULTS.md`          | Recorded verdicts per phase                        |
 
 ## Porting gotchas found here
 

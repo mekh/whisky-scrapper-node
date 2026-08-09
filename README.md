@@ -63,6 +63,15 @@ VALKEY_PORT=6378
 JWT_ACCESS_SECRET=change-me
 JWT_ACCESS_EXPIRES=600       # access-token TTL, seconds
 REFRESH_EXPIRES_SEC=2592000  # refresh-token TTL, seconds (30d)
+
+# Optional — the LLM passes (field enrichment + product-name extraction).
+# Any OpenAI-compatible endpoint; both key and model must be set or the
+# passes stay disabled. LLM_BASE_URL defaults to OpenRouter.
+LLM_API_KEY=
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_MODEL=
+# Leave reasoning off unless you know the model needs it — see below.
+LLM_REASONING=false
 ```
 
 Only `JWT_ACCESS_SECRET` is mandatory; the rest have sensible defaults (see
@@ -96,7 +105,99 @@ pnpm start        # nest start (watch) — API on http://localhost:4000
 | `pnpm migration:generate <name>` | Diff entities → new migration in `./migrations/`                                                  |
 | `pnpm migration:create <name>`   | Empty migration skeleton                                                                          |
 | `pnpm migration:run` / `:revert` | Apply / roll back migrations                                                                      |
-| `pnpm clean-names`               | Maintenance: normalize existing product names                                                     |
+| `pnpm clean-names`               | Maintenance: rewrite `product.name` to brand + expression (see below)                             |
+| `pnpm fix-age`                   | Maintenance: clear `product.age` values no source ever stated (see below)                         |
+| `pnpm fix-volume`                | Maintenance: re-derive `volumeMl` for multi-bottle gift sets (see below)                          |
+
+Rewrite the stored product names (brand + expression only; the age, ABV and
+volume are kept in their own columns and re-appended by the web client). New
+products get this at scrape time — this is the backfill for rows written
+before the change:
+
+```bash
+pnpm clean-names --dry-run              # report only, prints a sample
+pnpm clean-names --dry-run --store novus
+pnpm clean-names --no-llm               # deterministic cleanup only
+pnpm clean-names                        # write
+```
+
+It needs `LLM_API_KEY` and `LLM_MODEL` (and optionally `LLM_BASE_URL`, which
+defaults to OpenRouter) for the LLM pass that tells a type/region descriptor
+("Blended Scotch Whisky", "Welsh") from part of a brand ("Highland Park");
+without it the run degrades to `ProductNameUtils.clean`, which strips the
+descriptor lists it knows plus every age/ABV/volume/packaging/bundle token.
+
+Either way the run also settles what one name cannot decide on its own: one
+LLM candidate per distinct source name (so the same source name cannot come
+back cleaned two ways), one spelling per group of variants that differ only in
+case, accent, leading article or punctuation (`Bells Original` /
+`Bell's Original`, `Glenlivet` / `The Glenlivet`), and a trailing region tag
+dropped only where some store listed the shortened name too
+(`Balblair Highland` → `Balblair`, but `Clan Denny Islay` is left alone — there
+is no bare `Clan Denny`). `--store` narrows what is **rewritten**, not what is
+weighed: the other stores still count, through the names a previous run stored
+for them.
+
+A re-run is close to a no-op but not exactly one: `temperature: 0` removes the
+sampling, yet the provider is not bit-for-bit deterministic, so a second full
+run relabels a small share of rows (measured: ~1 %, and the differences were
+mostly the model keeping or dropping a vintage year). Nothing about the run is
+incremental — it re-calls the LLM for every distinct source name — so treat it
+as a maintenance operation, not something to schedule.
+
+**The run overwrites manual name edits** — there is no flag distinguishing
+them. In production:
+
+```bash
+docker compose run --rm service node dist/scripts/clean-product-names.js --dry-run
+```
+
+Audit `product.age` and drop the values nothing in the source supports:
+
+```bash
+pnpm fix-age --dry-run                  # report only, worst offenders first
+pnpm fix-age --dry-run --store novus
+pnpm fix-age                            # clear them
+```
+
+This is a data fix for a bug already fixed in code. Early scraper versions
+looked for the age in the name **plus** the description and attribute text,
+where "N років" is almost always brand history ("понад 250 років") rather than
+maturation — so NAS bottlings were recorded as decades old ("Wild Turkey 101" →
+60, "Jim Beam White" → 25, "Kilchoman 100% Islay 15th Edition" → 15 off the
+edition number), mostly in the zakaz.ua chains with their long descriptions.
+Both engines now read the age from the product name only, but `age` is written
+once on insert and never updated on conflict, so the pre-fix values are still
+stored. The script applies today's rule retroactively: an age survives only
+where the name states it, or where the store lists it in a specification field
+(only OK Wine does, and those rows are left alone). It needs no API key, is
+idempotent, and clearing is **one-way**: a cleared age is not re-derived by the
+next scrape unless the name itself carries it. In production:
+
+```bash
+docker compose run --rm service node dist/scripts/fix-product-age.js --dry-run
+```
+
+Re-derive `volumeMl` for the gift sets that name several bottles:
+
+```bash
+pnpm fix-volume --dry-run               # report only, largest correction first
+pnpm fix-volume --dry-run --store maudau
+pnpm fix-volume                         # write
+```
+
+Same shape of fix, same cause. The volume used to be read off the first match
+in the name, so a set of three 0.7 л bottles was stored as 0.7 л — and since the
+report compares by volume, a three-bottle price sat beside single bottles and
+read as the worst deal on the page. `extractVolumeMl` now sums the bottles a
+`+` joins (an accessory bundle like `+ 2 склянки` and a brand spelled with a
+`+` such as `Roe + Co` are not sets and are left alone), but `volumeMl` is
+insert-only, so the stored rows need this sweep. Idempotent, no API key. In
+production:
+
+```bash
+docker compose run --rm service node dist/scripts/fix-bundle-volume.js --dry-run
+```
 
 Dry-run the in-process scraper for one store without writing (every store the
 project scrapes has an adapter — the 19 Zakaz.ua networks, `maudau`, `okwine`,

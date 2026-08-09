@@ -104,7 +104,9 @@ export interface ReportQuery {
   minDiscount?: number;
 
   /**
-   * Case-insensitive product-name substring.
+   * Case-insensitive substring matched against both the cleaned name and the
+   * raw scraped one, so descriptors that only survive in `nameOrig` (type,
+   * region, packaging) stay searchable.
    */
   name?: string;
 
@@ -183,7 +185,8 @@ export interface ReportFilter {
   countries?: string[];
 
   /**
-   * Case-insensitive substring the product name must contain.
+   * Case-insensitive substring the cleaned or the raw product name must
+   * contain.
    */
   name?: string;
 }

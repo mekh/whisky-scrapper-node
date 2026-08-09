@@ -50,6 +50,17 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
   }
 
   /**
+   * SKUs of a store's products that already exist, in any stock state (the
+   * name-extraction gate).
+   *
+   * @param storeId - Store id.
+   * @returns The set of SKUs already stored for the store.
+   */
+  public async existingSkus(storeId: ID): Promise<Set<string>> {
+    return this.repo.existingSkus(storeId);
+  }
+
+  /**
    * Flags a store's products as out of stock by SKU; a no-op when the list is
    * empty. The rows and their price history are kept.
    *
@@ -86,6 +97,16 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
    * @param flavorIds - Flavor ids to link.
    * @returns Resolves once the links are replaced.
    */
+  /**
+   * Clears the age of the given products.
+   *
+   * @param ids - Products whose age to clear.
+   * @returns How many rows changed.
+   */
+  public async clearAges(ids: ID[]): Promise<number> {
+    return this.repo.clearAges(ids);
+  }
+
   public async setFlavors(productId: ID, flavorIds: ID[]): Promise<void> {
     return this.repo.setFlavors(productId, flavorIds);
   }

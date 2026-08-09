@@ -29,6 +29,13 @@ export interface ProductSnapshot {
   name: string;
 
   /**
+   * Brand + expression extracted from `name` by the LLM pass, or absent when
+   * that pass is disabled, skipped (existing SKU) or rejected the result.
+   * The persist step falls back to `ProductNameUtils.clean(name)`.
+   */
+  cleanName?: string | null;
+
+  /**
    * Current price.
    */
   price: number;

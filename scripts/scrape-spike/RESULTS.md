@@ -59,18 +59,18 @@ came from a residential address.
 Quick pass:
 3 attempts x 2 pages per pair.
 
-| Store        | Client     | Verdict | Items/attempt | Statuses | Note                         |
-| ------------ | ---------- | ------- | ------------- | -------- | ---------------------------- |
-| `metro`      | plain      | PASS    | 60            | 200      |                              |
-| `novus`      | plain      | PASS    | 60            | 200      |                              |
-| `maudau`     | plain      | PASS    | 96            | 200      |                              |
-| `okwine`     | plain      | PASS    | 60            | 200      |                              |
-| `winewine`   | plain      | **FAIL**| 0             | **403**  | CF challenge, instant (0.2s) |
-| `winewine`   | impit      | PASS    | 48            | 200      | impersonation clears it      |
-| `wine-point` | plain      | PASS    | 48            | 200      |                              |
-| `goodwine`   | plain      | PASS    | 48            | 200      |                              |
-| `goodwine`   | impit      | PASS    | 48            | 200      |                              |
-| `rozetka`    | playwright | PASS    | 123           | 200      |                              |
+| Store        | Client     | Verdict  | Items/attempt | Statuses | Note                         |
+| ------------ | ---------- | -------- | ------------- | -------- | ---------------------------- |
+| `metro`      | plain      | PASS     | 60            | 200      |                              |
+| `novus`      | plain      | PASS     | 60            | 200      |                              |
+| `maudau`     | plain      | PASS     | 96            | 200      |                              |
+| `okwine`     | plain      | PASS     | 60            | 200      |                              |
+| `winewine`   | plain      | **FAIL** | 0             | **403**  | CF challenge, instant (0.2s) |
+| `winewine`   | impit      | PASS     | 48            | 200      | impersonation clears it      |
+| `wine-point` | plain      | PASS     | 48            | 200      |                              |
+| `goodwine`   | plain      | PASS     | 48            | 200      |                              |
+| `goodwine`   | impit      | PASS     | 48            | 200      |                              |
+| `rozetka`    | playwright | PASS     | 123           | 200      |                              |
 
 **The key finding: the datacenter IP does not match the old code's notes.**
 `winewine` — which nothing in the Python scraper flags as protected — gets an
@@ -82,11 +82,11 @@ for. `winewine` needs `impit`; every other store's cheapest client holds.
 
 ### Soak — full catalogs, single continuous pass, datacenter IP
 
-| Store      | Client     | Pages | Items | In stock | Duration | Non-200          | Challenge |
-| ---------- | ---------- | ----- | ----- | -------- | -------- | ---------------- | --------- |
-| `winewine` | impit      | 15    | 318   | 202      | 90 s     | one 404 (end)    | none      |
-| `goodwine` | plain      | 32    | 768   | 768      | 6.2 min  | none             | none      |
-| `rozetka`  | playwright | 40    | 2328  | 451      | 20.1 min | none             | none      |
+| Store      | Client     | Pages | Items | In stock | Duration | Non-200       | Challenge |
+| ---------- | ---------- | ----- | ----- | -------- | -------- | ------------- | --------- |
+| `winewine` | impit      | 15    | 318   | 202      | 90 s     | one 404 (end) | none      |
+| `goodwine` | plain      | 32    | 768   | 768      | 6.2 min  | none          | none      |
+| `rozetka`  | playwright | 40    | 2328  | 451      | 20.1 min | none          | none      |
 
 No Cloudflare escalation appeared under sustained load — not on `winewine`
 via `impit`, not on `goodwine` via plain across a full 32-page walk, and not on
@@ -105,11 +105,11 @@ falls to the hybrid Python contingency.
 
 Per-store HTTP strategy for the engine's `HTTP_STRATEGY_BY_SLUG` map:
 
-| Store(s)                                             | Strategy    |
-| ---------------------------------------------------- | ----------- |
-| all 19 Zakaz.ua networks, `maudau`, `okwine`         | plain fetch |
-| `winewine`, `wine-point`, `goodwine`                 | **impit**   |
-| `rozetka` (+ `silpo`, kept disabled) — `needsBrowser`| playwright  |
+| Store(s)                                              | Strategy    |
+| ----------------------------------------------------- | ----------- |
+| all 19 Zakaz.ua networks, `maudau`, `okwine`          | plain fetch |
+| `winewine`, `wine-point`, `goodwine`                  | **impit**   |
+| `rozetka` (+ `silpo`, kept disabled) — `needsBrowser` | playwright  |
 
 ### Resolved — pre-emptive `impit` on CF-fronted HTML stores
 
@@ -124,4 +124,3 @@ and is strictly more browser-like.
 stay on the browser. This trades slightly wider reliance on a pre-1.0 native
 dependency (already isolated behind the `ScrapeHttpClient` interface) for a
 much smaller chance of a surprise production 403.
-

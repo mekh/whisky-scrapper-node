@@ -18,6 +18,7 @@ import type {
 } from '~types';
 
 import { LlmEnrichmentService } from './llm/llm-enrichment.service';
+import { LlmNameExtractionService } from './llm/llm-name-extraction.service';
 import { NormalizeService } from './normalize/normalize.service';
 import { ScrapePersistService } from './persist/scrape-persist.service';
 
@@ -45,6 +46,8 @@ export class ScrapeService {
 
   private readonly llm: LlmEnrichmentService;
 
+  private readonly llmNames: LlmNameExtractionService;
+
   private readonly persist: ScrapePersistService;
 
   public constructor(
@@ -54,6 +57,7 @@ export class ScrapeService {
     @Inject(SCRAPE_ADAPTER_FACTORY) adapters: ScrapeAdapterFactory,
     normalizer: NormalizeService,
     llm: LlmEnrichmentService,
+    llmNames: LlmNameExtractionService,
     persist: ScrapePersistService,
   ) {
     this.stores = stores;
@@ -62,6 +66,7 @@ export class ScrapeService {
     this.adapters = adapters;
     this.normalizer = normalizer;
     this.llm = llm;
+    this.llmNames = llmNames;
     this.persist = persist;
   }
 
@@ -100,6 +105,7 @@ export class ScrapeService {
     });
 
     await this.runLlm(inStock);
+    await this.runNameExtraction(store.id, inStock);
 
     if (options.dryRun) {
       return {
@@ -240,6 +246,31 @@ export class ScrapeService {
 
     if (pending.length > 0) {
       await this.llm.enrich(pending);
+    }
+  }
+
+  /**
+   * Extracts the brand + expression display name for the items this store has
+   * never stored before. Known SKUs are skipped: `product.name` is written
+   * once on insert, so re-extracting it could never be persisted.
+   *
+   * @param storeId - The store id.
+   * @param inStock - In-stock snapshots.
+   * @returns Resolves once extraction has been attempted.
+   */
+  private async runNameExtraction(
+    storeId: ID,
+    inStock: ProductSnapshot[],
+  ): Promise<void> {
+    if (!this.llmNames.enabled || !inStock.length) {
+      return;
+    }
+
+    const known = await this.products.existingSkus(storeId);
+    const pending = inStock.filter((snap) => !known.has(snap.storeSku));
+
+    if (pending.length > 0) {
+      await this.llmNames.extractNames(pending);
     }
   }
 }

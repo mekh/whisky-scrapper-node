@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import { BrandUtils } from '~utils';
+import { BrandUtils, ProductNameUtils } from '~utils';
 
 import {
   BRAND_INFO,
@@ -31,10 +31,13 @@ const VOLUME_L = new RegExp(
 // ABV: "40%", "43 %", "alc 46%".
 const ABV = /(\d{1,2}(?:[.,]\d)?)\s*%/g;
 
-// Age: "12 yo", "12 y.o.", "12 років", "aged 15 years". Reading the number
-// whole (\d{1,3}) keeps "250 років" from being read as "50".
+// Age: "12 yo", "12 y.o.", "12 років", "aged 15 years", the Russian "11 лет"
+// a few listings use. Reading the number whole (\d{1,3}) keeps "250 років"
+// from being read as "50". Kept in step with `AGE_WORDS` in
+// `utils/product-name.util.ts`, which deletes the same token from the name.
 const AGE = new RegExp(
-  '(?<!\\d)(\\d{1,3})\\s*(?:y\\.?o\\.?|yo|years?|років|роки|рік|year)'
+  '(?<!\\d)(\\d{1,3})\\s*'
+    + '(?:y\\.?o\\.?|yo|years?|років|роки|рік|year|лет|года|год)'
     + NOT_LETTER,
   'i',
 );
@@ -77,10 +80,39 @@ export class NormalizeService {
   /**
    * Extracts the volume in millilitres from free text.
    *
+   * A gift set that joins its bottles with `+` is summed rather than read off
+   * the first match: `Wild Turkey 0.7 л + Wild Turkey 101 0.7 л` is 1.4 л, and
+   * recording it as 0.7 л put a two-bottle price beside single bottles in the
+   * report. `bundleSegments` returns null for an accessory bundle
+   * (`+ 2 склянки`) and for a brand spelled with a `+` (`Roe + Co`), so only a
+   * real set is summed.
+   *
    * @param text - Text to search (name or field value).
    * @returns The volume in millilitres, or null when none is found.
    */
   public extractVolumeMl(text: string): number | null {
+    const segments = ProductNameUtils.bundleSegments(text);
+
+    if (segments) {
+      const volumes = segments
+        .map((segment) => this.singleVolumeMl(segment))
+        .filter((volume): volume is number => volume !== null);
+
+      if (volumes.length > 1) {
+        return volumes.reduce((total, volume) => total + volume, 0);
+      }
+    }
+
+    return this.singleVolumeMl(text);
+  }
+
+  /**
+   * Extracts the first volume stated in a fragment.
+   *
+   * @param text - Text to search.
+   * @returns The volume in millilitres, or null when none is found.
+   */
+  private singleVolumeMl(text: string): number | null {
     const ml = VOLUME_ML.exec(text);
 
     if (ml) {
@@ -109,9 +141,16 @@ export class NormalizeService {
     let match = ABV.exec(text);
 
     while (match !== null) {
-      const prev = match.index > 0 ? text[match.index - 1] : '';
+      /**
+       * The index check must gate the lookup, not feed it an empty string:
+       * `DISCOUNT_PREFIXES.includes('')` is true, which used to make a
+       * percentage at the very start of the text ("40%", the shape a detail
+       * page's characteristics field has) read as a discount and be skipped.
+       */
+      const isDiscount = match.index > 0
+        && DISCOUNT_PREFIXES.includes(text[match.index - 1]);
 
-      if (!DISCOUNT_PREFIXES.includes(prev)) {
+      if (!isDiscount) {
         const value = NormalizeService.toFloat(match[1]);
 
         if (value >= ABV_MIN && value <= ABV_MAX) {

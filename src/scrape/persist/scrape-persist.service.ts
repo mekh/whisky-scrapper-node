@@ -99,7 +99,7 @@ export class ScrapePersistService {
         sku: snap.storeSku,
         url: snap.url,
         nameOrig: snap.name,
-        name: ProductNameUtils.clean(snap.name),
+        name: snap.cleanName ?? ProductNameUtils.clean(snap.name),
         brandId: snap.brand ? brandIds.get(snap.brand) ?? null : null,
         typeId: snap.whiskyType ? typeIds.get(snap.whiskyType) ?? null : null,
         countryId: country,

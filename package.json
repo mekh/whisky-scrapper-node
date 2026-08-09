@@ -19,13 +19,14 @@
     "migration:revert": "pnpm run migration revert",
     "init": "ts-node -r tsconfig-paths/register ./scripts/init.ts",
     "clean-names": "ts-node -r tsconfig-paths/register ./scripts/clean-product-names.ts",
+    "fix-age": "ts-node -r tsconfig-paths/register ./scripts/fix-product-age.ts",
+    "fix-volume": "ts-node -r tsconfig-paths/register ./scripts/fix-bundle-volume.ts",
     "openapi": "ts-node ./scripts/emit-openapi.ts",
     "test": "jest",
     "test:cov": "jest --coverage",
     "test:integration": "jest -c jest.integration.config.ts --runInBand"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.115.0",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.2.0",
     "@fastify/helmet": "^13.0.2",
@@ -51,6 +52,7 @@
     "impit": "0.14.3",
     "jsonwebtoken": "^9.0.3",
     "nestjs-cls": "^6.2.1",
+    "openai": "^7.4.0",
     "pg": "^8.22.0",
     "pino": "^10.3.1",
     "playwright": "1.62.0",

@@ -95,7 +95,7 @@ An empty array means nothing is running.
 | `store`          | `storeName`                 |                                                                                                                                                                                                                                               |
 | —                | `storeSlug`                 | new                                                                                                                                                                                                                                           |
 | —                | `sku`                       | new                                                                                                                                                                                                                                           |
-| `name`           | `name`                      | cleaned display name (leading category prefix stripped at scrape/import time); **nullable** — `null` when cleaning left nothing, fall back to `nameOrig`                                                                                      |
+| `name`           | `name`                      | the product alone — brand + expression (see the note below the table); **nullable** — `null` when cleaning left nothing, fall back to `nameOrig`                                                                                              |
 | —                | `nameOrig`                  | new — raw scraped name, always present; the display fallback for `name` and the value shown (read-only) in the edit modal                                                                                                                     |
 | `url`            | `url`                       |                                                                                                                                                                                                                                               |
 | `current_price`  | `price`                     |                                                                                                                                                                                                                                               |
@@ -119,6 +119,19 @@ An empty array means nothing is running.
 | `days_new`       | `daysNew`                   |                                                                                                                                                                                                                                               |
 | —                | `daysDiscount`              | new — days the current price has held (days since it was last higher); `drops` only, null elsewhere. Structured replacement for the legacy `"діє N дн."` note                                                                                 |
 | `note`           | —                           | removed (was UI text)                                                                                                                                                                                                                         |
+
+**`name` holds the product alone.** The category prefix, age, ABV, volume,
+packaging and bundle descriptors are stripped at scrape/import time, so the
+client builds the display name by appending `age` / `abv` / `volumeMl` back to
+it (see `web/src/entities/report/model/compose-name.ts`). When `name` is
+`null`, show `nameOrig` **as-is** and append nothing — the raw name already
+carries all of them inline.
+
+Consequence for the client: **one `name` now covers what used to be several
+rows.** A bottling listed as `Aerstone, Land Cask` by one store and
+`Aerstone Land Cask` by another, plain vs boxed, and bottle vs bottle-with-two-
+glasses all collapse onto the same name, so rows that used to look distinct now
+group together. `volumeMl` still separates a multipack from a single bottle.
 
 ### Report query params
 

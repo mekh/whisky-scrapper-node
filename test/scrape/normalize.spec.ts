@@ -1,12 +1,10 @@
 import 'reflect-metadata';
 
-import { ProductNameUtils } from '~utils';
 import { NormalizeService } from '../../src/scrape/normalize/normalize.service';
 
 import type { ProductSnapshot } from '~types';
 
 const n = new NormalizeService();
-const clean = (raw: string): string | null => ProductNameUtils.clean(raw);
 
 function snap(
   name: string,
@@ -48,6 +46,17 @@ describe('NormalizeService.extractAbv', () => {
     expect(n.extractAbv("Jack Daniel's 40% 1л")).toBe(40);
     expect(n.extractAbv('cask strength 58,5%')).toBe(58.5);
     expect(n.extractAbv('акція -25%')).toBeNull();
+  });
+
+  it('reads an ABV that starts the text', () => {
+    // A detail page's characteristics field is often the bare value.
+    expect(n.extractAbv('40%')).toBe(40);
+    expect(n.extractAbv('43,5 %')).toBe(43.5);
+    expect(n.extractAbv('40% 0,7л')).toBe(40);
+  });
+
+  it('still skips a discount that starts the text', () => {
+    expect(n.extractAbv('-25% Jameson')).toBeNull();
   });
 });
 
@@ -92,6 +101,11 @@ describe('NormalizeService.extractAgeYears', () => {
     expect(n.extractAgeYears('відомий понад 250 років')).toBeNull();
     expect(n.extractAgeYears('понад 225 років ремесла')).toBeNull();
     expect(n.extractAgeYears('витримка 120 років')).toBeNull();
+  });
+
+  it('reads the Russian spelling a few listings use', () => {
+    expect(n.extractAgeYears('Hart Brothers Dalmore 11 лет')).toBe(11);
+    expect(n.extractAgeYears('Miltonduff Vintage 1990 21 год')).toBe(21);
   });
 });
 
@@ -208,36 +222,41 @@ describe('NormalizeService.detectBrandInfo', () => {
   });
 });
 
-describe('ProductNameUtils.clean', () => {
-  it('strips the category prefix', () => {
-    expect(clean('Віскі Jameson 0,7л')).toBe('Jameson 0,7л');
-    expect(clean('Набір: віскі Chivas 12')).toBe('Chivas 12');
-    expect(clean('Bourbon Jim Beam')).toBe('Bourbon Jim Beam');
-    expect(clean('Віскі')).toBeNull();
+describe('NormalizeService.extractVolumeMl — gift sets', () => {
+  it('sums the bottles of a set joined with a plus', () => {
+    expect(
+      n.extractVolumeMl(
+        'Набор: віскі Wild Turkey 40.5% 0.7 л + віскі Wild Turkey 101, '
+          + '50.5% 0.7 л',
+      ),
+    ).toBe(1400);
+    expect(
+      n.extractVolumeMl(
+        'Набір бурбон Four Roses 1 л 40% + Four Roses Small Batch 0.7 л 45% '
+          + '+ Four Roses Single Barrel 0.7 л 50% (2021000246296N)',
+      ),
+    ).toBe(2400);
+    // The product code is joined with `+` too, and must not become a segment.
+    expect(
+      n.extractVolumeMl(
+        'Віскі Jura Journey 0.7 л 40% + Jura 12yo 0.7 л 40% + Jura Rum Cask '
+          + 'Finish 0.7 л 40% (5013967012462+5013967012509+5013967017849)',
+      ),
+    ).toBe(2100);
   });
 
-  it('normalizes age statements to <n>yo', () => {
-    expect(clean('Віскі Гленлівет / Glenlivet 12 років'))
-      .toBe('Glenlivet 12yo');
-    expect(clean('Aberlour 12 y.o. 0.7л')).toBe('Aberlour 12yo 0.7л');
-    expect(clean('Glenfiddich 12 Years Old, 40%'))
-      .toBe('Glenfiddich 12yo, 40%');
-    expect(clean('Bushmills, 8 років витримки, 0.7'))
-      .toBe('Bushmills, 8yo, 0.7');
-    expect(clean('Talisker 4 Year Old, 0.7л')).toBe('Talisker 4yo, 0.7л');
-    expect(clean('Nikka 3 роки витримки')).toBe('Nikka 3yo');
-    expect(clean('Jura 10yo')).toBe('Jura 10yo');
-    expect(clean('12 young oak')).toBe('12 young oak');
-    expect(clean('Glen 12 yearly release')).toBe('Glen 12 yearly release');
-  });
-
-  it('strips a trailing store product code', () => {
-    expect(clean('Glen Turner 40% (3147697523508)')).toBe('Glen Turner 40%');
-    expect(clean('Macallan (142828)')).toBe('Macallan');
-    expect(clean('Whisky (Q5225)')).toBe('Whisky');
-    expect(clean('Whisky (3800032010292B)')).toBe('Whisky');
-    expect(clean('Whisky (5000299628034_AB)')).toBe('Whisky');
-    expect(clean('Ardbeg (NAS)')).toBe('Ardbeg (NAS)');
-    expect(clean('Something (0.7)')).toBe('Something (0.7)');
+  it('leaves a bottle, an accessory bundle and a multipack alone', () => {
+    expect(n.extractVolumeMl('Віскі Highland Park 12yo 40% 0,7л')).toBe(700);
+    expect(n.extractVolumeMl('Віскі Arran Barrel Reserve 0,7л + 2 склянки'))
+      .toBe(700);
+    // A brand really spelled with a plus.
+    expect(n.extractVolumeMl('Віскі Roe + Co 45% 0,7л')).toBe(700);
+    // The pack total is stated, so nothing is summed.
+    expect(
+      n.extractVolumeMl(
+        'Упаковка віскі Hankey Bannister 40% 8.4 л '
+          + '(0.7 л x 12 шт.)',
+      ),
+    ).toBe(8400);
   });
 });

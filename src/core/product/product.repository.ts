@@ -121,6 +121,24 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
   }
 
   /**
+   * SKUs of a store's products that already exist, whatever their stock state.
+   * The name-extraction pass uses this to skip known SKUs: `name` is written
+   * once on insert and never on conflict, so extracting it again would be a
+   * wasted LLM call that could never be persisted.
+   *
+   * @param storeId - Store id.
+   * @returns The set of SKUs already stored for the store.
+   */
+  public async existingSkus(storeId: ID): Promise<Set<string>> {
+    const rows = await this.query(
+      'SELECT sku FROM product WHERE "storeId" = $1',
+      [storeId],
+    ) as { sku: string }[];
+
+    return new Set(rows.map((row) => row.sku));
+  }
+
+  /**
    * Flags a store's products as out of stock by SKU (the items the latest
    * listing explicitly returned as unavailable). The rows and their price
    * history are kept. Flags nothing when the list is empty.
@@ -167,6 +185,29 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
       .where('"storeId" = :storeId', { storeId })
       .andWhere('"inStock"')
       .andWhere('NOT (sku = ANY(:keepSkus))', { keepSkus })
+      .execute();
+
+    return result.affected ?? 0;
+  }
+
+  /**
+   * Clears the age of the given products. Used by the age audit to drop values
+   * no source ever stated — `age` is insert-only, so a wrong value written
+   * once is never corrected by a later scrape.
+   *
+   * @param ids - Products whose age to clear.
+   * @returns How many rows changed.
+   */
+  public async clearAges(ids: ID[]): Promise<number> {
+    if (!ids.length) {
+      return 0;
+    }
+
+    const result = await this.createQueryBuilder()
+      .update(ProductEntity)
+      .set({ age: () => 'NULL' })
+      .where('id = ANY(:ids)', { ids })
+      .andWhere('age IS NOT NULL')
       .execute();
 
     return result.affected ?? 0;
@@ -241,7 +282,8 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
       AND ($4::int IS NULL OR p."volumeMl" >= $4)
       AND ($5::int IS NULL OR p."volumeMl" <= $5)
       AND ($6::text[] IS NULL OR lower(c.code) = ANY($6))
-      AND ($7::text IS NULL OR p.name ILIKE '%' || $7 || '%')
+      AND ($7::text IS NULL OR p.name ILIKE '%' || $7 || '%'
+           OR p."nameOrig" ILIKE '%' || $7 || '%')
       AND ($8::text[] IS NULL OR t.name = ANY($8)
            OR ($9 AND p."typeId" IS NULL))
       AND ($10::text[] IS NULL OR EXISTS (
@@ -405,9 +447,12 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
 
   /**
    * Resolves a product id from a search term: an exact id, otherwise the
-   * most recently seen product whose name or URL contains the term.
-   * Out-of-stock products still resolve (their history stays reachable), but
-   * an in-stock match wins a name collision.
+   * most recently seen product whose cleaned name, raw name or URL contains
+   * the term. The raw name is matched too because the cleaned one holds only
+   * the brand + expression, so descriptors a user may search for ("Welsh",
+   * "Single Malt") survive only in `nameOrig`. Out-of-stock products still
+   * resolve (their history stays reachable), but an in-stock match wins a
+   * name collision.
    *
    * @param term - A product id or a name/URL substring.
    * @returns The matching product id, or null when nothing matches.
@@ -422,7 +467,9 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
       ) as { id: ID }[]
       : await this.query(
         `SELECT id FROM product
-         WHERE name ILIKE '%' || $1 || '%' OR url ILIKE '%' || $1 || '%'
+         WHERE name ILIKE '%' || $1 || '%'
+            OR "nameOrig" ILIKE '%' || $1 || '%'
+            OR url ILIKE '%' || $1 || '%'
          ORDER BY "inStock" DESC, "lastSeen" DESC
          LIMIT 1`,
         [term],

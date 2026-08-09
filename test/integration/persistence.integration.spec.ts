@@ -243,6 +243,43 @@ describe('persistence write path (integration)', () => {
     expect(detail?.inStock).toBe(false);
   });
 
+  it('finds a product by a term that survives only in nameOrig', async () => {
+    // The descriptor carries the run-unique suffix: `resolveIdByTerm` searches
+    // the whole catalogue, and a plain "Welsh" would match real rows when the
+    // integration database is a restored production dump.
+    const descriptor = `Welsh${SLUG}`;
+    const { id } = await products.upsertFromScrape(baseProduct({
+      sku: 'welsh',
+      name: 'Aber Falls',
+      nameOrig: `Віскі Aber Falls ${descriptor} 40% 0,7л`,
+    }));
+
+    await snapshots.upsertForDate(id, DAY, {
+      price: 100,
+      oldPrice: null,
+      currency: 'UAH',
+      inStock: true,
+      promo: false,
+    });
+
+    const byCleanName = await products.findCurrentRows({
+      stores: [SLUG],
+      name: 'Aber Falls',
+    });
+
+    expect(byCleanName.map((row) => row.id)).toContain(id);
+
+    // The descriptor was stripped from `name`; both search paths still find
+    // it because they match `nameOrig` too.
+    const byDescriptor = await products.findCurrentRows({
+      stores: [SLUG],
+      name: descriptor,
+    });
+
+    expect(byDescriptor.map((row) => row.id)).toContain(id);
+    expect(await products.resolveIdByTerm(descriptor)).toBe(id);
+  });
+
   it('lets only one concurrent run start in the same group', async () => {
     const [a, b] = await Promise.all([
       syncLogs.tryStart(storeId, 'it-group', SyncTrigger.MANUAL),

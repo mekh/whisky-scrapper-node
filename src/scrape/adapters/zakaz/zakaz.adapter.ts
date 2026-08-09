@@ -8,7 +8,11 @@ import { NormalizeService } from '../../normalize/normalize.service';
 import { HttpAdapterBase } from '../scrape-adapter.base';
 
 import type { ScrapeHttpClient } from '../../http/http-client.interfaces';
-import type { ZakazListing, ZakazProduct, ZakazStore } from './zakaz.interfaces';
+import type {
+  ZakazListing,
+  ZakazProduct,
+  ZakazStore,
+} from './zakaz.interfaces';
 
 const API = 'https://stores-api.zakaz.ua';
 

@@ -15,8 +15,14 @@ import { ConfigModule, DbConfig } from '~config';
 import { CoreProductService } from '~core/product';
 import { CoreStoreService } from '~core/store';
 import { SyncEngine } from '~enums';
+import { SyncFileLogTime } from '~lib/sync-file-log';
 import { ScrapeModule, ScrapeService } from '~scrape';
-import { ID, ProductSnapshot } from '~types';
+import {
+  ID,
+  ProductSnapshot,
+  ScrapeProgressEvent,
+  ScrapeProgressReporter,
+} from '~types';
 
 /**
  * The columns a backfill run can fill, in report order.
@@ -184,6 +190,60 @@ async function countFillable(
 }
 
 /**
+ * Renders one progress event as a console line, or null for the events that
+ * would only repeat what the final report says. The wording mirrors the
+ * orchestrator's per-sync log files, so an operator reads one vocabulary.
+ *
+ * @param event - The progress event.
+ * @returns The line, or null when the event is not worth a line here.
+ */
+function progressLine(event: ScrapeProgressEvent): string | null {
+  switch (event.kind) {
+    case 'page':
+      return `page ${event.page}: ${event.added} new `
+        + `(${event.total} collected so far)`;
+    case 'fetched':
+      return `listing fetched: ${event.found} item(s), `
+        + `${event.inStock} in stock`;
+    case 'enrich':
+      return `details ${event.done}/${event.pending}`;
+    case 'detail-failed':
+      return `detail fetch failed for ${event.url}: ${event.error}`;
+    case 'llm':
+      return `LLM ${event.pass} pass: ${event.pending} item(s) to ask about`;
+    case 'llm-deadline':
+      return `LLM ${event.pass} pass skipped: out of LLM budget, `
+        + `${event.pending} item(s) left for the next run`;
+    case 'persisted':
+      return `persisted: ${event.stored} stored, ${event.added} added, `
+        + `${event.removed} flagged out of stock`;
+    case 'sweep-guarded':
+      return `listing looks truncated (${event.inStock} in stock vs `
+        + `${event.baseline} stored); out-of-stock sweep skipped`;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Builds the progress sink that mirrors the engine's events to stdout, so a
+ * multi-hour run is observably alive: every listing page, every tenth detail
+ * page, the LLM passes and the final persist each print one timestamped line.
+ *
+ * @param slug - The store the lines belong to.
+ * @returns The progress reporter.
+ */
+function buildProgressReporter(slug: string): ScrapeProgressReporter {
+  return (event: ScrapeProgressEvent): void => {
+    const line = progressLine(event);
+
+    if (line !== null) {
+      console.log(`${SyncFileLogTime.clock()} ${slug}: ${line}`);
+    }
+  };
+}
+
+/**
  * Adds one store's counts into a running total.
  *
  * @param total - The accumulated counts.
@@ -248,7 +308,11 @@ async function backfillStore(
 
   const before = await countNulls(products, store.id);
 
-  const result = await scrape.collectStore(slug, { backfill: true, dryRun });
+  const result = await scrape.collectStore(slug, {
+    backfill: true,
+    dryRun,
+    reporter: buildProgressReporter(slug),
+  });
 
   let after = await countNulls(products, store.id);
 

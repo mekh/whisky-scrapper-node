@@ -441,7 +441,10 @@ entity/repository/service/module shape:
   `skusWithAbv`; and the LLM enrichment trigger adds a still-null type or
   country to `needsLlm`. **Age is deliberately in neither widening**: a NAS
   bottling has no age to find, so including it would re-fetch and re-ask about
-  the same items on every run forever. The script prints per-store and total
+  the same items on every run forever. The script mirrors the engine's
+  progress events to stdout as timestamped lines (every listing page, every
+  tenth detail page, the LLM passes, the persist) so a multi-hour run is
+  observably alive, prints per-store and total
   before/after null counts, keeps going when one store fails, and **bypasses the
   `sync_log` lock** — nothing may sync those stores while it runs. It is a full
   scrape, so its sweep flags out-of-stock rows exactly as a normal sync does,

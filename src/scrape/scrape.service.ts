@@ -19,6 +19,7 @@ import type {
 } from '~types';
 
 import { LlmEnrichmentService } from './llm/llm-enrichment.service';
+import { LlmFlavorService } from './llm/llm-flavor.service';
 import { LlmNameExtractionService } from './llm/llm-name-extraction.service';
 import { NormalizeService } from './normalize/normalize.service';
 import { ScrapePersistService } from './persist/scrape-persist.service';
@@ -51,6 +52,8 @@ export class ScrapeService {
 
   private readonly llmNames: LlmNameExtractionService;
 
+  private readonly llmFlavor: LlmFlavorService;
+
   private readonly persist: ScrapePersistService;
 
   public constructor(
@@ -62,6 +65,7 @@ export class ScrapeService {
     normalizer: NormalizeService,
     llm: LlmEnrichmentService,
     llmNames: LlmNameExtractionService,
+    llmFlavor: LlmFlavorService,
     persist: ScrapePersistService,
   ) {
     this.stores = stores;
@@ -72,6 +76,7 @@ export class ScrapeService {
     this.normalizer = normalizer;
     this.llm = llm;
     this.llmNames = llmNames;
+    this.llmFlavor = llmFlavor;
     this.persist = persist;
   }
 
@@ -119,7 +124,15 @@ export class ScrapeService {
     });
 
     await this.runLlm(inStock, backfill);
-    await this.runNameExtraction(store.id, inStock);
+
+    /**
+     * Both remaining passes only ever act on SKUs this store has never stored,
+     * so they share one lookup.
+     */
+    const known = await this.products.existingSkus(store.id);
+
+    await this.runNameExtraction(known, inStock);
+    await this.runFlavorEnrichment(known, inStock);
 
     if (options.dryRun) {
       return {
@@ -288,23 +301,49 @@ export class ScrapeService {
    * never stored before. Known SKUs are skipped: `product.name` is written
    * once on insert, so re-extracting it could never be persisted.
    *
-   * @param storeId - The store id.
+   * @param known - SKUs the store has already stored.
    * @param inStock - In-stock snapshots.
    * @returns Resolves once extraction has been attempted.
    */
   private async runNameExtraction(
-    storeId: ID,
+    known: Set<string>,
     inStock: ProductSnapshot[],
   ): Promise<void> {
     if (!this.llmNames.enabled || !inStock.length) {
       return;
     }
 
-    const known = await this.products.existingSkus(storeId);
     const pending = inStock.filter((snap) => !known.has(snap.storeSku));
 
     if (pending.length > 0) {
       await this.llmNames.extractNames(pending);
+    }
+  }
+
+  /**
+   * Classifies the flavor profile of the items this store has never stored
+   * before. Known SKUs are skipped because they are the `enrich-flavors`
+   * script's job: it sweeps the whole catalogue once against a model chosen for
+   * the task, and re-asking here would spend a call per sync on a product whose
+   * answer is already stored — the flavor of a bottling does not change between
+   * runs.
+   *
+   * @param known - SKUs the store has already stored.
+   * @param inStock - In-stock snapshots.
+   * @returns Resolves once classification has been attempted.
+   */
+  private async runFlavorEnrichment(
+    known: Set<string>,
+    inStock: ProductSnapshot[],
+  ): Promise<void> {
+    if (!this.llmFlavor.enabled || !inStock.length) {
+      return;
+    }
+
+    const pending = inStock.filter((snap) => !known.has(snap.storeSku));
+
+    if (pending.length > 0) {
+      await this.llmFlavor.classify(pending);
     }
   }
 }

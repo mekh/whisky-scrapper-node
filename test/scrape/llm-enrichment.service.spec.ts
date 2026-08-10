@@ -58,7 +58,6 @@ describe('LlmEnrichmentService.enrich', () => {
       volume_ml: 700,
       whisky_type: 'Single Malt',
       country: 'Шотландія',
-      flavor_tags: ['Sherry', 'fruity'],
     }]);
 
     const snaps = [snap('Віскі Aberlour')];
@@ -69,7 +68,20 @@ describe('LlmEnrichmentService.enrich', () => {
     expect(snaps[0].volumeMl).toBe(700);
     expect(snaps[0].whiskyType).toBe('single malt');
     expect(snaps[0].country).toBe('Шотландія');
-    expect(snaps[0].flavorTags).toEqual(['fruity', 'sherry']);
+  });
+
+  it('never touches flavor tags — LlmFlavorService owns them', async () => {
+    askJsonArray.mockResolvedValue([{
+      abv: 40,
+      flavor_tags: ['Sherry', 'invented-tag'],
+    }]);
+
+    const snaps = [snap('Віскі Aberlour')];
+
+    await makeService().enrich(snaps);
+
+    expect(snaps[0].abv).toBe(40);
+    expect(snaps[0].flavorTags).toEqual([]);
   });
 
   it('fills the age when the deterministic pass found none', async () => {

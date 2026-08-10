@@ -5,6 +5,8 @@ import { ScrapeConfig } from '~config';
 
 import { LlmBudgetError } from './llm-budget.error';
 
+import type { LlmCallOverrides } from './llm.interfaces';
+
 import type {
   ChatCompletion,
   ChatCompletionCreateParamsNonStreaming,
@@ -97,6 +99,9 @@ export class LlmClientService {
    *
    * @param prompt - The full user prompt.
    * @param maxTokens - Upper bound on the completion length.
+   * @param overrides - Per-call model and reasoning overrides; each falls back
+   *   to the configured value. Lets one pass run on a different slug than the
+   *   others without touching the shared configuration.
    * @returns The parsed array.
    * @throws {Error} When the pass is disabled, the call fails, or the answer
    *   is not a JSON array.
@@ -104,10 +109,13 @@ export class LlmClientService {
   public async askJsonArray(
     prompt: string,
     maxTokens: number,
+    overrides: LlmCallOverrides = {},
   ): Promise<unknown[]> {
-    const { llmApiKey, llmBaseUrl, llmModel } = this.config;
+    const { llmApiKey, llmBaseUrl } = this.config;
+    const model = overrides.model ?? this.config.llmModel;
+    const reasoning = overrides.reasoning ?? this.config.llmReasoning;
 
-    if (!llmApiKey || !llmModel) {
+    if (!llmApiKey || !model) {
       throw new Error('LLM is not configured');
     }
 
@@ -132,14 +140,14 @@ export class LlmClientService {
      * come back two ways.
      */
     const body: ChatCompletionBody = {
-      model: llmModel,
+      model,
       max_completion_tokens: maxTokens,
       temperature: 0,
       top_p: 1,
       messages: [{ role: 'user', content: prompt }],
     };
 
-    if (!this.config.llmReasoning) {
+    if (!reasoning) {
       body.reasoning = { enabled: false };
     }
 

@@ -100,6 +100,83 @@ export interface ProductSnapshot {
    * normalization. Not persisted.
    */
   rawAttrs: Record<string, unknown>;
+
+  /**
+   * Flavor tags the LLM classification pass returned, already filtered to the
+   * closed vocabulary. Empty when the model did not recognize the product.
+   * Persisted separately from {@link flavorTags} so a later sync's keyword pass
+   * cannot wipe them.
+   */
+  llmFlavorTags?: string[];
+
+  /**
+   * How well the model claimed to know the product. Recorded for diagnostics
+   * only — `unknown` already forces {@link llmFlavorTags} empty.
+   */
+  llmFlavorConfidence?: FlavorConfidence;
+
+  /**
+   * Whether the classification pass produced an answer for this item at all.
+   * False/absent after a failed batch, which keeps the product's
+   * `lastLlmFlavorAt` null so a later run retries it.
+   */
+  llmFlavorChecked?: boolean;
+}
+
+/**
+ * How confident the LLM claimed to be about a product's flavor profile.
+ * `unknown` is the required answer for a product the model does not recognize —
+ * guessing tags from the name alone is what this exists to prevent.
+ */
+export type FlavorConfidence = 'high' | 'low' | 'unknown';
+
+/**
+ * One stored product read back as flavor-classification input by
+ * `CoreProductService.findFlavorCandidates`. Structurally aligned with
+ * `LlmFlavorCandidate` (`scrape/llm/llm.interfaces.ts`) plus the id needed to
+ * write the answer back, but declared independently because `core/` must not
+ * import from `scrape/` — the same split as `ProductSnapshot` and
+ * `LlmNameCandidate`.
+ *
+ * There is deliberately no description field: `rawAttrs` is never persisted, so
+ * a stored row offers less grounding than a live scrape does. Expect a higher
+ * `unknown` rate from the backfill than from the pipeline pass.
+ */
+export interface FlavorCandidateRow {
+  /**
+   * Product id, used to write the resolved flavor links back.
+   */
+  id: ID;
+
+  /**
+   * Raw product name (`product.nameOrig`) — the primary classification input.
+   */
+  name: string;
+
+  /**
+   * Whisky type name when the row has one, as extra grounding.
+   */
+  whiskyType?: string | null;
+
+  /**
+   * Ukrainian country name when the row has one, as extra grounding.
+   */
+  country?: string | null;
+
+  /**
+   * Result slot: the filtered tags the model returned.
+   */
+  llmFlavorTags?: string[];
+
+  /**
+   * Result slot: the confidence the model reported.
+   */
+  llmFlavorConfidence?: FlavorConfidence;
+
+  /**
+   * Result slot: whether the model answered for this item.
+   */
+  llmFlavorChecked?: boolean;
 }
 
 /**

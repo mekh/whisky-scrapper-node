@@ -14,6 +14,7 @@ import type {
   StoreListItem,
 } from '~types';
 import type { LlmEnrichmentService } from '../../src/scrape/llm/llm-enrichment.service';
+import type { LlmFlavorService } from '../../src/scrape/llm/llm-flavor.service';
 import type { LlmNameExtractionService } from '../../src/scrape/llm/llm-name-extraction.service';
 import type { ScrapePersistService } from '../../src/scrape/persist/scrape-persist.service';
 
@@ -44,6 +45,7 @@ interface HarnessOptions {
   brandNames: string[];
   names: { enabled: boolean; extractNames: jest.Mock };
   llm: { enabled: boolean; enrich: jest.Mock };
+  flavor: { enabled: boolean; classify: jest.Mock };
   persist: { persist: jest.Mock };
 }
 
@@ -93,6 +95,7 @@ function makeHarness(
     brandNames: [],
     names: { enabled: false, extractNames: jest.fn() },
     llm: { enabled: false, enrich: jest.fn() },
+    flavor: { enabled: false, classify: jest.fn() },
     persist: { persist: jest.fn() },
     ...over,
   };
@@ -127,6 +130,7 @@ function makeHarness(
     new NormalizeService(),
     options.llm as unknown as LlmEnrichmentService,
     options.names as unknown as LlmNameExtractionService,
+    options.flavor as unknown as LlmFlavorService,
     options.persist as unknown as ScrapePersistService,
   );
 
@@ -288,6 +292,60 @@ describe('ScrapeService.collectStore', () => {
     const [pending] = names.extractNames.mock.calls[0] as [ProductSnapshot[]];
 
     expect(pending.map((snap) => snap.storeSku)).toEqual(['fresh']);
+  });
+
+  it(
+    'classifies flavors only for SKUs the store has never stored',
+    async () => {
+      const adapter: ScrapeAdapter = {
+        slug: 'faux',
+        supportsDetail: false,
+        fetchListing: jest.fn().mockResolvedValue([
+          rawSnap({ storeSku: 'known' }),
+          rawSnap({ storeSku: 'fresh' }),
+        ]),
+        enrichDetail: jest.fn(),
+        sleep: jest.fn().mockResolvedValue(undefined),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      const flavor = { enabled: true, classify: jest.fn() };
+
+      const harness = makeHarness(adapter, {
+        flavor,
+        existingSkus: new Set(['known']),
+      });
+
+      await harness.service.collectStore('faux', { dryRun: true });
+
+      expect(flavor.classify).toHaveBeenCalledTimes(1);
+
+      const [pending] = flavor.classify.mock.calls[0] as [ProductSnapshot[]];
+
+      expect(pending.map((snap) => snap.storeSku)).toEqual(['fresh']);
+
+      /**
+       * Both passes gate on the same lookup, so it must be fetched once.
+       */
+      expect(harness.products.existingSkus).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('skips the flavor pass when the LLM is disabled', async () => {
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: false,
+      fetchListing: jest.fn().mockResolvedValue([rawSnap({})]),
+      enrichDetail: jest.fn(),
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    const flavor = { enabled: false, classify: jest.fn() };
+
+    const service = makeService(adapter, { flavor });
+
+    await service.collectStore('faux', { dryRun: true });
+
+    expect(flavor.classify).not.toHaveBeenCalled();
   });
 
   it('skips the name-extraction pass when the LLM is disabled', async () => {

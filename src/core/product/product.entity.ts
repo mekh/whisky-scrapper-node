@@ -1,5 +1,6 @@
 import {
   IsBoolean,
+  IsDate,
   IsDateString,
   IsInt,
   IsNumber,
@@ -7,15 +8,7 @@ import {
   IsString,
   MaxLength,
 } from 'class-validator';
-import {
-  Column,
-  Entity,
-  Index,
-  JoinColumn,
-  JoinTable,
-  ManyToMany,
-  ManyToOne,
-} from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 
 import {
   PRODUCT_NAME_MAX_LENGTH,
@@ -26,7 +19,6 @@ import { GuidV7Column } from '~decorators/columns';
 import type {
   EntityBrand,
   EntityCountry,
-  EntityFlavor,
   EntityProduct,
   EntityStore,
   EntityType,
@@ -98,6 +90,11 @@ export class ProductEntity extends BaseRichEntity implements EntityProduct {
   @Column({ type: 'date' })
   public lastSeen!: string;
 
+  @IsDate()
+  @IsOptional()
+  @Column({ type: 'timestamp', nullable: true })
+  public lastLlmFlavorAt?: Date;
+
   @ManyToOne(
     'StoreEntity',
     (store: EntityStore) => store.id,
@@ -141,18 +138,4 @@ export class ProductEntity extends BaseRichEntity implements EntityProduct {
     name: 'countryId',
   })
   public country?: EntityCountry;
-
-  @ManyToMany('FlavorEntity')
-  @JoinTable({
-    name: 'product_flavor',
-    joinColumn: {
-      name: 'productId',
-      foreignKeyConstraintName: 'fk_product_flavor_product',
-    },
-    inverseJoinColumn: {
-      name: 'flavorId',
-      foreignKeyConstraintName: 'fk_product_flavor_flavor',
-    },
-  })
-  public flavors!: EntityFlavor[];
 }

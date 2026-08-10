@@ -83,7 +83,10 @@ export class ScrapePersistService {
       this.distinct(inStock.map((snap) => snap.whiskyType)),
     );
     const flavorIds = await this.flavors.resolveByName(
-      this.distinct(inStock.flatMap((snap) => snap.flavorTags)),
+      this.distinct([
+        ...inStock.flatMap((snap) => snap.flavorTags),
+        ...inStock.flatMap((snap) => snap.llmFlavorTags ?? []),
+      ]),
     );
     const countryIds = await this.countries.resolveByNameUa(
       this.distinct(inStock.map((snap) => snap.country)),
@@ -118,6 +121,21 @@ export class ScrapePersistService {
           .map((tag) => flavorIds.get(tag))
           .filter((id): id is ID => id !== undefined),
       );
+
+      /**
+       * Only when the classification pass actually answered. The pass runs for
+       * new SKUs only, and writing on an unanswered item would stamp
+       * `lastLlmFlavorAt` and so hide the product from the backfill script
+       * forever.
+       */
+      if (snap.llmFlavorChecked) {
+        await this.products.setLlmFlavors(
+          result.id,
+          (snap.llmFlavorTags ?? [])
+            .map((tag) => flavorIds.get(tag))
+            .filter((id): id is ID => id !== undefined),
+        );
+      }
 
       await this.snapshots.upsertForDate(result.id, capturedOn, {
         price: snap.price,

@@ -26,8 +26,6 @@ Fields of each object:
 - "country": the country of origin, written in Ukrainian ("Шотландія",
   "Ірландія", "США", "Японія", "Канада", "Індія", "Тайвань", "Уельс",
   "Англія", ...), or null
-- "flavor_tags": an array of flavour profiles (e.g. "peated", "sherry",
-  "smoky", "vanilla", "fruity"), an empty array when unknown
 
 The product names are scraped from Ukrainian retail sites, so they mix Latin
 brand names with Cyrillic descriptors.
@@ -45,7 +43,6 @@ interface LlmInfo {
   volume_ml?: number | null;
   whisky_type?: string | null;
   country?: string | null;
-  flavor_tags?: unknown;
 }
 
 /**
@@ -150,12 +147,6 @@ export class LlmEnrichmentService {
 
     if (snap.country === null && info.country) {
       snap.country = String(info.country);
-    }
-
-    if (Array.isArray(info.flavor_tags)) {
-      const extra = info.flavor_tags.map((tag) => String(tag).toLowerCase());
-
-      snap.flavorTags = [...new Set([...snap.flavorTags, ...extra])].sort();
     }
   }
 }

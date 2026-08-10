@@ -9,8 +9,19 @@
         "name": "@nestjs/swagger",
         "options": {
           "introspectComments": true,
-          "dtoFileNameSuffix": [".dto.ts", ".type.dto.ts", ".entity.ts"]
+          "dtoFileNameSuffix": [
+            ".dto.ts",
+            ".type.dto.ts",
+            ".entity.ts"
+          ]
         }
+      }
+    ],
+    "assets": [
+      {
+        "include": "../migrations/**/*.csv",
+        "outDir": "dist/migrations",
+        "watchAssets": false
       }
     ]
   }

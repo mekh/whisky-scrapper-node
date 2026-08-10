@@ -102,6 +102,35 @@ describe('LlmClientService', () => {
     );
   });
 
+  it('lets one call override the model and reasoning', async () => {
+    create.mockResolvedValue(reply('["a"]'));
+
+    await makeClient().askJsonArray('prompt', 512, {
+      model: 'anthropic/claude-sonnet-5',
+      reasoning: true,
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'anthropic/claude-sonnet-5' }),
+    );
+    expect(create).toHaveBeenCalledWith(
+      expect.not.objectContaining({ reasoning: expect.anything() }),
+    );
+  });
+
+  it('falls back to the configured model without an override', async () => {
+    create.mockResolvedValue(reply('["a"]'));
+
+    await makeClient().askJsonArray('prompt', 512, {});
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'openai/gpt-4o-mini',
+        reasoning: { enabled: false },
+      }),
+    );
+  });
+
   it('parses a bare JSON array', async () => {
     create.mockResolvedValue(reply('["Aberlour", "Speyburn"]'));
 

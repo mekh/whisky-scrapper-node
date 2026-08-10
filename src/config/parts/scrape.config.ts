@@ -70,6 +70,31 @@ export class ScrapeConfig extends BaseConfig {
   public readonly llmReasoning = this.asBoolean('LLM_REASONING') ?? false;
 
   /**
+   * Model for the flavor-classification pass, defaulting to {@link llmModel}.
+   * That pass is the one place where the answer depends on the model actually
+   * knowing the bottling rather than just rewriting the input line, so it may
+   * be worth a stronger (and pricier) slug than the extraction passes use.
+   *
+   * This is **not** an enable switch: like every pass, flavor classification
+   * stays off until `LLM_API_KEY` and `LLM_MODEL` are both set.
+   */
+  @IsString()
+  @IsOptional()
+  public readonly llmFlavorModel = this.asString('LLM_FLAVOR_MODEL')
+    ?? this.llmModel;
+
+  /**
+   * Reasoning switch for the flavor pass, defaulting to {@link llmReasoning}.
+   * Separate because classification is the one pass where reasoning could
+   * plausibly help — but read the reasoning note on `llmReasoning` first: the
+   * chain of thought scales with the batch and can consume the whole completion
+   * budget before the first answer token.
+   */
+  @IsBoolean()
+  public readonly llmFlavorReasoning = this.asBoolean('LLM_FLAVOR_REASONING')
+    ?? this.llmReasoning;
+
+  /**
    * Reads a variable that has a default, treating an **empty** value as unset:
    * compose forwards a var as an empty string when the host `.env` omits it,
    * and neither an empty endpoint nor an empty app name is usable.

@@ -15,6 +15,7 @@ export const PRODUCT_NAME_MAX_LENGTH = 512;
 export const BRAND_NAME_MAX_LENGTH = 256;
 export const WHISKY_TYPE_NAME_MAX_LENGTH = 64;
 export const FLAVOR_NAME_MAX_LENGTH = 64;
+export const FLAVOR_SOURCE_MAX_LENGTH = 16;
 
 export const COUNTRY_CODE_MAX_LENGTH = 8;
 export const COUNTRY_NAME_MAX_LENGTH = 64;

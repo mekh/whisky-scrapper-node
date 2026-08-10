@@ -35,6 +35,10 @@ node dist/scripts/migrate.js     # prod runner (no ts-node): waits for the DB,
                                  # applies pending migrations, exits 0/1
 scripts/deploy.sh                # prod deploy: build -> run migrate -> up -d
 
+# LLM flavor classification of stored products (no sync lock, re-runnable).
+# --limit costs a model on one batch before committing to the full sweep.
+pnpm enrich-flavors [--dry-run] [--store <slug>] [--limit <n>]
+
 # One-time import of the legacy SQLite DB into Postgres. Path resolution:
 # <sqlite-path> arg > $LEGACY_SQLITE_PATH > ./whisky.db (be root); fails fast
 # if the file does not exist.
@@ -315,7 +319,25 @@ entity/repository/service/module shape:
 - `product` — `storeId`, `sku`, `url`, `name`, `age?`, `abv?`, `volumeMl?`,
   FKs `brandId?`/`typeId?`/`countryId?`, `inStock` (bool, default true —
   current availability), `firstSeen`/`lastSeen` (date). Unique
-  `(storeId, sku)`. Many-to-many `flavors` via the `product_flavor` join table.
+  `(storeId, sku)`. Flavors hang off the **explicit** `product_flavor` join
+  entity (`core/product/product-flavor.entity.ts`) — not a TypeORM
+  `@ManyToMany`, because the table carries a third column, `source`
+  (`scrape`|`llm`, `FlavorSource`), and an implicit `@JoinTable` junction cannot.
+  Nothing loads it as a relation; `ProductRepository` owns every row in raw SQL.
+  **`source` is what makes LLM flavors survive a sync**: `setFlavors` re-derives
+  the keyword pass's links on every run and so deletes and reinserts only
+  `source = 'scrape'`, while `setLlmFlavors` owns the `llm` rows and the sync
+  never touches them. A tag both passes found ends up owned by `llm` (the insert
+  promotes it), so the sync's replace cannot remove it. Promoting the junction to
+  an entity had to reproduce the implicit table's DDL exactly — `ON UPDATE
+  CASCADE` on both FKs plus a plain index per join column, whose TypeORM-hashed
+  names (`IDX_ffe61c…`, `IDX_22847b…`) the entity regenerates identically —
+  otherwise `migration:generate` proposes dropping and recreating them.
+  `lastLlmFlavorAt` records when the classification pass last answered, **set
+  even for an "unknown" answer**: that answer links no flavor, so without the
+  marker it is indistinguishable from never having been asked and every run
+  would re-ask (and re-pay) for the same products. It stays null when a batch
+  failed, which is what makes `pnpm enrich-flavors` retry those items.
   **Out-of-stock products are never deleted** — the persist pipeline flips
   `inStock` instead, so price history survives out-of-stock periods and a
   returning product keeps its identity (`firstSeen`, manual edits). List reads
@@ -434,6 +456,22 @@ entity/repository/service/module shape:
   listed product can be re-scraped); the rest are in-stock items neither the
   keyword pass nor the LLM could place — a bottler's own series with no brand
   in the catalogue, or a name that states nothing about type or origin.
+  **Flavors are swept by a different script**, `pnpm enrich-flavors`
+  (`scripts/enrich-flavors.ts`, `--dry-run` / `--store <slug>` / `--limit <n>`),
+  because they are not a null-column backfill: `product_flavor` rows are
+  re-derived on every sync, not insert-only, so nothing needs `COALESCE`
+  semantics or a re-scrape. It reads the stored rows directly, classifies them
+  through `LlmFlavorService`, and writes only flavor links — so unlike
+  `pnpm backfill` it takes **no** sync lock and is safe to run while stores sync.
+  Re-runnable: it selects only products with `lastLlmFlavorAt IS NULL`, and an
+  answered product is stamped even when the answer was "unknown", so a second run
+  neither re-asks nor re-pays for it; a failed batch leaves its items unstamped
+  and they are retried. `--limit` exists to cost a model on one batch before
+  committing, and the `--dry-run` report (high/low/unknown/unanswered/tagged plus
+  15 samples) is what that decision is made on. Grounding is weaker here than in
+  the pipeline pass — `rawAttrs` is never persisted, so a stored row offers only
+  `nameOrig` + type + country, while a live scrape can also pass the zakaz/okwine
+  description — so expect a higher `unknown`/`low` rate from the sweep.
 - `price-snapshot` — `productId`, `price`/`oldPrice?` (`NumericColumn`),
   `currency`, `inStock`, `promo`, `capturedOn` (date, default `CURRENT_DATE`).
   **One row per product per day**, enforced by the unique index
@@ -455,11 +493,51 @@ consumed by the Python scraper/enrich utilities, never by the API).
 Migrations: `1783840439247-init` (`user`, `permission`),
 `1783840751031-whisky-domain` (all of the above), then the sync overhaul —
 `store-config-group-engine`, `sync-log-lock`, `price-snapshot-captured-on` —
-`product-in-stock` (the availability flag), and `silpo-store` (a data
+`product-in-stock` (the availability flag), `silpo-store` (a data
 migration seeding the `silpo` store + config; its `down()` un-onboards the
-store, cascading into its products and snapshots) — all applied, formatted
-per the `typeorm-migration-format` skill, and drift-free against the
-entities. Store onboarding is done this way on purpose: **every DB change —
+store, cascading into its products and snapshots), then the flavor overhaul —
+`flavor-llm-source` (`product_flavor.source` + `product.lastLlmFlavorAt`) and
+`flavor-taxonomy-cleanup` (a data migration deleting every `flavor` row and link
+outside the 15-tag vocabulary: 142 of 157 rows and 633 of 7 368 links on a
+production copy, all of them left by the old unfiltered enrichment side effect
+and all re-derivable, which is why its `down()` is a documented no-op) and
+`flavor-llm-import` (the classified back-catalogue, see below) — all
+applied, formatted per the `typeorm-migration-format` skill, and drift-free
+against the entities.
+
+**`flavor-llm-import` ships its data as a CSV beside the migration.** Flavors
+were classified per **distinct `product.name`**, not per product row: the same
+bottling is listed by many stores, so 2 059 names cover all ~7 000 rows, and
+every row of a name gets the same tags — which is also what makes the report's
+flavor filter behave consistently across stores. The classification was done by
+16 parallel Sonnet 5 agents over ~129 names each (batch inputs and the merged
+result are throwaway; the CSV is the artifact). Result: 749 `high`, 972 `low`,
+338 `unknown`, 367 distinct tag sets — the largest shared set covers only 52
+names, which is the check that matters, because a per-category *template* is the
+failure mode a weaker model produces. Coverage went from 3 031 to 6 264 of 6 990
+products (43% → 90%); `excludeFlavors=peated` now removes 736 of 6 294 in-stock
+items instead of only those whose name happened to spell out "торф".
+Load-bearing details:
+- The CSV is `name,confidence,tags` (tags pipe-separated) with **no quoting**,
+  which is safe only because no name in the catalogue contains a comma or a
+  double quote — verified before generating it. The importer therefore requires
+  exactly three fields per line and **fails the migration** on anything else,
+  rather than importing a mis-split name that would silently match no product.
+- `nest-cli.json` copies `migrations/**/*.csv` into `dist/migrations` as an
+  asset. Without it the file would not exist in the production image at all (the
+  runtime stage copies only `dist/`) and the migration would fail on deploy.
+  `__dirname` then resolves it under both ts-node and the compiled image.
+- The importer re-filters every tag against the 15-tag vocabulary. The
+  classifier is not trusted to have obeyed it.
+- Rows are written `source = 'llm'`, and a tag the keyword pass already found is
+  **promoted** to `llm` rather than duplicated (the composite key allows one row
+  per pair). That promotion is one-way: nothing records that the row used to be
+  `scrape`, so `down()` deletes it instead of demoting it — a dev revert took
+  `scrape` links from 6 735 to 2 919. Not a loss (the keyword pass re-derives
+  them on the next sync) but the catalogue is under-tagged until then.
+- Every classified name is stamped `lastLlmFlavorAt`, `unknown` included. Only
+  one product is left unstamped: the single row whose `name` is null, which no
+  name-keyed import can reach. Store onboarding is done this way on purpose: **every DB change —
 schema or data — ships as a migration**, never as ad-hoc SQL, so prod picks
 it up through the deploy's migrate gate.
 
@@ -493,14 +571,51 @@ wrappers): `scrape/` has its own internal layering.
   (an **OpenAI-compatible** chat-completions call via the `openai` SDK,
   pointed at any endpoint by `LLM_BASE_URL` — production uses OpenRouter, so
   the model is a provider slug in `LLM_MODEL`; `LlmClientService` owns the
-  transport and the JSON-array unwrapping, and both passes stay disabled until
+  transport and the JSON-array unwrapping, and every pass stays disabled until
   a key **and** a model are set, since no model name is portable across
-  providers. Two independent passes sit on top of it:
-  `LlmEnrichmentService` fills missing abv/volume/type/country fields, and
+  providers. `askJsonArray` takes optional per-call `{model, reasoning}`
+  overrides so one pass can run on a different slug than the rest. Three
+  independent passes sit on top of it:
+  `LlmEnrichmentService` fills missing abv/volume/type/country fields,
   `LlmNameExtractionService` reduces the name to brand + expression for new
   SKUs, validated token-by-token against the raw name so a hallucinated word
-  can never be persisted; both swallow every error and fall back to the
-  deterministic pass.
+  can never be persisted, and `LlmFlavorService` classifies the flavor profile;
+  all three swallow every error and fall back to the deterministic pass.
+  **`LlmFlavorService` is the odd one out — it is recall over a field no source
+  states**, where the others only rewrite an input line, which is why it has its
+  own `LLM_FLAVOR_MODEL`/`LLM_FLAVOR_REASONING` and why model choice matters
+  here and nowhere else. It exists because the keyword pass can only find a
+  flavor a listing spells out, leaving most of the catalogue untagged — and the
+  report's main use is *excluding* `peated`, which silently excludes nothing on
+  an untagged product. Two guards keep it from making the data worse: the answer
+  is filtered against `FLAVOR_TAGS` (the closed 15-tag vocabulary derived from
+  `FLAVOR_KEYWORDS`, so the keyword pass and the LLM cannot disagree on what a
+  valid tag is — a tag named in the prompt but missing from that constant is
+  silently dropped, so the two are edited together), and a `confidence` of
+  `unknown` forces an empty result. The prompt pushes hard toward `unknown`
+  because a plausible-but-wrong `peated` is worse than no tag at all.
+  **Model choice was measured, not assumed**: on the same 40 goodwine bottlings,
+  `deepseek-v4-flash` returned a per-category *template* — Jameson, Monkey
+  Shoulder, Robert Burns and Chivas all got one identical tag set, Dalmore,
+  GlenAllachie and Bunnahabhain another — missed `bourbon-cask` on a product
+  named "West Cork Bourbon Cask", and answered `high` for all 40.
+  `anthropic/claude-sonnet-5` discriminated per product (Dalmore → citrus/sherry,
+  Arran 10 → maritime, both Bourbon Cask bottlings → `bourbon-cask`) and marked
+  the obscure blends `low`. Neither model ever answered `unknown`, so the
+  `unknown` path is under-exercised in practice — treat `low` as the real
+  "don't trust this" signal.
+  The pipeline classifies **new SKUs only** (like name extraction, gated on the
+  same `existingSkus` lookup, fetched once and shared); stored rows are swept
+  once by `pnpm enrich-flavors`. A bottling's flavor does not change between
+  runs, so re-asking per sync would be pure spend.
+  **The stored back-catalogue was swept by the `flavor-llm-import` migration
+  instead of by that script** (see "Whisky domain"), because deduplicating to
+  2 059 distinct names cut the work by ~70% versus the script's per-row
+  candidates, and shipping the answers as a checked-in CSV makes the result
+  reviewable and reproducible on every environment rather than re-billed per
+  deployment. `pnpm enrich-flavors` remains the tool for whatever the import
+  missed and for any future gap — it selects on `lastLlmFlavorAt IS NULL`, which
+  the import has already filled for every name it covered.
   **Reasoning is off by default (`LLM_REASONING`), and that is load-bearing**:
   both passes are mechanical rewrites, but on a reasoning model the chain of
   thought scales with the batch and eats the entire completion budget before
@@ -760,11 +875,18 @@ default 600); logger vars consumed by `@toxicoder/nestjs-pino` (`LOG_LEVEL`,
 consumed by `@toxicoder/nestjs-valkey` (`VALKEY_HOST`, `VALKEY_PORT`,
 `VALKEY_DB`, `VALKEY_PASSWORD`, `VALKEY_MODE`, `VALKEY_PREFIX`,
 `VALKEY_INJECT_KEY`); scrape vars (`SCRAPE_DELAY_MULTIPLIER` default 1,
-`LLM_API_KEY` + `LLM_MODEL` — field enrichment and name extraction, either
-unset = both disabled; `LLM_BASE_URL` defaults to
+`LLM_API_KEY` + `LLM_MODEL` — field enrichment, name extraction and flavor
+classification, either unset = all three disabled; `LLM_BASE_URL` defaults to
 `https://openrouter.ai/api/v1`, set it to `https://api.openai.com/v1` or any
 other OpenAI-compatible gateway to switch provider; `LLM_REASONING` default
-false — see the reasoning note under "Scraping engine"; `LLM_APP_NAME` /
+false — see the reasoning note under "Scraping engine"; `LLM_FLAVOR_MODEL` /
+`LLM_FLAVOR_REASONING` default to `LLM_MODEL` / `LLM_REASONING` and redirect
+**only** the flavor pass — they are not enable switches, and that pass is the
+one place where the answer depends on the model actually knowing the bottling
+rather than rewriting an input line, so it is worth a stronger slug than the
+extraction passes (measured: `anthropic/claude-sonnet-5` discriminates per
+product where `deepseek-v4-flash` returns a per-category template — see
+"Scraping engine"); `LLM_APP_NAME` /
 `LLM_APP_URL` — sent as OpenRouter's `X-Title` / `HTTP-Referer` attribution
 pair, which fills the `App` column of its activity log. Default `Whisky dev`,
 with `docker-compose.yaml` defaulting the deployed service to `Whisky prod`,
@@ -836,7 +958,8 @@ Enforced by ESLint (strict + stylistic type-checked) and dprint:
 
 ## Current state / known gaps
 
-The project builds, `tsc`/`eslint` are clean, and 35 unit tests pass. Done:
+The project builds, `tsc`/`eslint` are clean, and 285 unit tests (24 suites)
+plus 22 integration tests (3 suites, live Postgres) pass. Done:
 
 - **Auth works end-to-end.** `domain/auth` (login/refresh/logout/me/sessions)
   is fully implemented with Valkey-backed sessions and a self-describing

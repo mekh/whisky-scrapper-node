@@ -117,6 +117,13 @@ export interface EntityProduct extends EntityBaseRich {
   inStock: boolean;
   firstSeen: string;
   lastSeen: string;
+  /**
+   * When the LLM flavor pass last answered for this product. Set even when the
+   * answer was "unknown" (which links no flavor at all), so the marker is the
+   * only way to tell "never asked" from "asked, recognized nothing" — a
+   * product with no flavor links looks identical either way.
+   */
+  lastLlmFlavorAt?: Date;
 }
 
 export interface EntityPriceSnapshot extends EntityBaseRich {

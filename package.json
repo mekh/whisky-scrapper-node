@@ -22,6 +22,7 @@
     "fix-age": "ts-node -r tsconfig-paths/register ./scripts/fix-product-age.ts",
     "fix-volume": "ts-node -r tsconfig-paths/register ./scripts/fix-bundle-volume.ts",
     "backfill": "ts-node -r tsconfig-paths/register ./scripts/backfill-nulls.ts",
+    "enrich-flavors": "ts-node -r tsconfig-paths/register ./scripts/enrich-flavors.ts",
     "openapi": "ts-node ./scripts/emit-openapi.ts",
     "test": "jest",
     "test:cov": "jest --coverage",

@@ -23,7 +23,10 @@ jest.mock('typeorm-transactional', () => ({
 const STORE_ID = 'store-1';
 const DAY = '2026-08-08';
 
-function snap(sku: string): ProductSnapshot {
+function snap(
+  sku: string,
+  over: Partial<ProductSnapshot> = {},
+): ProductSnapshot {
   return {
     storeSlug: 'faux',
     storeSku: sku,
@@ -42,22 +45,28 @@ function snap(sku: string): ProductSnapshot {
     country: null,
     flavorTags: [],
     rawAttrs: {},
+    ...over,
   };
 }
 
 interface ProductMocks {
   countByStore: jest.Mock;
   upsertFromScrape: jest.Mock;
+  setFlavors: jest.Mock;
+  setLlmFlavors: jest.Mock;
   markOutOfStockExcept: jest.Mock;
   markOutOfStockBySkus: jest.Mock;
 }
 
-function makeService(inStockBefore: number): {
+function makeService(
+  inStockBefore: number,
+  names: Map<string, string> = new Map<string, string>(),
+): {
   service: ScrapePersistService;
   products: ProductMocks;
 } {
   const lookups = {
-    resolveByName: jest.fn().mockResolvedValue(new Map<string, string>()),
+    resolveByName: jest.fn().mockResolvedValue(names),
     resolveByNameUa: jest.fn().mockResolvedValue(new Map<string, string>()),
   };
 
@@ -68,6 +77,7 @@ function makeService(inStockBefore: number): {
       isNew: false,
     }),
     setFlavors: jest.fn().mockResolvedValue(undefined),
+    setLlmFlavors: jest.fn().mockResolvedValue(undefined),
     markOutOfStockExcept: jest.fn().mockResolvedValue(3),
     markOutOfStockBySkus: jest.fn().mockResolvedValue(1),
   };
@@ -178,5 +188,47 @@ describe('ScrapePersistService.persist', () => {
       expect.anything(),
       true,
     );
+  });
+
+  it('writes LLM flavors separately from the keyword ones', async () => {
+    const { service, products } = makeService(
+      1,
+      new Map([['smoky', 'flavor-1'], ['sherry', 'flavor-2']]),
+    );
+
+    const item = snap('a', {
+      flavorTags: ['smoky'],
+      llmFlavorTags: ['sherry'],
+      llmFlavorChecked: true,
+    });
+
+    await service.persist(STORE_ID, [item], [], DAY);
+
+    expect(products.setFlavors).toHaveBeenCalledWith('product-1', ['flavor-1']);
+    expect(products.setLlmFlavors)
+      .toHaveBeenCalledWith('product-1', ['flavor-2']);
+  });
+
+  it('stamps an unknown answer with no tags at all', async () => {
+    const { service, products } = makeService(1);
+
+    const item = snap('a', {
+      llmFlavorTags: [],
+      llmFlavorConfidence: 'unknown',
+      llmFlavorChecked: true,
+    });
+
+    await service.persist(STORE_ID, [item], [], DAY);
+
+    expect(products.setLlmFlavors).toHaveBeenCalledWith('product-1', []);
+  });
+
+  it('leaves LLM flavors alone when the pass did not answer', async () => {
+    const { service, products } = makeService(1);
+
+    await service.persist(STORE_ID, [snap('a')], [], DAY);
+
+    expect(products.setFlavors).toHaveBeenCalled();
+    expect(products.setLlmFlavors).not.toHaveBeenCalled();
   });
 });

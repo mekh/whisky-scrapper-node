@@ -332,7 +332,24 @@ export const FLAVOR_KEYWORDS: [string, string[]][] = [
   ['chocolate', ['chocolat', 'шоколад', 'какао']],
   ['spicy', ['spic', 'прян', 'перц']],
   ['floral', ['floral', 'квітков', 'квіток']],
+  ['citrus', ['citrus', 'lemon', 'orange', 'цитрус', 'лимон', 'апельсин']],
+  ['nutty', ['nutty', 'walnut', 'almond', 'горіх', 'горіш', 'мигдал']],
+  ['caramel', ['caramel', 'toffee', 'карамел', 'ірис']],
+  ['oak', ['oak', 'woody', 'дуб', 'дубов']],
+  ['maritime', ['maritime', 'iodine', 'sea salt', 'йодист', 'морськ']],
 ];
+
+/**
+ * The closed flavor vocabulary, derived from {@link FLAVOR_KEYWORDS} so the
+ * keyword pass and the LLM classification pass can never disagree on what a
+ * valid tag is. `LlmFlavorService` filters the model's answer against this
+ * list and silently drops anything else, which is what keeps the open
+ * `flavor` lookup table (and the `/meta` filter chips built from it) free of
+ * invented or translated tags. Adding a tag here is the only supported way to
+ * extend the vocabulary — the prompt lists these values inline, so the two
+ * must be edited together.
+ */
+export const FLAVOR_TAGS: string[] = FLAVOR_KEYWORDS.map(([tag]) => tag);
 
 /**
  * Whisky type → keyword list. More specific types come first.

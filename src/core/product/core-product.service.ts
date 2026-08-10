@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { CoreBaseService } from '~core/_common';
 import {
+  FlavorCandidateRow,
   ID,
   MetaCountry,
   PriceHistoryPoint,
@@ -105,13 +106,6 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
   }
 
   /**
-   * Replaces a product's flavor links with the given set.
-   *
-   * @param productId - Product id.
-   * @param flavorIds - Flavor ids to link.
-   * @returns Resolves once the links are replaced.
-   */
-  /**
    * Clears the age of the given products.
    *
    * @param ids - Products whose age to clear.
@@ -121,8 +115,40 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
     return this.repo.clearAges(ids);
   }
 
+  /**
+   * Replaces a product's keyword-derived flavor links with the given set. LLM
+   * -derived links are left untouched.
+   *
+   * @param productId - Product id.
+   * @param flavorIds - Flavor ids to link.
+   * @returns Resolves once the links are replaced.
+   */
   public async setFlavors(productId: ID, flavorIds: ID[]): Promise<void> {
     return this.repo.setFlavors(productId, flavorIds);
+  }
+
+  /**
+   * Replaces a product's LLM-derived flavor links with the given set and marks
+   * the product as classified, even when the set is empty.
+   *
+   * @param productId - Product id.
+   * @param flavorIds - Flavor ids the model returned.
+   * @returns Resolves once the links are replaced.
+   */
+  public async setLlmFlavors(productId: ID, flavorIds: ID[]): Promise<void> {
+    return this.repo.setLlmFlavors(productId, flavorIds);
+  }
+
+  /**
+   * Products the LLM flavor pass has never answered for.
+   *
+   * @param storeSlug - Restrict to one store's products, or omit for all.
+   * @returns One candidate per product still lacking an LLM answer.
+   */
+  public async findFlavorCandidates(
+    storeSlug?: string,
+  ): Promise<FlavorCandidateRow[]> {
+    return this.repo.findFlavorCandidates(storeSlug);
   }
 
   /**

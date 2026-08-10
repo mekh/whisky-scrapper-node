@@ -8,6 +8,7 @@ import { AdapterRegistryService } from './adapters/adapter-registry.service';
 import { HttpClientFactory } from './http/http-client.factory';
 import { LlmClientService } from './llm/llm-client.service';
 import { LlmEnrichmentService } from './llm/llm-enrichment.service';
+import { LlmFlavorService } from './llm/llm-flavor.service';
 import { LlmNameExtractionService } from './llm/llm-name-extraction.service';
 import { NormalizeService } from './normalize/normalize.service';
 import { ScrapePersistService } from './persist/scrape-persist.service';
@@ -28,6 +29,7 @@ import { ScrapeService } from './scrape.service';
     LlmClientService,
     LlmEnrichmentService,
     LlmNameExtractionService,
+    LlmFlavorService,
     HttpClientFactory,
     AdapterRegistryService,
     ScrapePersistService,
@@ -39,6 +41,7 @@ import { ScrapeService } from './scrape.service';
   ],
   exports: [
     ScrapeService,
+    LlmFlavorService,
   ],
 })
 export class ScrapeModule {}

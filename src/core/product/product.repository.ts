@@ -1,7 +1,9 @@
 import { TypeormRepository } from '@toxicoder/nestjs-typeorm-repository';
 
 import { BaseRepository } from '~core/_common';
+import { FlavorSource } from '~enums';
 import {
+  FlavorCandidateRow,
   ID,
   MetaCountry,
   PriceHistoryPoint,
@@ -275,7 +277,11 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
   }
 
   /**
-   * Replaces a product's flavor links with the given set (deduplicated).
+   * Replaces a product's keyword-derived flavor links with the given set
+   * (deduplicated). Only `scrape`-sourced rows are replaced — the LLM pass owns
+   * its own links via {@link setLlmFlavors} and they survive every sync. A tag
+   * the LLM already claimed stays claimed: the insert leaves the existing row's
+   * source alone rather than downgrading it.
    *
    * @param productId - Product id.
    * @param flavorIds - Flavor ids to link; duplicates are ignored.
@@ -283,8 +289,8 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
    */
   public async setFlavors(productId: ID, flavorIds: ID[]): Promise<void> {
     await this.query(
-      'DELETE FROM product_flavor WHERE "productId" = $1',
-      [productId],
+      'DELETE FROM product_flavor WHERE "productId" = $1 AND source = $2',
+      [productId, FlavorSource.SCRAPE],
     );
 
     const distinct = [...new Set(flavorIds)];
@@ -294,14 +300,82 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
     }
 
     const values = distinct
-      .map((_, index) => `($1, $${index + 2})`)
+      .map((_, index) => `($1, $${index + 2}, '${FlavorSource.SCRAPE}')`)
       .join(', ');
 
     await this.query(
-      `INSERT INTO product_flavor ("productId", "flavorId") VALUES ${values} `
-        + 'ON CONFLICT DO NOTHING',
+      'INSERT INTO product_flavor ("productId", "flavorId", source) VALUES '
+        + `${values} ON CONFLICT ("productId", "flavorId") DO NOTHING`,
       [productId, ...distinct],
     );
+  }
+
+  /**
+   * Replaces a product's LLM-derived flavor links with the given set and stamps
+   * `lastLlmFlavorAt`. The stamp is written even for an empty list, because an
+   * "unknown" answer links nothing and would otherwise be indistinguishable
+   * from never having been asked — leaving the product to be re-sent to the
+   * model on every future run.
+   *
+   * A tag the keyword pass already linked is taken over rather than
+   * duplicated: the composite key allows one row per pair, so the insert
+   * promotes its source to `llm` so a later sync's replace cannot remove it.
+   *
+   * @param productId - Product id.
+   * @param flavorIds - Flavor ids the model returned; duplicates are ignored.
+   * @returns Resolves once the links are replaced and the stamp is written.
+   */
+  public async setLlmFlavors(productId: ID, flavorIds: ID[]): Promise<void> {
+    await this.query(
+      'DELETE FROM product_flavor WHERE "productId" = $1 AND source = $2',
+      [productId, FlavorSource.LLM],
+    );
+
+    const distinct = [...new Set(flavorIds)];
+
+    if (distinct.length) {
+      const values = distinct
+        .map((_, index) => `($1, $${index + 2}, '${FlavorSource.LLM}')`)
+        .join(', ');
+
+      await this.query(
+        'INSERT INTO product_flavor ("productId", "flavorId", source) VALUES '
+          + `${values} ON CONFLICT ("productId", "flavorId") DO UPDATE SET `
+          + `source = '${FlavorSource.LLM}'`,
+        [productId, ...distinct],
+      );
+    }
+
+    await this.query(
+      'UPDATE product SET "lastLlmFlavorAt" = now() WHERE id = $1',
+      [productId],
+    );
+  }
+
+  /**
+   * Loads the products the LLM flavor pass has never answered for, as
+   * classification input. Out-of-stock rows are included: a flavor is a
+   * property of the bottle, not of its availability, and the product may come
+   * back in stock later.
+   *
+   * @param storeSlug - Restrict to one store's products, or omit for all.
+   * @returns One candidate per product still lacking an LLM answer.
+   */
+  public async findFlavorCandidates(
+    storeSlug?: string,
+  ): Promise<FlavorCandidateRow[]> {
+    return this.query(
+      `SELECT p.id, p."nameOrig" AS name,
+              t.name AS "whiskyType", c."nameUa" AS country
+       FROM product p
+       JOIN store st ON st.id = p."storeId"
+       LEFT JOIN type t ON t.id = p."typeId"
+       LEFT JOIN country c ON c.id = p."countryId"
+       WHERE p."lastLlmFlavorAt" IS NULL
+         AND ($1::text IS NULL OR st.slug = $1)
+       ORDER BY p."firstSeen", p.id`,
+      [storeSlug ?? null],
+    ) as Promise<FlavorCandidateRow[]>;
   }
 
   /**

@@ -245,7 +245,8 @@ export interface StoreScrapeSpec {
 
 /**
  * A progress event emitted while a store is being collected. The orchestrator
- * turns these into `sync_log` progress touches.
+ * turns these into `sync_log` progress touches and into the run's log file
+ * lines, which is the only account of what a finished run did.
  */
 export type ScrapeProgressEvent =
   | {
@@ -300,6 +301,78 @@ export type ScrapeProgressEvent =
      * How many items need enrichment in total.
      */
     pending: number;
+  }
+  | {
+    /**
+     * One item's detail page could not be fetched. The item keeps whatever
+     * the listing gave it and the run continues.
+     */
+    kind: 'detail-failed';
+
+    /**
+     * The item's product page URL.
+     */
+    url: string;
+
+    /**
+     * What went wrong, as text.
+     */
+    error: string;
+  }
+  | {
+    /**
+     * An LLM pass is about to run over the items it found pending.
+     */
+    kind: 'llm';
+
+    /**
+     * Which pass: field enrichment, name extraction, or flavor
+     * classification.
+     */
+    pass: 'fields' | 'names' | 'flavors';
+
+    /**
+     * How many items the pass will send to the model.
+     */
+    pending: number;
+  }
+  | {
+    /**
+     * The store's write transaction committed.
+     */
+    kind: 'persisted';
+
+    /**
+     * How many in-stock items were written.
+     */
+    stored: number;
+
+    /**
+     * How many of them the store had never stored before.
+     */
+    added: number;
+
+    /**
+     * How many products were flagged out of stock.
+     */
+    removed: number;
+  }
+  | {
+    /**
+     * The out-of-stock sweep was skipped: this run's in-stock count is low
+     * enough against the stored one that the listing looks truncated.
+     */
+    kind: 'sweep-guarded';
+
+    /**
+     * How many items this run saw in stock.
+     */
+    inStock: number;
+
+    /**
+     * How many the store had in stock before the run.
+     */
+    baseline: number;
   };
 
 /**

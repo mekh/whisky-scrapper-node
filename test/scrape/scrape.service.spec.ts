@@ -516,6 +516,7 @@ describe('ScrapeService.collectStore in backfill mode', () => {
       [],
       expect.any(String),
       true,
+      undefined,
     );
   });
 

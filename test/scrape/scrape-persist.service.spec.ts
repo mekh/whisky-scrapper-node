@@ -135,6 +135,47 @@ describe('ScrapePersistService.persist', () => {
     expect(counts.removed).toBe(1);
   });
 
+  it('reports what the transaction wrote', async () => {
+    const { service } = makeService(4);
+    const reporter = jest.fn();
+
+    await service.persist(
+      STORE_ID,
+      [snap('a'), snap('b')],
+      ['gone'],
+      DAY,
+      false,
+      reporter,
+    );
+
+    expect(reporter).toHaveBeenCalledWith({
+      kind: 'persisted',
+      stored: 2,
+      added: 0,
+      removed: 3,
+    });
+  });
+
+  it('reports a skipped sweep, which the run log has to show', async () => {
+    const { service } = makeService(10);
+    const reporter = jest.fn();
+
+    await service.persist(
+      STORE_ID,
+      [snap('a'), snap('b')],
+      ['gone'],
+      DAY,
+      false,
+      reporter,
+    );
+
+    expect(reporter).toHaveBeenCalledWith({
+      kind: 'sweep-guarded',
+      inStock: 2,
+      baseline: 10,
+    });
+  });
+
   it('sweeps an empty store without tripping the guard', async () => {
     const { service, products } = makeService(0);
 

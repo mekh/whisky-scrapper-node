@@ -23,10 +23,33 @@ export class BaseConfig {
     return process.env;
   }
 
+  /**
+   * Reads a numeric variable.
+   *
+   * An unset, empty or blank value falls back to the default — compose
+   * forwards a variable the host `.env` omits as an empty string, so empty has
+   * to mean "unset" — and so does a value that is not a finite number, leaving
+   * a typo to surface as the default rather than as `NaN`.
+   *
+   * A configured **`0` is a value, not an absence**: it is returned as such, so
+   * a variable whose zero means something ("keep every file forever", "do not
+   * retry") is honored, and one whose zero is nonsense is rejected by that
+   * field's own validator instead of being silently swapped for the default.
+   *
+   * @param envName - The variable to read.
+   * @param defaultValue - Value to fall back to.
+   * @returns The configured number, or the default.
+   */
   public asNumber(envName: string, defaultValue?: number): number | undefined {
-    const env = this.env[envName];
+    const env = this.asString(envName)?.trim();
 
-    return env && Number(env) ? Number(env) : defaultValue;
+    if (!env) {
+      return defaultValue;
+    }
+
+    const parsed = Number(env);
+
+    return Number.isFinite(parsed) ? parsed : defaultValue;
   }
 
   public asString(envName: string, defaultValue?: string): string | undefined {

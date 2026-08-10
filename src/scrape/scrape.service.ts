@@ -6,7 +6,6 @@ import { CoreProductService } from '~core/product';
 import { CoreStoreService } from '~core/store';
 import { CoreStoreConfigService } from '~core/store-config';
 import { NotFoundError, ServerError } from '~errors';
-import { ProductNameUtils } from '~utils';
 import type {
   CollectOptions,
   ID,
@@ -18,6 +17,7 @@ import type {
   StoreListItem,
   StoreScrapeSpec,
 } from '~types';
+import { ErrorUtils, ProductNameUtils } from '~utils';
 
 import { LlmEnrichmentService } from './llm/llm-enrichment.service';
 import { LlmFlavorService } from './llm/llm-flavor.service';
@@ -124,7 +124,7 @@ export class ScrapeService {
       inStock: inStock.length,
     });
 
-    await this.runLlm(inStock, backfill);
+    await this.runLlm(inStock, backfill, options.reporter);
 
     /**
      * Both remaining passes only ever act on SKUs this store has never stored,
@@ -132,8 +132,8 @@ export class ScrapeService {
      */
     const known = await this.products.existingSkus(store.id);
 
-    await this.runNameExtraction(known, inStock);
-    await this.runFlavorEnrichment(known, inStock);
+    await this.runNameExtraction(known, inStock, options.reporter);
+    await this.runFlavorEnrichment(known, inStock, options.reporter);
 
     if (options.dryRun) {
       return {
@@ -153,6 +153,7 @@ export class ScrapeService {
       outOfStock.map((snap) => snap.storeSku),
       capturedOn,
       backfill,
+      options.reporter,
     );
 
     return { slug, found, ...counts };
@@ -255,6 +256,11 @@ export class ScrapeService {
         await adapter.enrichDetail(snap);
       } catch (error) {
         this.logger.warn('Detail fetch failed for %s: %o', snap.url, error);
+        reporter?.({
+          kind: 'detail-failed',
+          url: snap.url,
+          error: ErrorUtils.text(error),
+        });
       }
 
       done += 1;
@@ -277,11 +283,13 @@ export class ScrapeService {
    *
    * @param inStock - In-stock snapshots.
    * @param backfill - Whether the wider backfill trigger applies.
+   * @param reporter - Optional progress reporter.
    * @returns Resolves once enrichment has been attempted.
    */
   private async runLlm(
     inStock: ProductSnapshot[],
     backfill: boolean,
+    reporter?: ScrapeProgressReporter,
   ): Promise<void> {
     if (!this.llm.enabled) {
       return;
@@ -293,6 +301,8 @@ export class ScrapeService {
     );
 
     if (pending.length > 0) {
+      reporter?.({ kind: 'llm', pass: 'fields', pending: pending.length });
+
       await this.llm.enrich(pending);
     }
   }
@@ -304,11 +314,13 @@ export class ScrapeService {
    *
    * @param known - SKUs the store has already stored.
    * @param inStock - In-stock snapshots.
+   * @param reporter - Optional progress reporter.
    * @returns Resolves once extraction has been attempted.
    */
   private async runNameExtraction(
     known: Set<string>,
     inStock: ProductSnapshot[],
+    reporter?: ScrapeProgressReporter,
   ): Promise<void> {
     if (!this.llmNames.enabled || !inStock.length) {
       return;
@@ -317,6 +329,8 @@ export class ScrapeService {
     const pending = inStock.filter((snap) => !known.has(snap.storeSku));
 
     if (pending.length > 0) {
+      reporter?.({ kind: 'llm', pass: 'names', pending: pending.length });
+
       await this.llmNames.extractNames(pending);
     }
   }
@@ -336,11 +350,13 @@ export class ScrapeService {
    *
    * @param known - SKUs the store has already stored.
    * @param inStock - In-stock snapshots.
+   * @param reporter - Optional progress reporter.
    * @returns Resolves once classification has been attempted.
    */
   private async runFlavorEnrichment(
     known: Set<string>,
     inStock: ProductSnapshot[],
+    reporter?: ScrapeProgressReporter,
   ): Promise<void> {
     if (!this.llmFlavor.enabled || !inStock.length) {
       return;
@@ -396,6 +412,8 @@ export class ScrapeService {
     );
 
     if (pending.length > 0) {
+      reporter?.({ kind: 'llm', pass: 'flavors', pending: pending.length });
+
       await this.llmFlavor.classify(pending);
     }
   }

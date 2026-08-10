@@ -22,14 +22,17 @@ export class CoreSyncLogService extends CoreBaseService<SyncLogEntity> {
    * @param storeId - Store to start a run for.
    * @param group - The store's exclusivity group, or null for its own domain.
    * @param trigger - What started this run.
+   * @param logFile - Name of the run's log file, or null when file logging is
+   *   disabled.
    * @returns The created row, or null when the group/store is already running.
    */
   public async tryStart(
     storeId: ID,
     group: string | null,
     trigger: SyncTrigger,
+    logFile: string | null = null,
   ): Promise<SyncLogEntity | null> {
-    return this.repo.tryStart(storeId, group, trigger);
+    return this.repo.tryStart(storeId, group, trigger, logFile);
   }
 
   /**

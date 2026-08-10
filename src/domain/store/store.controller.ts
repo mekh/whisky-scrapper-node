@@ -7,19 +7,26 @@ import {
   Param,
   Patch,
   Post,
+  Res,
 } from '@nestjs/common';
 
+import { Permission } from '~decorators/auth';
 import { CacheControl } from '~decorators/http';
 import { Plain } from '~decorators/types';
 import { Action, Resource } from '~enums';
 import type {
   EntitySyncLog,
+  Response,
   StoreDetail,
   StoreListItem,
   StoreSyncStatus,
 } from '~types';
 
-import { StoreActiveDto, StoreSlugParamsDto } from './dto';
+import {
+  StoreActiveDto,
+  StoreSlugParamsDto,
+  StoreSyncLogParamsDto,
+} from './dto';
 import { StoreService } from './store.service';
 import {
   StoreDetailType,
@@ -55,6 +62,28 @@ export class StoreController {
   @Plain(StoreDetailType, [Resource.STORE, Action.READ])
   public detail(@Param() params: StoreSlugParamsDto): Promise<StoreDetail> {
     return this.storeService.detail(params.slug);
+  }
+
+  /**
+   * Answers raw text, so it takes the reply over instead of going through
+   * `@Plain` — the outgoing validation the type decorators install expects a
+   * DTO instance and would reject a plain string.
+   */
+  @Get(':slug/sync-log/:id/file')
+  @CacheControl('no-cache')
+  @Permission([Resource.STORE, Action.READ])
+  public async syncLogFile(
+    @Param() params: StoreSyncLogParamsDto,
+    @Res() reply: Response,
+  ): Promise<void> {
+    const content = await this.storeService.syncLogFile(
+      params.slug,
+      params.id,
+    );
+
+    await reply
+      .header('Content-Type', 'text/plain; charset=utf-8')
+      .send(content);
   }
 
   @Patch(':slug')

@@ -1,6 +1,13 @@
 import { ID } from './entity.interfaces';
 
 /**
+ * Severity label a sync log file line carries. The file format mirrors the
+ * legacy Python scraper's (`HH:MM:SS LEVEL message`), so these are its level
+ * names rather than pino's.
+ */
+export type SyncFileLogLevel = 'INFO' | 'DEBUG' | 'WARNING' | 'ERROR';
+
+/**
  * The terminal result of one store's sync run, written to its `sync_log` row.
  */
 export interface SyncOutcome {
@@ -61,6 +68,12 @@ export interface SyncStoreReport {
    * being syncable since the schedule was built); null when it did start.
    */
   skipReason: string | null;
+
+  /**
+   * The log file this store's run wrote, so the summary can point at it. Null
+   * when file logging is disabled or the run never started.
+   */
+  logFile?: string | null;
 }
 
 /**

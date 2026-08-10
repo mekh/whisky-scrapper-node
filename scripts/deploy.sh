@@ -25,6 +25,15 @@ else
   compose() { docker-compose "$@"; }
 fi
 
+# The sync log directory is bind-mounted into the container, which runs as the
+# non-root `appuser` (uid 10001). Docker creates a missing bind source as
+# root:root 0755, which that user cannot write to — and the per-sync log files
+# would silently never appear. Single-tenant host, so a permissive mode is
+# preferred over a chown that would need root.
+echo '==> Preparing the sync log directory'
+mkdir -p log
+chmod 777 log
+
 echo '==> Building image'
 compose build
 

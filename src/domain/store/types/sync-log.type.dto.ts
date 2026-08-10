@@ -56,4 +56,8 @@ export class SyncLogType implements EntitySyncLog {
   @IsOptional()
   @IsString()
   public trigger?: string;
+
+  @IsOptional()
+  @IsString()
+  public logFile?: string;
 }

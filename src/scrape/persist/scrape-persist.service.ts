@@ -10,7 +10,7 @@ import { CoreProductService } from '~core/product';
 import { CoreTypeService } from '~core/type';
 import { ProductNameUtils } from '~utils';
 
-import type { ID, ProductSnapshot } from '~types';
+import type { ID, ProductSnapshot, ScrapeProgressReporter } from '~types';
 
 import type { PersistCounts } from './scrape-persist.interfaces';
 
@@ -63,6 +63,8 @@ export class ScrapePersistService {
    * @param capturedOn - The capture day (`YYYY-MM-DD`) for the snapshots.
    * @param backfill - Whether the upsert also fills the still-null columns of
    * the rows it updates.
+   * @param reporter - Optional progress reporter, told what the transaction
+   * wrote and whether the sweep was guarded.
    * @returns How many products were stored, added (new) and flagged out of
    * stock.
    */
@@ -73,6 +75,7 @@ export class ScrapePersistService {
     oosSkus: string[],
     capturedOn: string,
     backfill = false,
+    reporter?: ScrapeProgressReporter,
   ): Promise<PersistCounts> {
     const inStockBefore = await this.products.countByStore(storeId);
 
@@ -157,7 +160,10 @@ export class ScrapePersistService {
       inStock.map((snap) => snap.storeSku),
       oosSkus,
       inStockBefore,
+      reporter,
     );
+
+    reporter?.({ kind: 'persisted', stored, added, removed });
 
     return { stored, added, removed };
   }
@@ -176,6 +182,8 @@ export class ScrapePersistService {
    * @param inStockSkus - SKUs seen in stock this run.
    * @param oosSkus - SKUs the listing explicitly returned as out of stock.
    * @param baseline - The store's in-stock product count before this run.
+   * @param reporter - Optional progress reporter, told when the sweep was
+   * skipped.
    * @returns How many products were flagged out of stock.
    */
   private async flagOutOfStock(
@@ -183,6 +191,7 @@ export class ScrapePersistService {
     inStockSkus: string[],
     oosSkus: string[],
     baseline: number,
+    reporter?: ScrapeProgressReporter,
   ): Promise<number> {
     const sweepIsSafe =
       inStockSkus.length >= baseline * PERSIST_SWEEP_GUARD_RATIO;
@@ -197,6 +206,11 @@ export class ScrapePersistService {
       inStockSkus.length,
       baseline,
     );
+    reporter?.({
+      kind: 'sweep-guarded',
+      inStock: inStockSkus.length,
+      baseline,
+    });
 
     return this.products.markOutOfStockBySkus(storeId, oosSkus);
   }

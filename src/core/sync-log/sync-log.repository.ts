@@ -21,18 +21,22 @@ export class SyncLogRepository extends BaseRepository<SyncLogEntity> {
    * @param storeId - Store to start a run for.
    * @param group - The store's exclusivity group, or null for its own domain.
    * @param trigger - What started this run.
+   * @param logFile - Name of the run's log file, or null when file logging is
+   *   disabled. Recorded in the same insert so a running row never lacks it.
    * @returns The created row, or null when the group/store is already running.
    */
   public async tryStart(
     storeId: ID,
     group: string | null,
     trigger: SyncTrigger,
+    logFile: string | null = null,
   ): Promise<SyncLogEntity | null> {
     try {
       const entity = this.create({
         storeId,
         group: group ?? undefined,
         trigger,
+        logFile: logFile ?? undefined,
       });
 
       return await this.save(entity);

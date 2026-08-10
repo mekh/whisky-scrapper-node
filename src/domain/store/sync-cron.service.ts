@@ -3,6 +3,7 @@ import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 
 import { SyncConfig } from '~config';
+import { DurationUtils } from '~utils';
 
 import { SyncOrchestratorService } from './sync-orchestrator.service';
 
@@ -13,10 +14,6 @@ import type { SyncRunReport, SyncStoreReport } from '~types';
  * the name is a constant rather than derived from anything.
  */
 export const SYNC_CRON_JOB_NAME = 'store-full-sync';
-
-const MS_PER_SECOND = 1000;
-
-const SECONDS_PER_MINUTE = 60;
 
 /**
  * Owns the internal daily schedule of the full sync.
@@ -116,7 +113,7 @@ export class SyncCronService implements OnApplicationBootstrap {
     const message = 'Scheduled full sync finished in %s: %d store(s) in '
       + '%d track(s), %d ok, %d failed, %d skipped';
     const args: [string, number, number, number, number, number] = [
-      this.duration(report.durationMs),
+      DurationUtils.format(report.durationMs),
       stores.length,
       report.tracks.length,
       stores.length - failed.length - skipped.length,
@@ -134,7 +131,7 @@ export class SyncCronService implements OnApplicationBootstrap {
       this.logger.log(
         'Sync track %s finished in %s: %s',
         track.key,
-        this.duration(track.durationMs),
+        DurationUtils.format(track.durationMs),
         track.stores.map((store) => this.storeLine(store)).join(', '),
       );
     });
@@ -147,7 +144,7 @@ export class SyncCronService implements OnApplicationBootstrap {
    * @returns A `slug duration status` fragment.
    */
   private storeLine(store: SyncStoreReport): string {
-    const duration = this.duration(store.durationMs);
+    const duration = DurationUtils.format(store.durationMs);
 
     if (store.outcome === null) {
       return `${store.slug} ${duration} skipped`;
@@ -158,24 +155,5 @@ export class SyncCronService implements OnApplicationBootstrap {
     }
 
     return `${store.slug} ${duration} ok (${store.outcome.total})`;
-  }
-
-  /**
-   * Renders a duration for the log lines, which are read to explain why a run
-   * took as long as it did.
-   *
-   * @param ms - The elapsed milliseconds.
-   * @returns The duration as `Ns` or `Nm SSs`.
-   */
-  private duration(ms: number): string {
-    const seconds = Math.round(ms / MS_PER_SECOND);
-    const minutes = Math.floor(seconds / SECONDS_PER_MINUTE);
-    const rest = seconds % SECONDS_PER_MINUTE;
-
-    if (minutes === 0) {
-      return `${rest}s`;
-    }
-
-    return `${minutes}m ${String(rest).padStart(2, '0')}s`;
   }
 }

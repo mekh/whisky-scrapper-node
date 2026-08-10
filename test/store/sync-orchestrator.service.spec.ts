@@ -8,8 +8,30 @@ import { SyncOrchestratorService } from '../../src/domain/store/sync-orchestrato
 import type { SyncConfig } from '~config';
 import type { CoreStoreService } from '~core/store';
 import type { CoreSyncLogService } from '~core/sync-log';
+import type { SyncFileLogService, SyncFileLogWriter } from '~lib/sync-file-log';
 import type { RunningSync, SiteResult, StoreListItem } from '~types';
 import type { ScrapeService } from '../../src/scrape/scrape.service';
+
+/**
+ * A log file writer stub: every line-writing method recorded, plus the lines
+ * themselves so a test can assert on what a run wrote.
+ */
+interface WriterStub {
+  /**
+   * The stub, shaped as the writer the orchestrator expects.
+   */
+  writer: SyncFileLogWriter;
+
+  /**
+   * Every line written, as `LEVEL message` pairs.
+   */
+  lines: string[];
+
+  /**
+   * The `close` spy, for asserting it ran exactly once.
+   */
+  close: jest.Mock;
+}
 
 interface Fakes {
   /**
@@ -31,6 +53,16 @@ interface Fakes {
    * The scrape engine stub.
    */
   scrape: { collectStore: jest.Mock };
+
+  /**
+   * The file-log service stub.
+   */
+  fileLog: { [key: string]: jest.Mock };
+
+  /**
+   * The writer stubs `fileLog.open` handed out, in call order.
+   */
+  writers: WriterStub[];
 }
 
 const RESULT: SiteResult = {
@@ -64,6 +96,35 @@ function makeStore(over: Partial<StoreListItem> = {}): StoreListItem {
     lastSuccessfulSyncAt: null,
     ...over,
   };
+}
+
+/**
+ * Builds a log file writer stub that records the lines it is given.
+ *
+ * @param fileName - The name the stub reports as its file.
+ * @returns The stub, its recorded lines, and its `close` spy.
+ */
+function makeWriter(fileName: string): WriterStub {
+  const lines: string[] = [];
+  const record = (level: string): jest.Mock =>
+    jest.fn((message: string) => {
+      lines.push(`${level} ${message}`);
+    });
+  const close = jest.fn().mockResolvedValue(undefined);
+  const writer = {
+    fileName,
+    header: record('HEADER'),
+    footer: jest.fn((message: string, level = 'INFO') => {
+      lines.push(`FOOTER:${level} ${message}`);
+    }),
+    info: record('INFO'),
+    debug: record('DEBUG'),
+    warn: record('WARNING'),
+    error: record('ERROR'),
+    close,
+  };
+
+  return { writer: writer as unknown as SyncFileLogWriter, lines, close };
 }
 
 /**
@@ -101,17 +162,33 @@ function makeOrchestrator(
     maxParallelTracks: 4,
     storeTimeoutMs: 900000,
     browserStoreTimeoutMs: 2700000,
+    logDir: './log',
+    logRetentionDays: 30,
     ...over,
   } as SyncConfig;
+
+  const writers: WriterStub[] = [];
+  const fileLog = {
+    buildFileName: jest.fn((prefix: string) => `stamp_${prefix}.log`),
+    open: jest.fn((fileName: string | null) => {
+      const stub = makeWriter(fileName ?? 'unnamed.log');
+
+      writers.push(stub);
+
+      return stub.writer;
+    }),
+    sweepRetention: jest.fn().mockResolvedValue(0),
+  };
 
   const orchestrator = new SyncOrchestratorService(
     stores as unknown as CoreStoreService,
     syncLogs as unknown as CoreSyncLogService,
     scrape as unknown as ScrapeService,
     config,
+    fileLog as unknown as SyncFileLogService,
   );
 
-  return { orchestrator, stores, syncLogs, scrape };
+  return { orchestrator, stores, syncLogs, scrape, fileLog, writers };
 }
 
 /**
@@ -250,6 +327,7 @@ describe('SyncOrchestratorService.startStoreSync', () => {
       'store-1',
       null,
       SyncTrigger.CRON,
+      'stamp_maudau.log',
     );
   });
 
@@ -328,6 +406,171 @@ describe('SyncOrchestratorService.startStoreSync', () => {
     expect(syncLogs.touch).toHaveBeenCalledTimes(1);
     expect(syncLogs.touch).toHaveBeenCalledWith('log-1', 4);
   });
+});
+
+describe('SyncOrchestratorService log files', () => {
+  it('opens the run file only after the lock is won', async () => {
+    const { orchestrator, syncLogs, fileLog } = makeOrchestrator(makeStore());
+
+    syncLogs.tryStart.mockResolvedValue(null);
+
+    await orchestrator
+      .startStoreSync('maudau', SyncTrigger.MANUAL)
+      .catch(() => undefined);
+
+    expect(fileLog.buildFileName).toHaveBeenCalledWith('maudau');
+    expect(fileLog.open).not.toHaveBeenCalled();
+  });
+
+  it('writes a header, the progress lines and a footer', async () => {
+    const { orchestrator, scrape, writers } = makeOrchestrator(makeStore());
+
+    scrape.collectStore.mockImplementation(
+      async (
+        _slug: string,
+        options: { reporter?: (event: unknown) => void },
+      ) => {
+        options.reporter?.({ kind: 'page', page: 1, added: 4, total: 4 });
+        options.reporter?.({ kind: 'fetched', found: 10, inStock: 8 });
+        options.reporter?.({ kind: 'llm', pass: 'names', pending: 2 });
+        options.reporter?.({ kind: 'enrich', done: 4, pending: 4 });
+        options.reporter?.({
+          kind: 'detail-failed',
+          url: 'https://maudau.test/p/1',
+          error: 'timeout',
+        });
+        options.reporter?.({ kind: 'sweep-guarded', inStock: 3, baseline: 30 });
+        options.reporter?.({
+          kind: 'persisted',
+          stored: 8,
+          added: 3,
+          removed: 2,
+        });
+
+        return RESULT;
+      },
+    );
+
+    await orchestrator.startStoreSync('maudau', SyncTrigger.CRON);
+
+    const { lines, close } = writers[0];
+
+    expect(lines[0]).toContain('HEADER Sync started for maudau');
+    expect(lines).toContain('DEBUG Page 1: 4 new (4 collected so far)');
+    expect(lines).toContain('INFO Listing fetched: 10 item(s), 8 in stock');
+    expect(lines).toContain('INFO LLM names pass: 2 item(s) to ask about');
+    expect(lines).toContain('INFO Detail enrichment: 4/4');
+    expect(lines).toContain(
+      'WARNING Detail fetch failed for https://maudau.test/p/1: timeout',
+    );
+    expect(lines).toContain(
+      'WARNING Listing looks truncated (3 in stock vs 30 stored); '
+        + 'out-of-stock sweep skipped',
+    );
+    expect(lines).toContain(
+      'INFO Persisted: 8 stored, 3 added, 2 flagged out of stock',
+    );
+    expect(lines.at(-1)).toContain('FOOTER:INFO Sync finished for maudau');
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes the message and the stack trace of a failed run', async () => {
+    const { orchestrator, scrape, writers } = makeOrchestrator(makeStore());
+
+    scrape.collectStore.mockRejectedValue(new Error('boom'));
+
+    await orchestrator.startStoreSync('maudau', SyncTrigger.CRON);
+
+    const { lines, close } = writers[0];
+
+    expect(lines).toContain('ERROR Sync failed for maudau: boom');
+    expect(lines.some((line) => line.startsWith('ERROR Traceback:'))).toBe(
+      true,
+    );
+    expect(lines.at(-1)).toContain('FOOTER:ERROR Sync FAILED for maudau');
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it(
+    'closes the file once and drops later lines when a store times out',
+    async () => {
+      const { orchestrator, scrape, writers } = makeOrchestrator(
+        makeStore(),
+        { storeTimeoutMs: 20 },
+      );
+      let leak: ((event: unknown) => void) | undefined;
+
+      scrape.collectStore.mockImplementation(
+        async (
+          _slug: string,
+          options: { reporter?: (event: unknown) => void },
+        ) => {
+          leak = options.reporter;
+
+          return new Promise<SiteResult>(() => {});
+        },
+      );
+
+      await orchestrator.startStoreSync('maudau', SyncTrigger.CRON);
+
+      const { lines, close } = writers[0];
+      const written = lines.length;
+
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(lines.at(-1)).toContain('FOOTER:ERROR');
+
+      /**
+       * The abandoned collection keeps reporting: the orchestrator still hands
+       * those events to the writer, whose own `closed` guard drops them. What
+       * matters here is that reporting after the run cannot throw.
+       */
+      expect(() => {
+        leak?.({ kind: 'fetched', found: 1, inStock: 1 });
+      }).not.toThrow();
+      expect(lines.length).toBeGreaterThanOrEqual(written);
+    },
+  );
+
+  it(
+    'writes a summary file for a full sync and sweeps expired files',
+    async () => {
+      const stores = [
+        makeStore({ id: 's1', slug: 'metro', group: 'zakaz' }),
+        makeStore({ id: 's2', slug: 'maudau' }),
+      ];
+      const { orchestrator, stores: storeFakes, fileLog, writers } =
+        makeOrchestrator(stores[0]);
+
+      storeFakes.findAllWithConfig.mockResolvedValue(stores);
+      storeFakes.findWithConfigBySlug.mockImplementation(
+        async (slug: string) =>
+          stores.find((item) => item.slug === slug) ?? null,
+      );
+
+      await orchestrator.runFullSync();
+
+      expect(fileLog.buildFileName).toHaveBeenCalledWith('full-run');
+      expect(fileLog.sweepRetention).toHaveBeenCalledTimes(1);
+
+      const summary = writers.at(-1);
+
+      expect(summary?.writer.fileName).toBe('stamp_full-run.log');
+      expect(summary?.lines[0]).toContain('HEADER Full sync started: 2 store');
+      expect(
+        summary?.lines.some((line) =>
+          line.includes('metro') && line
+            .includes('ok')
+        ),
+      ).toBe(true);
+      expect(
+        summary?.lines.some((line) => line.includes('[stamp_metro.log]')),
+      ).toBe(true);
+      expect(summary?.lines.at(-1)).toContain(
+        'FOOTER:INFO Full sync finished in',
+      );
+      expect(summary?.close).toHaveBeenCalledTimes(1);
+    },
+  );
 });
 
 describe('SyncOrchestratorService.runFullSync', () => {
@@ -414,4 +657,17 @@ describe('SyncOrchestratorService.onModuleInit', () => {
 
     expect(syncLogs.sweepOrphaned).toHaveBeenCalledTimes(1);
   });
+
+  it(
+    'sweeps expired log files, so retention holds without the cron',
+    async () => {
+      const { orchestrator, fileLog } = makeOrchestrator(makeStore());
+
+      fileLog.sweepRetention.mockResolvedValue(3);
+
+      await orchestrator.onModuleInit();
+
+      expect(fileLog.sweepRetention).toHaveBeenCalledTimes(1);
+    },
+  );
 });

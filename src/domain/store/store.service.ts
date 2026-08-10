@@ -5,8 +5,10 @@ import { CoreStoreService } from '~core/store';
 import { CoreSyncLogService } from '~core/sync-log';
 import { SyncTrigger } from '~enums';
 import { NotFoundError, ServerError } from '~errors';
+import { SyncFileLogService } from '~lib/sync-file-log';
 import {
   EntitySyncLog,
+  ID,
   StoreDetail,
   StoreListItem,
   StoreSyncStatus,
@@ -23,6 +25,7 @@ export class StoreService {
     private readonly products: CoreProductService,
     private readonly syncLogs: CoreSyncLogService,
     private readonly orchestrator: SyncOrchestratorService,
+    private readonly fileLog: SyncFileLogService,
   ) {}
 
   /**
@@ -120,6 +123,40 @@ export class StoreService {
    */
   public async sync(slug: string): Promise<EntitySyncLog> {
     return this.orchestrator.startStoreSync(slug, SyncTrigger.MANUAL);
+  }
+
+  /**
+   * Reads back the log file one of a store's sync runs wrote. This is the only
+   * account of what a finished run did beyond its counters — the file holds
+   * its pages, its LLM passes and, when it failed, its stack trace.
+   *
+   * @param slug - Store slug.
+   * @param id - Id of the store's sync-log row.
+   * @returns The file's text.
+   * @throws {NotFoundError} When no store has the slug, the row is not that
+   * store's, the run wrote no file, or the file is gone (expired by the
+   * retention sweep, or written by a deployment that had file logging off).
+   */
+  public async syncLogFile(slug: string, id: ID): Promise<string> {
+    const store = await this.stores.findWithConfigBySlug(slug);
+
+    if (!store) {
+      throw new NotFoundError('Store not found', { slug });
+    }
+
+    const log = await this.syncLogs.findById(id);
+
+    if (!log || log.storeId !== store.id || !log.logFile) {
+      throw new NotFoundError('Sync log file not found', { slug, id });
+    }
+
+    const content = await this.fileLog.readLogFile(log.logFile);
+
+    if (content === null) {
+      throw new NotFoundError('Sync log file not found', { slug, id });
+    }
+
+    return content;
   }
 
   /**

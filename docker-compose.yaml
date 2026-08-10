@@ -56,6 +56,8 @@ services:
       - SYNC_MAX_PARALLEL_TRACKS=${SYNC_MAX_PARALLEL_TRACKS:-}
       - SYNC_STORE_TIMEOUT_MS=${SYNC_STORE_TIMEOUT_MS:-}
       - SYNC_BROWSER_STORE_TIMEOUT_MS=${SYNC_BROWSER_STORE_TIMEOUT_MS:-}
+      - SYNC_LOG_DIR=${SYNC_LOG_DIR:-/app/log}
+      - SYNC_LOG_RETENTION_DAYS=${SYNC_LOG_RETENTION_DAYS:-}
       - LLM_API_KEY=${LLM_API_KEY:-}
       - LLM_BASE_URL=${LLM_BASE_URL:-}
       - LLM_MODEL=${LLM_MODEL:-}
@@ -64,6 +66,8 @@ services:
       - LLM_FLAVOR_REASONING=${LLM_FLAVOR_REASONING:-}
       - LLM_APP_NAME=${LLM_APP_NAME:-Whisky prod}
       - LLM_APP_URL=${LLM_APP_URL:-}
+    volumes:
+      - ./log:/app/log
     ports:
       - '192.168.179.2:9977:4000'
     networks:

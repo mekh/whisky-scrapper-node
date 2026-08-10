@@ -5,6 +5,7 @@ import { CoreStoreService } from '~core/store';
 import { CoreSyncLogService } from '~core/sync-log';
 import { SyncEngine, SyncTrigger } from '~enums';
 import { BadRequestError, DuplicateError, NotFoundError } from '~errors';
+import { SyncFileLogService, SyncFileLogWriter } from '~lib/sync-file-log';
 import { ScrapeService } from '~scrape';
 import type {
   EntitySyncLog,
@@ -18,7 +19,23 @@ import type {
   SyncStoreReport,
   SyncTrackReport,
 } from '~types';
-import { ArrayUtils } from '~utils';
+import { ArrayUtils, DurationUtils, ErrorUtils } from '~utils';
+
+/**
+ * A run that holds its lock: the open row plus the writer of its log file.
+ * Local to this service — it is what `acquireRun` hands to `runStoreSync`.
+ */
+interface AcquiredRun {
+  /**
+   * The open `sync_log` row.
+   */
+  log: EntitySyncLog;
+
+  /**
+   * The writer of this run's log file; disabled when file logging is off.
+   */
+  writer: SyncFileLogWriter;
+}
 
 /**
  * The outcome a run is finalized with when it never reached a terminal state
@@ -34,10 +51,21 @@ const UNKNOWN_FAILURE: SyncOutcome = {
 };
 
 /**
+ * File-name prefix of the summary a scheduled full sync writes, beside the
+ * per-store files of the runs it drove.
+ */
+const FULL_RUN_LOG_PREFIX = 'full-run';
+
+/**
  * Owns the lifecycle of store sync runs: validates that a store may be synced,
  * acquires its `sync_log` lock, drives `ScrapeService` in the background, and
  * always closes the row (which releases the lock). Also sweeps locks orphaned
  * by a previous process at boot.
+ *
+ * Each run additionally writes its own log file. One file per run rather than
+ * one per full sync, because tracks are collected concurrently: a shared file
+ * would interleave the lines of up to `maxParallelTracks` stores, and a manual
+ * sync can start at any moment on top of that.
  */
 @Injectable()
 export class SyncOrchestratorService implements OnModuleInit {
@@ -48,13 +76,16 @@ export class SyncOrchestratorService implements OnModuleInit {
     private readonly syncLogs: CoreSyncLogService,
     private readonly scrape: ScrapeService,
     private readonly config: SyncConfig,
+    private readonly fileLog: SyncFileLogService,
   ) {}
 
   /**
    * Closes sync runs left open by a previous process. The app runs as a single
    * instance, so any open row at boot is an orphan whose lock must be freed.
+   * Expired log files are swept here too, so the retention window also holds
+   * on an instance whose schedule is disabled.
    *
-   * @returns Resolves once the sweep is done.
+   * @returns Resolves once the sweeps are done.
    */
   public async onModuleInit(): Promise<void> {
     const closed = await this.syncLogs.sweepOrphaned();
@@ -65,6 +96,8 @@ export class SyncOrchestratorService implements OnModuleInit {
         closed,
       );
     }
+
+    await this.sweepLogFiles();
   }
 
   /**
@@ -84,12 +117,14 @@ export class SyncOrchestratorService implements OnModuleInit {
     trigger: SyncTrigger,
   ): Promise<EntitySyncLog> {
     const store = await this.resolveSyncableStore(slug);
-    const log = await this.acquireRun(store, trigger);
-    const run = this.runStoreSync(store, log.id).catch((error: unknown) => {
-      this.logger.error('Sync run crashed for %s: %o', store.slug, error);
+    const { log, writer } = await this.acquireRun(store, trigger);
+    const run = this
+      .runStoreSync(store, log.id, trigger, writer)
+      .catch((error: unknown) => {
+        this.logger.error('Sync run crashed for %s: %o', store.slug, error);
 
-      return UNKNOWN_FAILURE;
-    });
+        return UNKNOWN_FAILURE;
+      });
 
     if (trigger === SyncTrigger.CRON) {
       await run;
@@ -131,7 +166,15 @@ export class SyncOrchestratorService implements OnModuleInit {
       reports.push(...this.trackReports(settled));
     }
 
-    return { durationMs: Date.now() - startedAt, tracks: reports };
+    const report: SyncRunReport = {
+      durationMs: Date.now() - startedAt,
+      tracks: reports,
+    };
+
+    await this.writeRunSummary(report, owned.length, tracks.length);
+    await this.sweepLogFiles();
+
+    return report;
   }
 
   /**
@@ -169,18 +212,30 @@ export class SyncOrchestratorService implements OnModuleInit {
   }
 
   /**
-   * Acquires the store's exclusivity lock by opening its `sync_log` row.
+   * Acquires the store's exclusivity lock by opening its `sync_log` row, and
+   * opens the log file of the run that won it.
+   *
+   * The file name is built before the insert so it can be recorded by it — a
+   * running row therefore always names its file — while the file itself is
+   * only opened once the lock is held, so a run that loses the race leaves
+   * nothing behind on disk.
    *
    * @param store - The store to lock.
    * @param trigger - What started this run.
-   * @returns The open `sync_log` row.
+   * @returns The open `sync_log` row and its log file writer.
    * @throws {DuplicateError} When the store or its group is already syncing.
    */
   private async acquireRun(
     store: StoreListItem,
     trigger: SyncTrigger,
-  ): Promise<EntitySyncLog> {
-    const log = await this.syncLogs.tryStart(store.id, store.group, trigger);
+  ): Promise<AcquiredRun> {
+    const fileName = this.fileLog.buildFileName(store.slug);
+    const log = await this.syncLogs.tryStart(
+      store.id,
+      store.group,
+      trigger,
+      fileName,
+    );
 
     if (!log) {
       throw new DuplicateError(await this.describeBlocker(store), {
@@ -190,26 +245,40 @@ export class SyncOrchestratorService implements OnModuleInit {
 
     this.logger.log('Sync started for %s (%s)', store.slug, trigger);
 
-    return log;
+    return { log, writer: this.fileLog.open(fileName) };
   }
 
   /**
-   * Runs one store's collection and finalizes its `sync_log` row. The row is
-   * always closed — that is what releases the lock — so this never rethrows
-   * the collection error.
+   * Runs one store's collection, writes its log file and finalizes its
+   * `sync_log` row. The row is always closed — that is what releases the lock
+   * — so this never rethrows the collection error.
+   *
+   * The file is closed in its own `finally`, nested inside the one that closes
+   * the row: closing the row is what matters most, and neither step may be
+   * skipped because the other threw.
    *
    * @param store - The store to collect.
    * @param logId - The open sync-log row id.
+   * @param trigger - What started this run, for the file's opening line.
+   * @param writer - The run's log file writer.
    * @returns The outcome the row was finalized with.
    */
   private async runStoreSync(
     store: StoreListItem,
     logId: ID,
+    trigger: SyncTrigger,
+    writer: SyncFileLogWriter,
   ): Promise<SyncOutcome> {
+    const startedAt = Date.now();
     let outcome = UNKNOWN_FAILURE;
 
+    writer.header(
+      `Sync started for ${store.slug} (${store.name}, tier ${store.tier}, `
+        + `${trigger}) ${store.baseUrl}`,
+    );
+
     try {
-      const result = await this.collect(store, logId);
+      const result = await this.collect(store, logId, writer);
 
       outcome = {
         success: true,
@@ -227,15 +296,55 @@ export class SyncOrchestratorService implements OnModuleInit {
         result.added,
         result.removed,
       );
+      writer.footer(
+        `Sync finished for ${store.slug} in `
+          + `${DurationUtils.format(Date.now() - startedAt)}: `
+          + `${result.found} found, ${result.added} added, `
+          + `${result.removed} removed`,
+      );
     } catch (error) {
       this.logger.error('Sync failed for %s: %o', store.slug, error);
+      this.writeFailure(writer, store.slug, error);
 
-      outcome = { ...UNKNOWN_FAILURE, error: this.errorText(error) };
+      outcome = { ...UNKNOWN_FAILURE, error: ErrorUtils.text(error) };
+      writer.footer(
+        `Sync FAILED for ${store.slug} after `
+          + DurationUtils.format(Date.now() - startedAt),
+        'ERROR',
+      );
     } finally {
-      await this.syncLogs.finish(logId, outcome);
+      try {
+        await this.syncLogs.finish(logId, outcome);
+      } finally {
+        await writer.close();
+      }
     }
 
     return outcome;
+  }
+
+  /**
+   * Writes what a failed run knew about its failure. The stack trace is what
+   * the legacy Python log's traceback gave an operator, and the only part that
+   * says where the failure came from — the `sync_log` row keeps the message
+   * alone.
+   *
+   * @param writer - The run's log file writer.
+   * @param slug - The store that failed.
+   * @param error - The caught value.
+   */
+  private writeFailure(
+    writer: SyncFileLogWriter,
+    slug: string,
+    error: unknown,
+  ): void {
+    writer.error(`Sync failed for ${slug}: ${ErrorUtils.text(error)}`);
+
+    const stack = ErrorUtils.stack(error);
+
+    if (stack !== null) {
+      writer.error(`Traceback:\n${stack}`);
+    }
   }
 
   /**
@@ -247,12 +356,14 @@ export class SyncOrchestratorService implements OnModuleInit {
    *
    * @param store - The store to collect.
    * @param logId - The open sync-log row id, for progress touches.
+   * @param writer - The run's log file writer.
    * @returns The collection result.
    * @throws {Error} When the store times out.
    */
   private async collect(
     store: StoreListItem,
     logId: ID,
+    writer: SyncFileLogWriter,
   ): Promise<SiteResult> {
     const timeoutMs = store.needsBrowser === true
       ? this.config.browserStoreTimeoutMs
@@ -270,21 +381,28 @@ export class SyncOrchestratorService implements OnModuleInit {
 
     return Promise.race([
       this.scrape.collectStore(store.slug, {
-        reporter: this.buildReporter(logId),
+        reporter: this.buildReporter(logId, writer),
       }),
       expired,
     ]);
   }
 
   /**
-   * Builds the progress sink that mirrors scrape progress into the open
-   * `sync_log` row. Touches are best-effort: a failed one never fails the run.
+   * Builds the progress sink that mirrors scrape progress into the run's log
+   * file and the open `sync_log` row. Both are best-effort: neither a dropped
+   * line nor a failed touch may fail the run.
    *
    * @param logId - The open sync-log row id.
+   * @param writer - The run's log file writer.
    * @returns The progress reporter.
    */
-  private buildReporter(logId: ID): ScrapeProgressReporter {
+  private buildReporter(
+    logId: ID,
+    writer: SyncFileLogWriter,
+  ): ScrapeProgressReporter {
     return (event: ScrapeProgressEvent): void => {
+      this.writeProgress(writer, event);
+
       const total = this.progressTotal(event);
 
       if (total === null) {
@@ -295,6 +413,81 @@ export class SyncOrchestratorService implements OnModuleInit {
         this.logger.warn('Progress touch failed: %o', error);
       });
     };
+  }
+
+  /**
+   * Writes one progress event as a log file line. Page and enrichment
+   * progress is `DEBUG` because a large store emits hundreds of those lines;
+   * the milestones an operator scans for stay `INFO`.
+   *
+   * @param writer - The run's log file writer.
+   * @param event - The progress event.
+   */
+  private writeProgress(
+    writer: SyncFileLogWriter,
+    event: ScrapeProgressEvent,
+  ): void {
+    switch (event.kind) {
+      case 'page':
+        writer.debug(
+          `Page ${event.page}: ${event.added} new `
+            + `(${event.total} collected so far)`,
+        );
+        break;
+      case 'fetched':
+        writer.info(
+          `Listing fetched: ${event.found} item(s), `
+            + `${event.inStock} in stock`,
+        );
+        break;
+      case 'enrich':
+        this.writeEnrichProgress(writer, event.done, event.pending);
+        break;
+      case 'detail-failed':
+        writer.warn(`Detail fetch failed for ${event.url}: ${event.error}`);
+        break;
+      case 'llm':
+        writer.info(
+          `LLM ${event.pass} pass: ${event.pending} item(s) to ask about`,
+        );
+        break;
+      case 'persisted':
+        writer.info(
+          `Persisted: ${event.stored} stored, ${event.added} added, `
+            + `${event.removed} flagged out of stock`,
+        );
+        break;
+      case 'sweep-guarded':
+        writer.warn(
+          `Listing looks truncated (${event.inStock} in stock vs `
+            + `${event.baseline} stored); out-of-stock sweep skipped`,
+        );
+        break;
+    }
+  }
+
+  /**
+   * Writes detail-enrichment progress, promoting the last line to `INFO` so
+   * the finished count is visible without reading the `DEBUG` ones.
+   *
+   * @param writer - The run's log file writer.
+   * @param done - How many items have been enriched.
+   * @param pending - How many need enrichment in total.
+   */
+  private writeEnrichProgress(
+    writer: SyncFileLogWriter,
+    done: number,
+    pending: number,
+  ): void {
+    const message = `Detail enrichment: ${done}/${pending}`;
+
+    if (done >= pending) {
+      writer.info(message);
+
+      return;
+    }
+
+    writer.debug(message);
   }
 
   /**
@@ -396,17 +589,23 @@ export class SyncOrchestratorService implements OnModuleInit {
 
     try {
       const fresh = await this.resolveSyncableStore(store.slug);
-      const log = await this.acquireRun(fresh, SyncTrigger.CRON);
-      const outcome = await this.runStoreSync(fresh, log.id);
+      const { log, writer } = await this.acquireRun(fresh, SyncTrigger.CRON);
+      const outcome = await this.runStoreSync(
+        fresh,
+        log.id,
+        SyncTrigger.CRON,
+        writer,
+      );
 
       return {
         slug: store.slug,
         durationMs: Date.now() - startedAt,
         outcome,
         skipReason: null,
+        logFile: writer.fileName,
       };
     } catch (error) {
-      const reason = this.errorText(error);
+      const reason = ErrorUtils.text(error);
 
       /**
        * The reason is logged as text, not as the error object: the structured
@@ -420,7 +619,113 @@ export class SyncOrchestratorService implements OnModuleInit {
         durationMs: Date.now() - startedAt,
         outcome: null,
         skipReason: reason,
+        logFile: null,
       };
+    }
+  }
+
+  /**
+   * Writes the summary file of a scheduled full sync: one line per track, one
+   * per store, and the totals. It is what makes a full sync readable at all —
+   * the per-store files each hold one leg of it and cannot say which track set
+   * the total duration.
+   *
+   * @param report - What every track and store did.
+   * @param storeCount - How many stores were scheduled.
+   * @param trackCount - How many tracks they were split into.
+   * @returns Resolves once the summary file is closed.
+   */
+  private async writeRunSummary(
+    report: SyncRunReport,
+    storeCount: number,
+    trackCount: number,
+  ): Promise<void> {
+    const fileName = this.fileLog.buildFileName(FULL_RUN_LOG_PREFIX);
+    const writer = this.fileLog.open(fileName);
+
+    writer.header(
+      `Full sync started: ${storeCount} store(s) in ${trackCount} track(s), `
+        + `${this.config.maxParallelTracks} at a time`,
+    );
+
+    report.tracks.forEach((track) => {
+      writer.info(
+        `Track ${track.key} took `
+          + `${DurationUtils.format(track.durationMs)}`,
+      );
+      track.stores.forEach((store) => {
+        writer.info(`  ${this.summaryLine(store)}`);
+      });
+    });
+
+    this.writeRunTotals(writer, report);
+
+    await writer.close();
+  }
+
+  /**
+   * Writes the closing line of a full-sync summary, as a warning when
+   * anything failed or was skipped.
+   *
+   * @param writer - The summary file's writer.
+   * @param report - What every track and store did.
+   */
+  private writeRunTotals(
+    writer: SyncFileLogWriter,
+    report: SyncRunReport,
+  ): void {
+    const stores = report.tracks.flatMap((track) => track.stores);
+    const failed = stores.filter((store) => store.outcome?.success === false);
+    const skipped = stores.filter((store) => store.outcome === null);
+    const ok = stores.length - failed.length - skipped.length;
+    const message = 'Full sync finished in '
+      + `${DurationUtils.format(report.durationMs)}: ${stores.length} `
+      + `store(s), ${ok} ok, ${failed.length} failed, ${skipped.length} `
+      + 'skipped';
+
+    writer.footer(
+      message,
+      failed.length + skipped.length > 0 ? 'WARNING' : 'INFO',
+    );
+  }
+
+  /**
+   * Renders one store's leg of a full sync for the summary file, naming the
+   * file that holds its detail.
+   *
+   * @param store - The store's report.
+   * @returns The summary line, without its indent.
+   */
+  private summaryLine(store: SyncStoreReport): string {
+    const duration = DurationUtils.format(store.durationMs);
+    const logFile = store.logFile ? ` [${store.logFile}]` : '';
+
+    if (store.outcome === null) {
+      return `${store.slug} ${duration} skipped: ${store.skipReason}`;
+    }
+
+    if (!store.outcome.success) {
+      return `${store.slug} ${duration} FAILED: ${store.outcome.error}`
+        + logFile;
+    }
+
+    return `${store.slug} ${duration} ok — ${store.outcome.total} found, `
+      + `${store.outcome.added} added, ${store.outcome.removed} removed`
+      + logFile;
+  }
+
+  /**
+   * Deletes the log files that outlived the retention window, reporting how
+   * many went. Best-effort like the rest of file logging: the sweep must not
+   * be able to fail a boot or a sync.
+   *
+   * @returns Resolves once the sweep is done.
+   */
+  private async sweepLogFiles(): Promise<void> {
+    const deleted = await this.fileLog.sweepRetention();
+
+    if (deleted > 0) {
+      this.logger.log('Deleted %d expired sync log file(s)', deleted);
     }
   }
 
@@ -450,15 +755,5 @@ export class SyncOrchestratorService implements OnModuleInit {
 
     return `Store ${store.slug} shares the "${store.group}" sync group with `
       + `${blocker.storeSlug}, which is already syncing (since ${since})`;
-  }
-
-  /**
-   * Renders an unknown thrown value as sync-log error text.
-   *
-   * @param error - The caught value.
-   * @returns Its message.
-   */
-  private errorText(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
   }
 }

@@ -1,10 +1,17 @@
-import { EntitySyncLog } from './entity.interfaces';
+import { EntitySyncLog, ID } from './entity.interfaces';
 
 export interface StoreSlugParams {
   /**
    * Store slug from the route.
    */
   slug: string;
+}
+
+export interface StoreSyncLogParams extends StoreSlugParams {
+  /**
+   * Id of the store's `sync_log` row whose log file is wanted.
+   */
+  id: ID;
 }
 
 export interface StoreActiveInput {

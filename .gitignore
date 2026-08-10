@@ -3,6 +3,8 @@
 /node_modules
 /build
 /openapi.json
+# Per-sync log files, written at runtime and bind-mounted into the container.
+/log
 /.env
 # Backup config holds the DB password; only the .example is committed.
 /scripts/db-backup.env

@@ -147,4 +147,5 @@ export interface EntitySyncLog extends EntityBaseRich {
   finishedAt?: Date;
   group?: string;
   trigger?: string;
+  logFile?: string;
 }

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { IsBoolean, IsInt, IsPositive, IsString } from 'class-validator';
+import { IsBoolean, IsInt, IsPositive, IsString, Min } from 'class-validator';
 
 import { BaseConfig } from '../base.config';
 
@@ -17,6 +17,10 @@ const DEFAULT_STORE_TIMEOUT_MS = 15 * 60 * 1000;
  * pass takes ~20 minutes.
  */
 const DEFAULT_BROWSER_STORE_TIMEOUT_MS = 45 * 60 * 1000;
+
+const DEFAULT_LOG_DIR = './log';
+
+const DEFAULT_LOG_RETENTION_DAYS = 30;
 
 @Injectable()
 export class SyncConfig extends BaseConfig {
@@ -68,4 +72,21 @@ export class SyncConfig extends BaseConfig {
   public readonly browserStoreTimeoutMs =
     this.asNumber('SYNC_BROWSER_STORE_TIMEOUT_MS')
       ?? DEFAULT_BROWSER_STORE_TIMEOUT_MS;
+
+  /**
+   * Directory the per-sync log files are written to, relative to the process
+   * working directory unless absolute. An empty value disables file logging
+   * altogether — the runs still log to stdout, they just leave no file.
+   */
+  @IsString()
+  public readonly logDir = this.asString('SYNC_LOG_DIR') ?? DEFAULT_LOG_DIR;
+
+  /**
+   * How many days a log file is kept before the retention sweep deletes it.
+   * `0` keeps every file forever.
+   */
+  @IsInt()
+  @Min(0)
+  public readonly logRetentionDays = this.asNumber('SYNC_LOG_RETENTION_DAYS')
+    ?? DEFAULT_LOG_RETENTION_DAYS;
 }

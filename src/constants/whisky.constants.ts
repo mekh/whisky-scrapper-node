@@ -7,6 +7,7 @@ export const STORE_CATEGORY_MAX_LENGTH = 64;
 export const STORE_GROUP_MAX_LENGTH = 32;
 export const SYNC_ENGINE_MAX_LENGTH = 16;
 export const SYNC_TRIGGER_MAX_LENGTH = 16;
+export const SYNC_LOG_FILE_MAX_LENGTH = 256;
 
 export const PRODUCT_SKU_MAX_LENGTH = 128;
 export const PRODUCT_URL_MAX_LENGTH = 1024;

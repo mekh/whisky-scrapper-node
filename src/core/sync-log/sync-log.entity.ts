@@ -8,7 +8,11 @@ import {
 } from 'class-validator';
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 
-import { STORE_GROUP_MAX_LENGTH, SYNC_TRIGGER_MAX_LENGTH } from '~constants';
+import {
+  STORE_GROUP_MAX_LENGTH,
+  SYNC_LOG_FILE_MAX_LENGTH,
+  SYNC_TRIGGER_MAX_LENGTH,
+} from '~constants';
 import { GuidV7Column } from '~decorators/columns';
 import type { EntityStore, EntitySyncLog, ID } from '~types';
 
@@ -67,6 +71,12 @@ export class SyncLogEntity extends BaseRichEntity implements EntitySyncLog {
   @MaxLength(SYNC_TRIGGER_MAX_LENGTH)
   @Column({ length: SYNC_TRIGGER_MAX_LENGTH, nullable: true })
   public trigger?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(SYNC_LOG_FILE_MAX_LENGTH)
+  @Column({ length: SYNC_LOG_FILE_MAX_LENGTH, nullable: true })
+  public logFile?: string;
 
   @ManyToOne(
     'StoreEntity',

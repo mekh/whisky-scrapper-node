@@ -787,7 +787,46 @@ wrappers): `scrape/` has its own internal layering.
   reason) purely so the cron can log a summary — nothing persists it.
 - `onModuleInit` sweeps orphaned locks — single instance, so any open row at
   boot belongs to a dead process. `main.ts` calls `enableShutdownHooks()` and
-  compose gives the container `stop_grace_period: 60s`.
+  compose gives the container `stop_grace_period: 60s`. It also sweeps expired
+  log files (below), so retention holds even where the cron never fires.
+- **Per-sync log files** (`src/lib/sync-file-log/`) restore what the Python
+  scraper's `logs.py` gave an operator: a human-readable file per run
+  (`HH:MM:SS LEVEL message`, English), holding the pages walked, the LLM passes,
+  the persist counters and — when the run failed — the stack trace, which the
+  `sync_log` row cannot keep (it stores the message alone). stdout/pino logging
+  is unchanged; this is additive.
+  - **One file per store run, not per full sync**, named
+    `<YYYY-MM-DD_HH-MM-SS>_<slug>.log`: tracks are collected concurrently, so a
+    shared file would interleave up to `SYNC_MAX_PARALLEL_TRACKS` stores' lines,
+    and a manual sync can start on top of that at any moment. `runFullSync`
+    additionally writes a `_full-run.log` summary (per track, per store, with
+    each store's own file named) — without it nothing says which track set the
+    total duration.
+  - The file name is built **before** `tryStart` so the same INSERT records it
+    in the new `sync_log.logFile` column (a running row always names its file),
+    but the file is opened only **after** the lock is won, so a run that loses
+    the race leaves nothing on disk.
+  - Lines come from the existing `ScrapeProgressEvent` stream, which grew
+    `detail-failed`/`llm`/`persisted`/`sweep-guarded` members; `buildReporter`
+    fans each event out to the file **and** the existing `sync_log` progress
+    touch. `ScrapePersistService.persist` therefore takes an optional trailing
+    `reporter`.
+  - **Everything is best-effort by construction**: the first stream error
+    disables the writer (one stdout warning, later lines dropped), `close()` is
+    idempotent, time-boxed at 2 s, and flips its `closed` flag **synchronously**
+    — which is what makes the timeout path safe, since a timed-out collection is
+    abandoned rather than aborted and keeps emitting events after its row was
+    closed. `runStoreSync` closes the row and the file in nested `finally`s, so
+    neither is skipped because the other threw.
+  - `SYNC_LOG_DIR` (default `./log`, empty disables file logging) and
+    `SYNC_LOG_RETENTION_DAYS` (default 30, `0` = keep forever, swept by mtime at
+    boot and after each full sync — the Python version never cleaned up).
+    `0` meaning "keep forever" is what exposed the `BaseConfig.asNumber` bug
+    fixed alongside this (see "Config").
+  - Deployment: `docker-compose.yaml` bind-mounts `./log:/app/log` and forwards
+    both vars; `scripts/deploy.sh` pre-creates the directory `chmod 777` because
+    Docker would otherwise create the bind source as root-owned and the
+    container's `appuser` (uid 10001) could not write to it.
 - **Cron** (`SyncCronService`): one `@nestjs/schedule` job driving
   `runFullSync()`, defaults `0 12 * * *` `Europe/Kyiv`, **registered only when
   `SYNC_CRON_ENABLED` is true** — and it ships disabled (arming it in
@@ -821,9 +860,16 @@ wrappers): `scrape/` has its own internal layering.
     track sets the total run time.
   - `ScheduleModule.forRoot()` is registered in `app.module.ts` (it is a global
     module exporting `SchedulerRegistry`), scheduling being an app-wide concern.
-- Endpoints: `POST /store/:slug/sync` (`202`, `[Resource.STORE, Action.SYNC]`)
-  and `GET /store/sync-status` (`@CacheControl('no-cache')`, polled by the web
-  client). `sync-status` must stay declared **before** the `:slug` routes.
+- Endpoints: `POST /store/:slug/sync` (`202`, `[Resource.STORE, Action.SYNC]`),
+  `GET /store/sync-status` (`@CacheControl('no-cache')`, polled by the web
+  client) and `GET /store/:slug/sync-log/:id/file` — the run's log file as
+  `text/plain`, 404 when the row is not that store's, wrote no file, or the file
+  is gone. It is the one handler that takes the reply over (`@Res()`, no
+  `passthrough`) instead of using `@Plain`: the outgoing validation the type
+  decorators install expects a DTO instance and would reject a plain string, so
+  permission metadata comes from the standalone `@Permission` decorator. The
+  stored name is still resolved against `SYNC_LOG_DIR` and rejected if it
+  escapes it. `sync-status` must stay declared **before** the `:slug` routes.
 
 ## Auth and permissions
 
@@ -872,6 +918,18 @@ Every config concern is a class in `src/config/parts/` extending `BaseConfig`:
 - Fields are `public readonly`, annotated with class-validator decorators;
   `BaseConfig` self-validates on construction (via `setImmediate`) and throws
   `ConfigurationError` on invalid values.
+- **`asNumber` treats a configured `0` as a value, not an absence.** It used to
+  read `env && Number(env) ? Number(env) : default`, so `0` (falsy) fell back to
+  the default — which silently inverted any variable whose zero means something
+  (`SYNC_LOG_RETENTION_DAYS=0` = "keep every log file forever" became 30 days).
+  It now falls back only on an unset, empty or blank value (compose forwards an
+  omitted host var as an empty string, so empty must keep meaning unset) and on
+  a non-finite one, so a typo still surfaces as the default rather than `NaN`.
+  Consequence to keep in mind: a zero that is nonsense for its field is now
+  rejected loudly by that field's own validator instead of being swapped for the
+  default — `DB_RETRY_ATTEMPTS=0` fails the boot against `@IsPositive()` rather
+  than falling through to TypeORM's own default. Pinned by
+  `test/base.config.spec.ts`.
 - Register the class in `config.module.ts` providers/exports AND re-export it
   from `src/config/index.ts`.
 - `DbConfig` intentionally has no `@Injectable()` — it is also instantiated
@@ -907,7 +965,10 @@ configured); sync vars in
 (default `0 12 * * *`), `SYNC_TIMEZONE` (default `Europe/Kyiv`),
 `SYNC_MAX_PARALLEL_TRACKS` (4), `SYNC_STORE_TIMEOUT_MS` (900000),
 `SYNC_BROWSER_STORE_TIMEOUT_MS` (2700000 — the budget for a `needsBrowser`
-store, which needs ~20 min for a full pass and would never fit the HTTP one).
+store, which needs ~20 min for a full pass and would never fit the HTTP one),
+`SYNC_LOG_DIR` (`./log`; empty disables per-sync log files) and
+`SYNC_LOG_RETENTION_DAYS` (30; `0` keeps every file — see "Sync
+orchestration").
 `SYNC_CRON_ENABLED`/`SYNC_CRON_EXPRESSION`/`SYNC_TIMEZONE` are read by
 `SyncCronService` at bootstrap (see "Sync orchestration"): with the flag unset
 no job is registered at all, and changing any of the three needs a restart.

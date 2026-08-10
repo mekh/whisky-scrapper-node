@@ -18,6 +18,31 @@ export interface LlmCallOverrides {
 }
 
 /**
+ * How a failed batch should be handled: `transport` re-sends it unchanged,
+ * `halve` splits it and retries the halves, `fatal` stops the whole run.
+ */
+export type LlmErrorKind = 'transport' | 'halve' | 'fatal';
+
+/**
+ * Run-level knobs for one `LlmBatchRunner.run` call, kept apart from the
+ * per-batch callbacks so a pass states only the ones it cares about.
+ */
+export interface LlmRunOptions {
+  /**
+   * How many batches of this run may be in flight at once. Defaults to one,
+   * which is the strictly sequential behaviour every caller had before.
+   */
+  concurrency?: number;
+
+  /**
+   * Cooperative deadline. Once it fires, batches not yet started are reported
+   * as skipped instead of being sent; a batch already in flight is left to
+   * finish, since the answer is already paid for.
+   */
+  signal?: AbortSignal;
+}
+
+/**
  * One item put through the flavor-classification pass. `ProductSnapshot`
  * structurally satisfies this shape for new SKUs during a scrape, while the
  * `enrich-flavors` backfill script passes `FlavorCandidateRow` (`~types`) built

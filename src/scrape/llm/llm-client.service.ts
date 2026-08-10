@@ -81,6 +81,14 @@ export class LlmClientService {
 
   private readonly config: ScrapeConfig;
 
+  /**
+   * The transport, built on first use and kept for the process lifetime. It
+   * cannot be built in the constructor: this is a singleton provider, and the
+   * SDK constructor throws without a key, so an eager client would fail the
+   * whole boot for every environment that deliberately runs with the LLM off.
+   */
+  private client?: OpenAI;
+
   public constructor(config: ScrapeConfig) {
     this.config = config;
   }
@@ -111,27 +119,14 @@ export class LlmClientService {
     maxTokens: number,
     overrides: LlmCallOverrides = {},
   ): Promise<unknown[]> {
-    const { llmApiKey, llmBaseUrl } = this.config;
     const model = overrides.model ?? this.config.llmModel;
     const reasoning = overrides.reasoning ?? this.config.llmReasoning;
 
-    if (!llmApiKey || !model) {
+    if (!this.config.llmApiKey || !model) {
       throw new Error('LLM is not configured');
     }
 
-    /**
-     * `HTTP-Referer` and `X-Title` are OpenRouter's attribution pair: they
-     * fill the `App` column of its activity log, which reads `Unknown`
-     * without them. Any other OpenAI-compatible gateway ignores them.
-     */
-    const client = new OpenAI({
-      apiKey: llmApiKey,
-      baseURL: llmBaseUrl,
-      defaultHeaders: {
-        'HTTP-Referer': this.config.llmAppUrl,
-        'X-Title': this.config.llmAppName,
-      },
-    });
+    const client = this.getClient();
 
     /**
      * Both passes are extraction, not composition: the answer is a function of
@@ -167,5 +162,36 @@ export class LlmClientService {
     }
 
     return parsed;
+  }
+
+  /**
+   * Returns the shared transport, building it on the first call.
+   *
+   * Both limits are set explicitly rather than left to the SDK. Its default
+   * timeout is ten minutes per attempt, which a batch never legitimately needs
+   * — with reasoning off a 40-item chunk answers in seconds — and three such
+   * attempts outlast the sync's entire budget, so one stalled call used to end
+   * the run for every item after it.
+   *
+   * @returns The OpenAI-compatible client.
+   */
+  private getClient(): OpenAI {
+    /**
+     * `HTTP-Referer` and `X-Title` are OpenRouter's attribution pair: they
+     * fill the `App` column of its activity log, which reads `Unknown`
+     * without them. Any other OpenAI-compatible gateway ignores them.
+     */
+    this.client ??= new OpenAI({
+      apiKey: this.config.llmApiKey,
+      baseURL: this.config.llmBaseUrl,
+      timeout: this.config.llmTimeoutMs,
+      maxRetries: this.config.llmMaxRetries,
+      defaultHeaders: {
+        'HTTP-Referer': this.config.llmAppUrl,
+        'X-Title': this.config.llmAppName,
+      },
+    });
+
+    return this.client;
   }
 }

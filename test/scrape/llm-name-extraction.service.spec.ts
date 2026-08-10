@@ -2,6 +2,7 @@ import 'reflect-metadata';
 
 import { LlmNameExtractionService } from '../../src/scrape/llm/llm-name-extraction.service';
 
+import type { ScrapeConfig } from '~config';
 import type { LlmClientService } from '../../src/scrape/llm/llm-client.service';
 import type { LlmNameCandidate } from '../../src/scrape/llm/llm.interfaces';
 
@@ -10,6 +11,7 @@ const askJsonArray = jest.fn();
 function makeService(enabled = true): LlmNameExtractionService {
   return new LlmNameExtractionService(
     { enabled, askJsonArray } as unknown as LlmClientService,
+    { llmConcurrency: 1 } as unknown as ScrapeConfig,
   );
 }
 

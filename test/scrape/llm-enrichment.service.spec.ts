@@ -2,6 +2,7 @@ import 'reflect-metadata';
 
 import { LlmEnrichmentService } from '../../src/scrape/llm/llm-enrichment.service';
 
+import type { ScrapeConfig } from '~config';
 import type { ProductSnapshot } from '~types';
 import type { LlmClientService } from '../../src/scrape/llm/llm-client.service';
 
@@ -10,6 +11,7 @@ const askJsonArray = jest.fn();
 function makeService(enabled = true): LlmEnrichmentService {
   return new LlmEnrichmentService(
     { enabled, askJsonArray } as unknown as LlmClientService,
+    { llmConcurrency: 1 } as unknown as ScrapeConfig,
   );
 }
 

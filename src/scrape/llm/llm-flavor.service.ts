@@ -145,11 +145,15 @@ export class LlmFlavorService {
    *
    * @param candidates - Candidates to classify (mutated in place).
    * @param onProgress - Called after each batch with the running count.
+   * @param signal - Optional deadline: once it fires, the batches not yet sent
+   *   are skipped and their candidates stay unchecked, to be asked about again
+   *   by the next run.
    * @returns Resolves once classification has been attempted.
    */
   public async classify(
     candidates: LlmFlavorCandidate[],
     onProgress?: (done: number, total: number) => void,
+    signal?: AbortSignal,
   ): Promise<void> {
     if (!this.client.enabled || !candidates.length) {
       return;
@@ -166,6 +170,7 @@ export class LlmFlavorService {
           error instanceof Error ? error.message : error,
         ),
       onProgress,
+      { concurrency: this.config.llmConcurrency, signal },
     );
   }
 

@@ -354,6 +354,12 @@ export class SyncOrchestratorService implements OnModuleInit {
    * finishes on its own, but the run is already recorded as failed and its lock
    * released.
    *
+   * A second, earlier deadline is handed to the collection for its LLM passes
+   * alone. They are the one part of a run that is safe to cut short — every
+   * unanswered item keeps its gap and is asked about again next time — so a
+   * store whose model calls run long finishes and persists its catalogue
+   * instead of failing the timeout with the whole listing already scraped.
+   *
    * @param store - The store to collect.
    * @param logId - The open sync-log row id, for progress touches.
    * @param writer - The run's log file writer.
@@ -369,6 +375,9 @@ export class SyncOrchestratorService implements OnModuleInit {
       ? this.config.browserStoreTimeoutMs
       : this.config.storeTimeoutMs;
     const signal = AbortSignal.timeout(timeoutMs);
+    const llmDeadline = AbortSignal.timeout(
+      Math.max(0, timeoutMs - this.config.llmDeadlineMarginMs),
+    );
     const expired = new Promise<never>((_resolve, reject) => {
       signal.addEventListener(
         'abort',
@@ -382,6 +391,7 @@ export class SyncOrchestratorService implements OnModuleInit {
     return Promise.race([
       this.scrape.collectStore(store.slug, {
         reporter: this.buildReporter(logId, writer),
+        llmDeadline,
       }),
       expired,
     ]);
@@ -449,6 +459,12 @@ export class SyncOrchestratorService implements OnModuleInit {
       case 'llm':
         writer.info(
           `LLM ${event.pass} pass: ${event.pending} item(s) to ask about`,
+        );
+        break;
+      case 'llm-deadline':
+        writer.warn(
+          `LLM ${event.pass} pass skipped: out of LLM budget, `
+            + `${event.pending} item(s) left for the next run`,
         );
         break;
       case 'persisted':

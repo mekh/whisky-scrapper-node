@@ -40,6 +40,8 @@ function makeClient(
     llmModel: 'openai/gpt-4o-mini',
     llmAppName: 'Whisky dev',
     llmAppUrl: 'https://example.test/whisky',
+    llmTimeoutMs: 120000,
+    llmMaxRetries: 2,
     ...over,
   } as unknown as ScrapeConfig);
 }
@@ -64,6 +66,8 @@ describe('LlmClientService', () => {
     expect(constructed).toHaveBeenCalledWith({
       apiKey: 'key',
       baseURL: 'https://openrouter.ai/api/v1',
+      timeout: 120000,
+      maxRetries: 2,
       defaultHeaders: {
         'HTTP-Referer': 'https://example.test/whisky',
         'X-Title': 'Whisky dev',
@@ -154,10 +158,29 @@ describe('LlmClientService', () => {
       .resolves.toEqual(['Aberlour']);
   });
 
+  it('builds the transport once and reuses it', async () => {
+    create.mockResolvedValue(reply('["a"]'));
+
+    const client = makeClient();
+
+    await client.askJsonArray('one', 512);
+    await client.askJsonArray('two', 512);
+
+    expect(constructed).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
   it('throws when the endpoint is not configured', async () => {
     await expect(makeClient({ llmModel: undefined }).askJsonArray('p', 512))
       .rejects.toThrow('LLM is not configured');
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('builds no transport while disabled', async () => {
+    // The SDK constructor throws without a key, which would fail the boot.
+    await expect(makeClient({ llmApiKey: undefined }).askJsonArray('p', 512))
+      .rejects.toThrow('LLM is not configured');
+    expect(constructed).not.toHaveBeenCalled();
   });
 
   it('throws on an empty message', async () => {

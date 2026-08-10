@@ -354,11 +354,11 @@ export class SyncOrchestratorService implements OnModuleInit {
    * finishes on its own, but the run is already recorded as failed and its lock
    * released.
    *
-   * A second, earlier deadline is handed to the collection for its LLM passes
-   * alone. They are the one part of a run that is safe to cut short — every
-   * unanswered item keeps its gap and is asked about again next time — so a
-   * store whose model calls run long finishes and persists its catalogue
-   * instead of failing the timeout with the whole listing already scraped.
+   * A second, earlier deadline is handed to the collection for its optional
+   * passes — detail enrichment and the LLM passes. They only fill secondary
+   * fields, so they are safe to cut short, and a store whose detail pages or
+   * model calls run long finishes and persists its catalogue instead of
+   * failing the timeout with the whole listing already scraped.
    *
    * @param store - The store to collect.
    * @param logId - The open sync-log row id, for progress touches.
@@ -375,7 +375,7 @@ export class SyncOrchestratorService implements OnModuleInit {
       ? this.config.browserStoreTimeoutMs
       : this.config.storeTimeoutMs;
     const signal = AbortSignal.timeout(timeoutMs);
-    const llmDeadline = AbortSignal.timeout(
+    const deadline = AbortSignal.timeout(
       Math.max(0, timeoutMs - this.config.llmDeadlineMarginMs),
     );
     const expired = new Promise<never>((_resolve, reject) => {
@@ -391,7 +391,7 @@ export class SyncOrchestratorService implements OnModuleInit {
     return Promise.race([
       this.scrape.collectStore(store.slug, {
         reporter: this.buildReporter(logId, writer),
-        llmDeadline,
+        deadline,
       }),
       expired,
     ]);
@@ -455,6 +455,13 @@ export class SyncOrchestratorService implements OnModuleInit {
         break;
       case 'detail-failed':
         writer.warn(`Detail fetch failed for ${event.url}: ${event.error}`);
+        break;
+      case 'detail-deadline':
+        writer.warn(
+          'Detail enrichment stopped: out of sync budget, '
+            + `${event.pending - event.done} of ${event.pending} item(s) `
+            + 'skipped (a backfill run fills their fields)',
+        );
         break;
       case 'llm':
         writer.info(

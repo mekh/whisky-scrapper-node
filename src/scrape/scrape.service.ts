@@ -167,12 +167,23 @@ export class ScrapeService {
     const spec = await this.buildSpec(store);
     const brandNames = await this.brands.listNames();
     const brandIndex = this.normalizer.buildBrandIndex(brandNames);
+    const { deadline } = options;
+
+    /**
+     * In a normal run every enrichment pass acts only on SKUs this store has
+     * never stored — the upsert writes the enrichable fields on insert alone,
+     * so an answer for a stored row could never be persisted — which is why
+     * the passes share this one lookup.
+     */
+    const known = await this.products.existingSkus(store.id);
 
     const snaps = await this.scrape(
       spec,
       store.id,
+      known,
       backfill,
       options.reporter,
+      deadline,
     );
 
     snaps.forEach((snap) => this.normalizer.normalize(snap, brandIndex));
@@ -187,27 +198,18 @@ export class ScrapeService {
       inStock: inStock.length,
     });
 
-    const { llmDeadline } = options;
-
-    await this.runLlm(inStock, backfill, options.reporter, llmDeadline);
-
-    /**
-     * Both remaining passes only ever act on SKUs this store has never stored,
-     * so they share one lookup.
-     */
-    const known = await this.products.existingSkus(store.id);
-
+    await this.runLlm(known, inStock, backfill, options.reporter, deadline);
     await this.runNameExtraction(
       known,
       inStock,
       options.reporter,
-      llmDeadline,
+      deadline,
     );
     await this.runFlavorEnrichment(
       known,
       inStock,
       options.reporter,
-      llmDeadline,
+      deadline,
     );
 
     if (options.dryRun) {
@@ -265,19 +267,24 @@ export class ScrapeService {
 
   /**
    * Runs the adapter: fetch the listing and, for detail-capable adapters,
-   * enrich items missing an ABV. The adapter is always closed.
+   * enrich the items whose fields the run can still persist. The adapter is
+   * always closed.
    *
    * @param spec - The scrape spec.
-   * @param storeId - The store id (for the detail-fetch gate).
+   * @param storeId - The store id (for the backfill detail-fetch gate).
+   * @param known - SKUs the store has already stored (the normal-run gate).
    * @param backfill - Whether the wider backfill detail gate applies.
    * @param reporter - Optional progress reporter.
+   * @param deadline - Optional soft deadline for the detail pass.
    * @returns The raw scraped snapshots.
    */
   private async scrape(
     spec: StoreScrapeSpec,
     storeId: ID,
+    known: Set<string>,
     backfill: boolean,
     reporter?: ScrapeProgressReporter,
+    deadline?: AbortSignal,
   ): Promise<ProductSnapshot[]> {
     const adapter = this.adapters.create(spec, reporter);
 
@@ -285,7 +292,15 @@ export class ScrapeService {
       const snaps = await adapter.fetchListing();
 
       if (adapter.supportsDetail && snaps.length > 0) {
-        await this.enrichDetails(adapter, storeId, snaps, backfill, reporter);
+        await this.enrichDetails(
+          adapter,
+          storeId,
+          snaps,
+          known,
+          backfill,
+          reporter,
+          deadline,
+        );
       }
 
       return snaps;
@@ -295,30 +310,49 @@ export class ScrapeService {
   }
 
   /**
-   * Fetches detail pages for items whose stored fields are still incomplete,
+   * Fetches detail pages for the items whose fields the run can persist,
    * pacing the requests with the store's politeness delay. One failing item
-   * does not stop the rest. A normal run only chases a missing ABV; a backfill
-   * run also chases a missing volume, type or country.
+   * does not stop the rest.
+   *
+   * Only in-stock items qualify — an out-of-stock item is never upserted, so
+   * its detail data has nowhere to go (a store listing its sold-out catalogue
+   * used to burn the whole politeness-delay budget on those ghosts). A normal
+   * run then keeps only the SKUs the store has never stored: the enrichable
+   * columns are written on insert alone, so re-fetching a stored row's page
+   * could never be persisted either. A backfill run instead keeps every item
+   * whose stored core fields (ABV, volume, type, country) are incomplete —
+   * there the upsert does fill still-null columns.
+   *
+   * The pass also observes the run's soft deadline: it fills secondary fields,
+   * so when the budget runs short it stops and the run persists what the
+   * listing gave it rather than dying on the store timeout.
    *
    * @param adapter - The store adapter.
    * @param storeId - The store id.
    * @param snaps - The scraped snapshots.
+   * @param known - SKUs the store has already stored.
    * @param backfill - Whether the wider backfill detail gate applies.
    * @param reporter - Optional progress reporter.
+   * @param deadline - Optional soft deadline; once it fires the remaining
+   *   items are skipped and reported.
    * @returns Resolves once enrichment is done.
    */
   private async enrichDetails(
     adapter: ScrapeAdapter,
     storeId: ID,
     snaps: ProductSnapshot[],
+    known: Set<string>,
     backfill: boolean,
     reporter?: ScrapeProgressReporter,
+    deadline?: AbortSignal,
   ): Promise<void> {
     const complete = backfill
       ? await this.products.skusWithCoreDetails(storeId)
-      : await this.products.skusWithAbv(storeId);
+      : known;
 
-    const pending = snaps.filter((snap) => !complete.has(snap.storeSku));
+    const pending = snaps.filter(
+      (snap) => snap.inStock && !complete.has(snap.storeSku),
+    );
 
     if (!pending.length) {
       return;
@@ -327,6 +361,18 @@ export class ScrapeService {
     let done = 0;
 
     for (const snap of pending) {
+      if (deadline?.aborted === true) {
+        this.logger.warn(
+          'Detail enrichment stopped: out of sync budget, '
+            + '%d of %d item(s) skipped',
+          pending.length - done,
+          pending.length,
+        );
+        reporter?.({ kind: 'detail-deadline', done, pending: pending.length });
+
+        break;
+      }
+
       try {
         await adapter.enrichDetail(snap);
       } catch (error) {
@@ -350,12 +396,19 @@ export class ScrapeService {
 
   /**
    * Runs the LLM fallback for in-stock items still missing key fields, when
-   * enabled. A backfill run also asks about a missing type or country, which a
-   * normal run leaves to the deterministic pass — for a new row those columns
-   * can still be filled by the next run, but a stored row would keep the gap
-   * forever. Age stays out of the trigger: a bottling without an age statement
-   * legitimately has none, so it would make every run ask about the same items.
+   * enabled.
    *
+   * A normal run asks only about the SKUs the store has never stored, like
+   * the name and flavor passes: the upsert writes these columns on insert
+   * alone, so an answer for a stored row would be paid for and then thrown
+   * away — a store whose whole listing lacks ABV used to re-ask about its
+   * entire catalogue on every sync. A backfill run asks about every item with
+   * a gap (its upsert fills still-null columns), including a missing type or
+   * country. Age stays out of the trigger either way: a bottling without an
+   * age statement legitimately has none, so it would make every run ask about
+   * the same items.
+   *
+   * @param known - SKUs the store has already stored.
    * @param inStock - In-stock snapshots.
    * @param backfill - Whether the wider backfill trigger applies.
    * @param reporter - Optional progress reporter.
@@ -363,6 +416,7 @@ export class ScrapeService {
    * @returns Resolves once enrichment has been attempted.
    */
   private async runLlm(
+    known: Set<string>,
     inStock: ProductSnapshot[],
     backfill: boolean,
     reporter?: ScrapeProgressReporter,
@@ -372,10 +426,15 @@ export class ScrapeService {
       return;
     }
 
-    const pending = inStock.filter((snap) =>
-      this.normalizer.needsLlm(snap)
-      || (backfill && (snap.whiskyType === null || snap.country === null))
-    );
+    const pending = backfill
+      ? inStock.filter((snap) =>
+        this.normalizer.needsLlm(snap)
+        || snap.whiskyType === null
+        || snap.country === null
+      )
+      : inStock.filter((snap) =>
+        !known.has(snap.storeSku) && this.normalizer.needsLlm(snap)
+      );
 
     if (!pending.length) {
       return;

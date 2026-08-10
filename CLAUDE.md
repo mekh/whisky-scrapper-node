@@ -437,9 +437,11 @@ entity/repository/service/module shape:
   adds `name`/`typeId`/`countryId`/`age`/`abv`/`volumeMl` as
   `COALESCE(product.x, EXCLUDED.x)` — the stored value always wins, so this is
   a fill, never an overwrite; the detail-page gate becomes `skusWithCoreDetails`
-  (ABV **and** volume **and** type **and** country stored) instead of
-  `skusWithAbv`; and the LLM enrichment trigger adds a still-null type or
-  country to `needsLlm`. **Age is deliberately in neither widening**: a NAS
+  (ABV **and** volume **and** type **and** country stored) instead of the
+  normal run's "never stored" gate — a backfill run is the one place a stored
+  row's detail fetch can be persisted at all; and the LLM enrichment trigger
+  widens from "new SKU with a missing field" to every item with a still-null
+  ABV, volume, type or country. **Age is deliberately in neither widening**: a NAS
   bottling has no age to find, so including it would re-fetch and re-ask about
   the same items on every run forever. The script mirrors the engine's
   progress events to stdout as timestamped lines (every listing page, every
@@ -525,11 +527,12 @@ flavor filter behave consistently across stores. The classification was done by
 16 parallel Sonnet 5 agents over ~129 names each (batch inputs and the merged
 result are throwaway; the CSV is the artifact). Result: 749 `high`, 972 `low`,
 338 `unknown`, 367 distinct tag sets — the largest shared set covers only 52
-names, which is the check that matters, because a per-category *template* is the
+names, which is the check that matters, because a per-category _template_ is the
 failure mode a weaker model produces. Coverage went from 3 031 to 6 264 of 6 990
 products (43% → 90%); `excludeFlavors=peated` now removes 736 of 6 294 in-stock
 items instead of only those whose name happened to spell out "торф".
 Load-bearing details:
+
 - The CSV is `name,confidence,tags` (tags pipe-separated) with **no quoting**,
   which is safe only because no name in the catalogue contains a comma or a
   double quote — verified before generating it. The importer therefore requires
@@ -550,8 +553,8 @@ Load-bearing details:
 - Every classified name is stamped `lastLlmFlavorAt`, `unknown` included. Only
   one product is left unstamped: the single row whose `name` is null, which no
   name-keyed import can reach. Store onboarding is done this way on purpose: **every DB change —
-schema or data — ships as a migration**, never as ad-hoc SQL, so prod picks
-it up through the deploy's migrate gate.
+  schema or data — ships as a migration**, never as ad-hoc SQL, so prod picks
+  it up through the deploy's migrate gate.
 
 Data migration: `scripts/sync-from-sqlite.ts` (uses the `better-sqlite3`
 devDependency) reads the legacy SQLite DB and upserts into Postgres by natural
@@ -588,7 +591,11 @@ wrappers): `scrape/` has its own internal layering.
   providers. `askJsonArray` takes optional per-call `{model, reasoning}`
   overrides so one pass can run on a different slug than the rest. Three
   independent passes sit on top of it:
-  `LlmEnrichmentService` fills missing abv/volume/type/country fields,
+  `LlmEnrichmentService` fills missing abv/volume/type/country fields — for
+  new SKUs only in a normal run, because the upsert writes those columns on
+  insert alone, so a stored row's answer would be paid for and discarded
+  (winewine's listing states no ABV, so before this gate every sync queued its
+  whole 203-item catalogue),
   `LlmNameExtractionService` reduces the name to brand + expression for new
   SKUs, validated token-by-token against the raw name so a hallucinated word
   can never be persisted, and `LlmFlavorService` classifies the flavor profile;
@@ -598,7 +605,7 @@ wrappers): `scrape/` has its own internal layering.
   own `LLM_FLAVOR_MODEL`/`LLM_FLAVOR_REASONING` and why model choice matters
   here and nowhere else. It exists because the keyword pass can only find a
   flavor a listing spells out, leaving most of the catalogue untagged — and the
-  report's main use is *excluding* `peated`, which silently excludes nothing on
+  report's main use is _excluding_ `peated`, which silently excludes nothing on
   an untagged product. Two guards keep it from making the data worse: the answer
   is filtered against `FLAVOR_TAGS` (the closed 15-tag vocabulary derived from
   `FLAVOR_KEYWORDS`, so the keyword pass and the LLM cannot disagree on what a
@@ -607,7 +614,7 @@ wrappers): `scrape/` has its own internal layering.
   `unknown` forces an empty result. The prompt pushes hard toward `unknown`
   because a plausible-but-wrong `peated` is worse than no tag at all.
   **Model choice was measured, not assumed**: on the same 40 goodwine bottlings,
-  `deepseek-v4-flash` returned a per-category *template* — Jameson, Monkey
+  `deepseek-v4-flash` returned a per-category _template_ — Jameson, Monkey
   Shoulder, Robert Burns and Chivas all got one identical tag set, Dalmore,
   GlenAllachie and Bunnahabhain another — missed `bourbon-cask` on a product
   named "West Cork Bourbon Cask", and answered `high` for all 40.
@@ -616,8 +623,9 @@ wrappers): `scrape/` has its own internal layering.
   the obscure blends `low`. Neither model ever answered `unknown`, so the
   `unknown` path is under-exercised in practice — treat `low` as the real
   "don't trust this" signal.
-  The pipeline classifies **new SKUs only** (like name extraction, gated on the
-  same `existingSkus` lookup, fetched once and shared); stored rows are swept
+  The pipeline classifies **new SKUs only** (like name extraction and — since
+  the winewine budget fix — the fields pass, all gated on the same
+  `existingSkus` lookup, fetched once and shared); stored rows are swept
   once by `pnpm enrich-flavors`. A bottling's flavor does not change between
   runs, so re-asking per sync would be pure spend.
   **A new SKU still reuses an answer stored under the same name before it asks**
@@ -625,7 +633,7 @@ wrappers): `scrape/` has its own internal layering.
   exactly the name persist will write). The SKU gate alone cannot cover this:
   724 names are carried by more than one store, spanning 5 527 of 6 990 rows, so
   a store listing a bottling for the first time would otherwise pay for a call
-  whose answer is already in the table — and could get *different* tags than the
+  whose answer is already in the table — and could get _different_ tags than the
   sibling row, leaving one product tagged two ways depending on which store you
   looked at. Measured on the current catalogue, 1 721 of 2 059 names are
   reusable. A name classified `unknown` has no links, so it is indistinguishable
@@ -693,14 +701,15 @@ wrappers): `scrape/` has its own internal layering.
   full silpo dry-run (1 069 items, all three passes, nothing stored yet, so
   ~60 batches) now finishes in 7 m 40 s including the 70 s scrape, against a
   15-minute budget the fields pass alone used to exhaust.
-  **The passes also observe a deadline** (`CollectOptions.llmDeadline`, set by
+  **The passes also observe a deadline** (`CollectOptions.deadline`, set by
   the orchestrator to the store's budget minus `SYNC_LLM_DEADLINE_MARGIN_MS`).
-  They are the one optional part of a collection — an unanswered item keeps its
-  gap and is asked about again next run — so when the budget runs short the
-  remaining batches are skipped, a `llm-deadline` line names the pass and the
-  count in the run's log file, and the run goes on to persist what it scraped
-  rather than failing a timeout. A batch already in flight finishes: its answer
-  is paid for either way.
+  They only fill secondary fields — an unanswered new SKU keeps its gap — so
+  when the budget runs short the remaining batches are skipped, a
+  `llm-deadline` line names the pass and the count in the run's log file, and
+  the run goes on to persist what it scraped rather than failing a timeout. A
+  batch already in flight finishes: its answer is paid for either way. The
+  same signal also bounds detail enrichment (see "Detail pages" below), which
+  is what used to be able to starve everything behind it.
   **The flavor pass asks once per distinct name within a run, not per SKU.**
   `ScrapeService` groups pending snapshots by the resolved name persist will
   write and sends one head per group, then copies the answer onto its siblings —
@@ -817,11 +826,24 @@ wrappers): `scrape/` has its own internal layering.
   what keeps a code-only deploy from re-downloading the browser. A build-time
   assertion fails the build if the two drift apart.
 - **Detail pages**: an adapter with `supportsDetail` gets `enrichDetail(snap)`
-  calls from `ScrapeService`, gated on `products.skusWithAbv` (only items whose
-  ABV is not stored yet) and paced with `adapter.sleep()` between items — the
-  same gate and pacing as the Python `collect_site._enrich_details`. Enrichment
-  only ever fills fields that are still null, so listing values and manual
-  edits win.
+  calls from `ScrapeService`, paced with `adapter.sleep()` between items.
+  Enrichment only ever fills fields that are still null, so listing values and
+  manual edits win. **The gate is "in stock and never stored"** — the normal
+  upsert writes the detail fields (`abv`/`volumeMl`/`typeId`/`countryId`) on
+  insert alone and persist never upserts an out-of-stock item, so any other
+  fetch is politeness-delay spend whose result the database throws away. The
+  old Python-parity gate ("ABV not stored yet", any stock state) is exactly
+  how winewine burned 12.5 of its 15 minutes every sync: its WooCommerce
+  listing shows 117 sold-out ghosts that were never stored (persist skips
+  them), so every run re-fetched all 117 detail pages, discarded the data, and
+  left the LLM passes past their deadline — permanently. A backfill run gates
+  on `skusWithCoreDetails` instead (see `pnpm backfill`), because its upsert
+  is the one that can fill a stored row's nulls. The pass also observes the
+  run's soft deadline (`CollectOptions.deadline`): when the budget runs short
+  it stops, a `detail-deadline` line records how many items were skipped, and
+  the run persists the listing instead of dying on the store timeout — the
+  skipped items' fields stay empty until a backfill run, which the log line
+  says outright.
 - **Parity harness**: `scripts/scrape-parity-diff.ts <slug> [--python <dump>]
   [--ts <dump>] [--out <dir>]` runs the legacy Python scraper
   (`scripts/scrape-parity-dump.py` through `../scrapper/.venv`) and the TS
@@ -875,13 +897,15 @@ wrappers): `scrape/` has its own internal layering.
   the lock, so it must happen exactly once, and the lock path is never wrapped
   in `@Transactional()` (the ALS context would leak into the background run).
   A timed-out collection is abandoned, not aborted: the row is already closed.
-  It also hands the collection a **second, earlier signal** for the LLM passes
-  alone (`CollectOptions.llmDeadline`, the same budget minus
+  It also hands the collection a **second, earlier signal** for its optional
+  passes — detail enrichment and the LLM passes
+  (`CollectOptions.deadline`, the same budget minus
   `SYNC_LLM_DEADLINE_MARGIN_MS`). Unlike the hard timeout that only ends the
-  wait, this one is cooperative: the passes stop asking, log which pass and how
-  many items were left, and the run persists its catalogue — which is the
-  difference between a sync that fills some fields next time and one that throws
-  away a successful scrape (see "Scraping engine").
+  wait, this one is cooperative: detail enrichment stops fetching, the passes
+  stop asking, the log file records which pass and how many items were left,
+  and the run persists its catalogue — which is the difference between a sync
+  that fills some fields next time and one that throws away a successful
+  scrape (see "Scraping engine").
 - `runFullSync()` splits active `ts` stores into tracks (`group ?? id`), runs
   tracks in `SYNC_MAX_PARALLEL_TRACKS`-sized chunks and the stores inside a
   track strictly sequentially; a store that cannot start is warned and skipped.
@@ -1072,8 +1096,9 @@ configured); sync vars in
 `SYNC_MAX_PARALLEL_TRACKS` (4), `SYNC_STORE_TIMEOUT_MS` (900000),
 `SYNC_BROWSER_STORE_TIMEOUT_MS` (2700000 — the budget for a `needsBrowser`
 store, which needs ~20 min for a full pass and would never fit the HTTP one),
-`SYNC_LLM_DEADLINE_MARGIN_MS` (120000 — how early the LLM passes must stop so
-the run still has time to persist; see "Scraping engine"),
+`SYNC_LLM_DEADLINE_MARGIN_MS` (120000 — how early the optional passes, detail
+enrichment and the LLM ones, must stop so the run still has time to persist;
+see "Scraping engine"),
 `SYNC_LOG_DIR` (`./log`; empty disables per-sync log files) and
 `SYNC_LOG_RETENTION_DAYS` (30; `0` keeps every file — see "Sync
 orchestration").

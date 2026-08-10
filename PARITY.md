@@ -44,12 +44,16 @@ Both sides read the store's delay configuration from the database, so a full
 store takes a few minutes per engine.
 
 **Detail-page stores** (`winewine`, `wine-point`, `goodwine`): both engines run
-the detail-enrichment pass, gated the same way (`db.skus_with_abv` /
-`products.skusWithAbv` — only items whose ABV is not stored yet).
-`scrape-parity-dump.py` performs it in `enrich_details`, a port of
-`collect_site._enrich_details`; without it `abv`/`whiskyType`/`country`/
+the detail-enrichment pass, gated the same way at the time of the sweep
+(`db.skus_with_abv` / `products.skusWithAbv` — only items whose ABV is not
+stored yet). `scrape-parity-dump.py` performs it in `enrich_details`, a port
+of `collect_site._enrich_details`; without it `abv`/`whiskyType`/`country`/
 `ageYears` would diff for no reason. Because the gate reads the database, a
 store whose ABVs are already filled enriches nothing and its run is fast.
+_Post-cutover note:_ the TS gate has since changed to "in stock and never
+stored" (a stored row's detail fields cannot be persisted outside a backfill
+run, and an out-of-stock item is never upserted), so a parity diff of a
+detail-page store would now report enrichment-field drift by design.
 
 **Browser store** (`rozetka`): the Python side needs its optional browser extra
 (`.venv/bin/python -m pip install -e ".[browser]"` plus
@@ -62,19 +66,19 @@ fresh browser context per page, so this run is by far the longest one.
 Counts are `python / ts` items; "clean" means every shared SKU matched on every
 compared field.
 
-| Store              | Tier | Ported in | Porting run                                        |
-| ------------------ | ---- | --------- | -------------------------------------------------- |
-| 19 Zakaz.ua chains | 1    | step 6    | see below — `metro` + `novus`                      |
-| `metro`            | 1    | step 6    | 2026-07-25 clean — 123 / 123                       |
-| `novus`            | 1    | step 6    | 2026-07-25 clean — 288 / 288                       |
-| `maudau`           | 1    | step 6    | 2026-07-25 clean — 713 / 713                       |
-| `okwine`           | 1    | step 6    | 2026-07-25 clean — 563 / 563                       |
-| `winewine`         | 1    | step 7    | 2026-07-25 clean — 202 / 202                       |
-| `wine-point`       | 1    | step 7    | 2026-07-25 clean — 220 / 220                       |
-| `goodwine`         | 2    | step 7    | 2026-07-25 clean — 717 / 717                       |
-| `rozetka`          | 3    | step 7    | 2026-07-25 clean — 443 / 444, re-run 393 / 393     |
-| `silpo`            | 1    | post-mig. | 2026-08-09 — rebuilt on the open catalog JSON API (tier 1, no browser) and registered; no parity run — the Python adapter never ran in production, so there is nothing to be parity with |
-| `bayadera`         | 1    | post-mig. | 2026-08-10 — new store, TS-only (no Python adapter ever existed); live dry run: 125 found / 112 in stock, matching the site's own catalog count |
+| Store              | Tier | Ported in | Porting run                                                                                                                                                                                                          |
+| ------------------ | ---- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 19 Zakaz.ua chains | 1    | step 6    | see below — `metro` + `novus`                                                                                                                                                                                        |
+| `metro`            | 1    | step 6    | 2026-07-25 clean — 123 / 123                                                                                                                                                                                         |
+| `novus`            | 1    | step 6    | 2026-07-25 clean — 288 / 288                                                                                                                                                                                         |
+| `maudau`           | 1    | step 6    | 2026-07-25 clean — 713 / 713                                                                                                                                                                                         |
+| `okwine`           | 1    | step 6    | 2026-07-25 clean — 563 / 563                                                                                                                                                                                         |
+| `winewine`         | 1    | step 7    | 2026-07-25 clean — 202 / 202                                                                                                                                                                                         |
+| `wine-point`       | 1    | step 7    | 2026-07-25 clean — 220 / 220                                                                                                                                                                                         |
+| `goodwine`         | 2    | step 7    | 2026-07-25 clean — 717 / 717                                                                                                                                                                                         |
+| `rozetka`          | 3    | step 7    | 2026-07-25 clean — 443 / 444, re-run 393 / 393                                                                                                                                                                       |
+| `silpo`            | 1    | post-mig. | 2026-08-09 — rebuilt on the open catalog JSON API (tier 1, no browser) and registered; no parity run — the Python adapter never ran in production, so there is nothing to be parity with                             |
+| `bayadera`         | 1    | post-mig. | 2026-08-10 — new store, TS-only (no Python adapter ever existed); live dry run: 125 found / 112 in stock, matching the site's own catalog count                                                                      |
 | `fozzy`            | 1    | post-mig. | 2026-08-10 — new store, TS-only (no Python adapter ever existed): fozzyshop.ua SSR listing + detail-page characteristics; live dry run: 308 found / 308 in stock (only available items are listed), no parity target |
 
 `metro` and `novus` stand in for all 19 Zakaz.ua networks: they share one

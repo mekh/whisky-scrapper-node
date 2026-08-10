@@ -39,7 +39,6 @@ const STORE: StoreListItem = {
  * an inert default (no stored SKUs, both LLM passes disabled).
  */
 interface HarnessOptions {
-  skusWithAbv: Set<string>;
   skusWithCoreDetails: Set<string>;
   existingSkus: Set<string>;
   storedLlmFlavors: Map<string, string[]>;
@@ -56,7 +55,6 @@ interface HarnessOptions {
 interface Harness extends HarnessOptions {
   service: ScrapeService;
   products: {
-    skusWithAbv: jest.Mock;
     skusWithCoreDetails: jest.Mock;
     existingSkus: jest.Mock;
     findLlmFlavorsByNames: jest.Mock;
@@ -91,7 +89,6 @@ function makeHarness(
   over: Partial<HarnessOptions> = {},
 ): Harness {
   const options: HarnessOptions = {
-    skusWithAbv: new Set<string>(),
     skusWithCoreDetails: new Set<string>(),
     existingSkus: new Set<string>(),
     storedLlmFlavors: new Map<string, string[]>(),
@@ -112,7 +109,6 @@ function makeHarness(
   } as unknown as CoreStoreConfigService;
 
   const products = {
-    skusWithAbv: jest.fn().mockResolvedValue(options.skusWithAbv),
     skusWithCoreDetails: jest.fn()
       .mockResolvedValue(options.skusWithCoreDetails),
     existingSkus: jest.fn().mockResolvedValue(options.existingSkus),
@@ -218,7 +214,7 @@ describe('ScrapeService.collectStore', () => {
   });
 
   it(
-    'enriches only the items whose ABV is not stored, and paces them',
+    'enriches only the SKUs the store has never stored, and paces them',
     async () => {
       const sleep = jest.fn().mockResolvedValue(undefined);
       const enrichDetail = jest.fn().mockResolvedValue(true);
@@ -234,8 +230,12 @@ describe('ScrapeService.collectStore', () => {
         close: jest.fn().mockResolvedValue(undefined),
       };
 
+      /**
+       * A stored row's detail fields are never written on conflict, so
+       * re-fetching its page could not be persisted.
+       */
       const service = makeService(adapter, {
-        skusWithAbv: new Set(['known']),
+        existingSkus: new Set(['known']),
       });
 
       await service.collectStore('faux', { dryRun: true });
@@ -247,6 +247,70 @@ describe('ScrapeService.collectStore', () => {
       expect(sleep).toHaveBeenCalledTimes(1);
     },
   );
+
+  it('does not fetch details for out-of-stock items', async () => {
+    const enrichDetail = jest.fn().mockResolvedValue(true);
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: true,
+      fetchListing: jest.fn().mockResolvedValue([
+        rawSnap({ storeSku: 'listed', inStock: true }),
+        rawSnap({ storeSku: 'ghost', inStock: false }),
+      ]),
+      enrichDetail,
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await makeService(adapter).collectStore('faux', { dryRun: true });
+
+    /**
+     * An out-of-stock item is never upserted, so its detail data has nowhere
+     * to go — fetching its page would be pure politeness-delay spend.
+     */
+    expect(enrichDetail).toHaveBeenCalledTimes(1);
+    expect(enrichDetail).toHaveBeenCalledWith(
+      expect.objectContaining({ storeSku: 'listed' }),
+    );
+  });
+
+  it('stops detail enrichment once the soft deadline fired', async () => {
+    const enrichDetail = jest.fn().mockResolvedValue(true);
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: true,
+      fetchListing: jest.fn().mockResolvedValue([
+        rawSnap({ storeSku: 'a' }),
+        rawSnap({ storeSku: 'b' }),
+      ]),
+      enrichDetail,
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    const events: { done: number; pending: number }[] = [];
+    const controller = new AbortController();
+
+    controller.abort();
+
+    const result = await makeService(adapter).collectStore('faux', {
+      dryRun: true,
+      deadline: controller.signal,
+      reporter: (event) => {
+        if (event.kind === 'detail-deadline') {
+          events.push({ done: event.done, pending: event.pending });
+        }
+      },
+    });
+
+    expect(enrichDetail).not.toHaveBeenCalled();
+    expect(events).toEqual([{ done: 0, pending: 2 }]);
+
+    /**
+     * The run still succeeds: the listing is what a sync is for, and the
+     * skipped pages only held secondary fields.
+     */
+    expect(result.found).toBe(2);
+  });
 
   it('a failing detail page does not abort the enrichment pass', async () => {
     const enrichDetail = jest.fn()
@@ -269,6 +333,39 @@ describe('ScrapeService.collectStore', () => {
 
     expect(enrichDetail).toHaveBeenCalledTimes(2);
     expect(result.found).toBe(2);
+  });
+
+  it('asks the LLM about fields only for new SKUs', async () => {
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: false,
+      fetchListing: jest.fn().mockResolvedValue([
+        // No specs in either name, so both items lack ABV and volume.
+        rawSnap({ storeSku: 'known', name: 'Віскі Aberlour' }),
+        rawSnap({ storeSku: 'fresh', name: 'Віскі Ardbeg Ten' }),
+      ]),
+      enrichDetail: jest.fn(),
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    const llm = { enabled: true, enrich: jest.fn() };
+
+    const service = makeService(adapter, {
+      llm,
+      existingSkus: new Set(['known']),
+    });
+
+    await service.collectStore('faux', { dryRun: true });
+
+    expect(llm.enrich).toHaveBeenCalledTimes(1);
+
+    /**
+     * The stored SKU's answer could never be persisted — the upsert writes
+     * these columns on insert alone — so paying for it would be waste.
+     */
+    const [pending] = llm.enrich.mock.calls[0] as [ProductSnapshot[]];
+
+    expect(pending.map((snap) => snap.storeSku)).toEqual(['fresh']);
   });
 
   it('extracts names only for SKUs the store has never stored', async () => {
@@ -477,7 +574,7 @@ describe('ScrapeService.collectStore', () => {
 
     const result = await service.collectStore('faux', {
       dryRun: true,
-      llmDeadline: controller.signal,
+      deadline: controller.signal,
       reporter: (event) => {
         if (event.kind === 'llm-deadline') {
           skipped.push(event.pass);
@@ -594,8 +691,12 @@ describe('ScrapeService.collectStore in backfill mode', () => {
       close: jest.fn().mockResolvedValue(undefined),
     };
 
+    /**
+     * Both SKUs are stored, which a normal run would skip outright; the
+     * backfill gate instead fetches whichever stored row is incomplete.
+     */
     const harness = makeHarness(adapter, {
-      skusWithAbv: new Set(['complete', 'partial']),
+      existingSkus: new Set(['complete', 'partial']),
       skusWithCoreDetails: new Set(['complete']),
     });
 
@@ -604,7 +705,6 @@ describe('ScrapeService.collectStore in backfill mode', () => {
       backfill: true,
     });
 
-    expect(harness.products.skusWithAbv).not.toHaveBeenCalled();
     expect(enrichDetail).toHaveBeenCalledTimes(1);
     expect(enrichDetail).toHaveBeenCalledWith(
       expect.objectContaining({ storeSku: 'partial' }),
@@ -635,6 +735,38 @@ describe('ScrapeService.collectStore in backfill mode', () => {
       true,
       undefined,
     );
+  });
+
+  it('asks the LLM about stored SKUs too', async () => {
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: false,
+      fetchListing: jest.fn().mockResolvedValue([
+        // No specs in the name, so ABV and volume stay missing.
+        rawSnap({ storeSku: 'known', name: 'Віскі Aberlour' }),
+      ]),
+      enrichDetail: jest.fn(),
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    const llm = { enabled: true, enrich: jest.fn() };
+
+    const service = makeService(adapter, {
+      llm,
+      existingSkus: new Set(['known']),
+    });
+
+    await service.collectStore('faux', { dryRun: true, backfill: true });
+
+    /**
+     * The backfill upsert fills still-null columns on conflict, so here a
+     * stored row's answer is persistable and worth paying for.
+     */
+    expect(llm.enrich).toHaveBeenCalledTimes(1);
+
+    const [pending] = llm.enrich.mock.calls[0] as [ProductSnapshot[]];
+
+    expect(pending.map((snap) => snap.storeSku)).toEqual(['known']);
   });
 
   it('asks the LLM about a missing type or country as well', async () => {

@@ -370,8 +370,8 @@ describe('SyncOrchestratorService.startStoreSync', () => {
     expect(outcome.error).toContain('timed out');
   });
 
-  it('stops the LLM passes before the run itself times out', async () => {
-    // The scrape is what a sync is for; the model's answers are optional.
+  it('stops the optional passes before the run itself times out', async () => {
+    // The scrape is what a sync is for; details and answers are optional.
     const { orchestrator, syncLogs, scrape } = makeOrchestrator(
       makeStore(),
       { storeTimeoutMs: 3_600_000, llmDeadlineMarginMs: 3_599_980 },
@@ -380,8 +380,8 @@ describe('SyncOrchestratorService.startStoreSync', () => {
     let deadline: AbortSignal | undefined;
 
     scrape.collectStore.mockImplementation(
-      (_slug: string, options: { llmDeadline?: AbortSignal }) => {
-        deadline = options.llmDeadline;
+      (_slug: string, options: { deadline?: AbortSignal }) => {
+        deadline = options.deadline;
 
         return Promise.resolve(RESULT);
       },
@@ -397,7 +397,7 @@ describe('SyncOrchestratorService.startStoreSync', () => {
     expect(deadline?.aborted).toBe(true);
 
     /**
-     * The run itself still succeeded — only the LLM budget expired.
+     * The run itself still succeeded — only the soft deadline expired.
      */
     const [, outcome] = syncLogs.finish.mock.calls[0] as [string, {
       success: boolean;
@@ -476,6 +476,7 @@ describe('SyncOrchestratorService log files', () => {
           url: 'https://maudau.test/p/1',
           error: 'timeout',
         });
+        options.reporter?.({ kind: 'detail-deadline', done: 4, pending: 6 });
         options.reporter?.({ kind: 'sweep-guarded', inStock: 3, baseline: 30 });
         options.reporter?.({
           kind: 'persisted',
@@ -499,6 +500,10 @@ describe('SyncOrchestratorService log files', () => {
     expect(lines).toContain('INFO Detail enrichment: 4/4');
     expect(lines).toContain(
       'WARNING Detail fetch failed for https://maudau.test/p/1: timeout',
+    );
+    expect(lines).toContain(
+      'WARNING Detail enrichment stopped: out of sync budget, '
+        + '2 of 6 item(s) skipped (a backfill run fills their fields)',
     );
     expect(lines).toContain(
       'WARNING Listing looks truncated (3 in stock vs 30 stored); '

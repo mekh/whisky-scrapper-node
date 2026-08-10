@@ -19,8 +19,9 @@ const DEFAULT_STORE_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_BROWSER_STORE_TIMEOUT_MS = 45 * 60 * 1000;
 
 /**
- * How much of a store's budget is held back from the LLM passes, so a run that
- * spent it all on the model still has time to write what it collected.
+ * How much of a store's budget is held back from the optional passes (detail
+ * enrichment and the LLM passes), so a run that spent it all on detail pages
+ * or on the model still has time to write what it collected.
  */
 const DEFAULT_LLM_DEADLINE_MARGIN_MS = 2 * 60 * 1000;
 
@@ -80,12 +81,11 @@ export class SyncConfig extends BaseConfig {
       ?? DEFAULT_BROWSER_STORE_TIMEOUT_MS;
 
   /**
-   * How long before the store's budget expires the LLM passes must stop asking.
-   * The passes are the one part of a collection that is optional by design —
-   * every unanswered item keeps its gap and is asked about again next run — so
-   * when time runs short they are skipped and the run persists what it has,
-   * instead of the whole sync failing on a timeout with the catalogue already
-   * scraped.
+   * How long before the store's budget expires the optional passes — detail
+   * enrichment and the LLM passes — must stop. They only fill secondary
+   * fields, so when time runs short they are cut off and the run persists
+   * what it has, instead of the whole sync failing on a timeout with the
+   * catalogue already scraped.
    */
   @IsInt()
   @IsPositive()

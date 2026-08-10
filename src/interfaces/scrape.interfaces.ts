@@ -321,6 +321,24 @@ export type ScrapeProgressEvent =
   }
   | {
     /**
+     * Detail enrichment stopped early: the run's soft deadline fired with
+     * items still pending. The skipped items keep whatever the listing gave
+     * them; a stored row's gaps stay until a backfill run fills them.
+     */
+    kind: 'detail-deadline';
+
+    /**
+     * How many items were enriched before the deadline fired.
+     */
+    done: number;
+
+    /**
+     * How many items needed enrichment in total.
+     */
+    pending: number;
+  }
+  | {
+    /**
      * An LLM pass is about to run over the items it found pending.
      */
     kind: 'llm';
@@ -490,13 +508,14 @@ export interface CollectOptions {
   reporter?: ScrapeProgressReporter;
 
   /**
-   * Deadline for the LLM passes only, ahead of the caller's own timeout. Once
-   * it fires the passes stop asking and the run goes on to persist what it
-   * collected: the model's answers are the one optional part of a collection,
-   * and losing a scrape that already succeeded to a timeout is far worse than
-   * leaving some fields for the next run to fill.
+   * Deadline for the optional passes — detail enrichment and the LLM passes —
+   * ahead of the caller's own timeout. Once it fires, detail enrichment stops
+   * fetching and the LLM passes stop asking, and the run goes on to persist
+   * what it collected: those passes only fill secondary fields, and losing a
+   * scrape that already succeeded to a timeout is far worse than leaving some
+   * fields empty.
    */
-  llmDeadline?: AbortSignal;
+  deadline?: AbortSignal;
 }
 
 /**

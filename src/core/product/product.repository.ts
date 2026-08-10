@@ -143,28 +143,13 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
   }
 
   /**
-   * SKUs of a store's products whose ABV is already filled. The collector uses
-   * this to fetch product detail pages only for new or still-incomplete items.
-   *
-   * @param storeId - Store id.
-   * @returns The set of SKUs that already have an ABV.
-   */
-  public async skusWithAbv(storeId: ID): Promise<Set<string>> {
-    const rows = await this.query(
-      'SELECT sku FROM product WHERE "storeId" = $1 AND abv IS NOT NULL',
-      [storeId],
-    ) as { sku: string }[];
-
-    return new Set(rows.map((row) => row.sku));
-  }
-
-  /**
    * SKUs of a store's products whose detail-page fields — ABV, volume, type
-   * and country — are all filled already. The backfill run uses this instead
-   * of {@link skusWithAbv}, so an old row that has an ABV but no country still
-   * gets its detail page fetched. Age is deliberately not part of the gate: a
-   * no-age-statement bottling legitimately never gets one, and requiring it
-   * would re-fetch those detail pages on every run forever.
+   * and country — are all filled already. The backfill run gates its detail
+   * fetches on this (a normal run gates on {@link existingSkus} instead), so
+   * an old row that has an ABV but no country still gets its detail page
+   * fetched. Age is deliberately not part of the gate: a no-age-statement
+   * bottling legitimately never gets one, and requiring it would re-fetch
+   * those detail pages on every run forever.
    *
    * @param storeId - Store id.
    * @returns The set of SKUs whose detail-page fields are complete.
@@ -185,9 +170,10 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
 
   /**
    * SKUs of a store's products that already exist, whatever their stock state.
-   * The name-extraction pass uses this to skip known SKUs: `name` is written
-   * once on insert and never on conflict, so extracting it again would be a
-   * wasted LLM call that could never be persisted.
+   * A normal run's enrichment passes — detail pages, LLM fields, name
+   * extraction, flavor classification — all use this to skip known SKUs: the
+   * fields they fill are written once on insert and never on conflict, so
+   * enriching a stored row again would be work that could never be persisted.
    *
    * @param storeId - Store id.
    * @returns The set of SKUs already stored for the store.

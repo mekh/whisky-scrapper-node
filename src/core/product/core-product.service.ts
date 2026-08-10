@@ -43,19 +43,8 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
   }
 
   /**
-   * SKUs of a store's products that already have an ABV (the detail-fetch
-   * gate).
-   *
-   * @param storeId - Store id.
-   * @returns The set of SKUs with an ABV.
-   */
-  public async skusWithAbv(storeId: ID): Promise<Set<string>> {
-    return this.repo.skusWithAbv(storeId);
-  }
-
-  /**
    * SKUs of a store's products whose ABV, volume, type and country are all
-   * filled (the backfill run's wider detail-fetch gate).
+   * filled (the backfill run's detail-fetch gate).
    *
    * @param storeId - Store id.
    * @returns The set of SKUs whose detail-page fields are complete.
@@ -66,7 +55,7 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
 
   /**
    * SKUs of a store's products that already exist, in any stock state (the
-   * name-extraction gate).
+   * shared gate of a normal run's enrichment passes).
    *
    * @param storeId - Store id.
    * @returns The set of SKUs already stored for the store.

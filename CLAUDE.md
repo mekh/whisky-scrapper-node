@@ -501,7 +501,9 @@ store, cascading into its products and snapshots), then the flavor overhaul —
 outside the 15-tag vocabulary: 142 of 157 rows and 633 of 7 368 links on a
 production copy, all of them left by the old unfiltered enrichment side effect
 and all re-derivable, which is why its `down()` is a documented no-op) and
-`flavor-llm-import` (the classified back-catalogue, see below) — all
+`flavor-llm-import` (the classified back-catalogue, see below), then
+`sync-log-file` and `bayadera-store` (a data migration seeding the `bayadera`
+store + config, same shape and `down()` semantics as `silpo-store`) — all
 applied, formatted per the `typeorm-migration-format` skill, and drift-free
 against the entities.
 
@@ -682,7 +684,18 @@ wrappers): `scrape/` has its own internal layering.
   but the API host answers plain requests, so the store is tier 1 despite the
   legacy tier-3 classification; the zero-UUID "guest" branch is queried,
   out-of-stock items stay listed with `stock: 0` and feed `inStock` directly,
-  volume comes from `displayRatio`, brand from `brandTitle`). The registry
+  volume comes from `displayRatio`, brand from `brandTitle`), `bayadera/`
+  (custom SSR platform, tier 1 via plain HTTP, `?page=N` — every listing card
+  carries the whole item as JSON in the buy button's `data-product-info`
+  attribute: `article` is the SKU, prices are kopecks, `volume` is the pack
+  size, and the unlabeled `attributes` values go into `rawAttrs` so the
+  keyword pass finds country and flavors; `data-is-in-stock` feeds `inStock`
+  directly, the pre-discount price only exists as the struck-through
+  `.goodCost.old` text, a brand value sometimes arrives category-prefixed
+  (`Віскі Glenmorangie`) and the prefix is stripped, and the "top sales"
+  slider is excluded by the `:not(.slide)` card selector because a page past
+  the catalog end answers 200 with fallback products — the walk ends via SKU
+  dedup, not an empty page). The registry
   resolves a specialized adapter by slug and falls back to `ZakazAdapter` for
   any store with a `retailChain`/`category`.
 - **selectolax vs cheerio gotcha**: the Python adapters read text with
@@ -1100,8 +1113,9 @@ scrape engine (`normalize`/`http`/`html`/`browser`/`llm`/`persist` +
 `ScrapeService.collectStore`), the sync orchestrator + on-demand/status
 endpoints (see "Sync orchestration"), and **every adapter** — the 19 Zakaz.ua
 networks, `maudau`, `okwine`, `winewine`, `wine-point`, `goodwine`, `rozetka`,
-and `silpo` (added 2026-08-09, straight to the TS engine via its open catalog
-JSON API — no Python counterpart ever ran it in production) —
+`silpo` (added 2026-08-09, straight to the TS engine via its open catalog
+JSON API — no Python counterpart ever ran it in production), and `bayadera`
+(added 2026-08-10, also TS-only — a brand-new store with no legacy history) —
 with golden tests and the parity harness, and the internal daily cron — which **ships disabled**
 (`SYNC_CRON_ENABLED` unset), so the Python system cron still owns the schedule.
 Pending: the web "Sync" button and the Python decommission. **The cutover is

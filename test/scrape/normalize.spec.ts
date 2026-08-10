@@ -92,6 +92,18 @@ describe('NormalizeService.parseVolumeValue', () => {
   });
 });
 
+describe('NormalizeService.parseAgeValue', () => {
+  it('reads a bare field value as years, in the whisky range', () => {
+    expect(n.parseAgeValue('12')).toBe(12);
+    expect(n.parseAgeValue(' 18 ')).toBe(18);
+    expect(n.parseAgeValue('12 років')).toBe(12);
+    expect(n.parseAgeValue('120')).toBeNull();
+    expect(n.parseAgeValue('0')).toBeNull();
+    expect(n.parseAgeValue('')).toBeNull();
+    expect(n.parseAgeValue(null)).toBeNull();
+  });
+});
+
 describe('NormalizeService.extractAgeYears', () => {
   it('reads an explicit age and rejects out-of-range values', () => {
     expect(n.extractAgeYears('Aberlour 12 років')).toBe(12);

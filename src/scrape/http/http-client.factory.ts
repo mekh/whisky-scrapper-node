@@ -18,7 +18,8 @@ import type { ScrapeHttpClient } from './http-client.interfaces';
  * pre-emptively as the same WooCommerce/Magento-behind-Cloudflare family,
  * and `silpo` pre-emptively too — its API host is CF-fronted and passes
  * plain fetch from a residential IP, but the datacenter behavior is
- * unproven.
+ * unproven. `fozzy` follows the same pre-emptive rule: CF answers its plain
+ * GETs from a residential IP (while rejecting HEADs), datacenter unproven.
  */
 // TODO: move this to the `store_config`
 export const HTTP_STRATEGY_BY_SLUG: Partial<Record<string, HttpStrategy>> = {
@@ -26,6 +27,7 @@ export const HTTP_STRATEGY_BY_SLUG: Partial<Record<string, HttpStrategy>> = {
   'wine-point': HttpStrategy.IMPERSONATE,
   goodwine: HttpStrategy.IMPERSONATE,
   silpo: HttpStrategy.IMPERSONATE,
+  fozzy: HttpStrategy.IMPERSONATE,
 };
 
 /**

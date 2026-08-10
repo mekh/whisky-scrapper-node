@@ -308,6 +308,30 @@ export class NormalizeService {
   }
 
   /**
+   * Parses an age from a spec field value where the unit may be absent (`12`,
+   * `12 років`): a bare number is read as years; values with words go through
+   * {@link extractAgeYears}. Values outside 1–60 are ignored.
+   *
+   * @param text - The field value.
+   * @returns The age in years, or null.
+   */
+  public parseAgeValue(text: string | null | undefined): number | null {
+    if (!text) {
+      return null;
+    }
+
+    const bare = BARE_NUMBER.exec(text);
+
+    if (bare) {
+      const value = Number.parseInt(bare[1], 10);
+
+      return value >= AGE_MIN && value <= AGE_MAX ? value : null;
+    }
+
+    return this.extractAgeYears(text);
+  }
+
+  /**
    * Extracts the flavor tags present in text.
    *
    * @param text - Text to scan.

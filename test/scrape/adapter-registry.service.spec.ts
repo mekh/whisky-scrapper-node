@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 
 import { AdapterRegistryService } from '../../src/scrape/adapters/adapter-registry.service';
+import { FozzyAdapter } from '../../src/scrape/adapters/fozzy';
 import { GoodwineAdapter } from '../../src/scrape/adapters/goodwine';
 import { MaudauAdapter } from '../../src/scrape/adapters/maudau';
 import { OkwineAdapter } from '../../src/scrape/adapters/okwine';
@@ -113,6 +114,7 @@ describe('AdapterRegistryService', () => {
     expect(registry.create(spec('rozetka', { tier: 3, needsBrowser: true })))
       .toBeInstanceOf(RozetkaAdapter);
     expect(registry.create(spec('silpo'))).toBeInstanceOf(SilpoAdapter);
+    expect(registry.create(spec('fozzy'))).toBeInstanceOf(FozzyAdapter);
   });
 
   it('reports which of the detail-page stores fetch product pages', () => {
@@ -121,6 +123,7 @@ describe('AdapterRegistryService', () => {
     expect(registry.create(spec('winewine')).supportsDetail).toBe(true);
     expect(registry.create(spec('wine-point')).supportsDetail).toBe(true);
     expect(registry.create(spec('goodwine')).supportsDetail).toBe(true);
+    expect(registry.create(spec('fozzy')).supportsDetail).toBe(true);
     expect(registry.create(spec('rozetka')).supportsDetail).toBe(false);
     expect(registry.create(spec('maudau')).supportsDetail).toBe(false);
   });

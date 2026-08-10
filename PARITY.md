@@ -74,6 +74,7 @@ compared field.
 | `goodwine`         | 2    | step 7    | 2026-07-25 clean — 717 / 717                       |
 | `rozetka`          | 3    | step 7    | 2026-07-25 clean — 443 / 444, re-run 393 / 393     |
 | `silpo`            | 1    | post-mig. | 2026-08-09 — rebuilt on the open catalog JSON API (tier 1, no browser) and registered; no parity run — the Python adapter never ran in production, so there is nothing to be parity with |
+| `fozzy`            | 1    | post-mig. | 2026-08-10 — new store, TS-only (no Python adapter ever existed): fozzyshop.ua SSR listing + detail-page characteristics; accepted on a clean live dry run, no parity target |
 
 `metro` and `novus` stand in for all 19 Zakaz.ua networks: they share one
 parameterized adapter, and `novus` is the category-slug exception (`whiskey`

@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 
 import { AdapterRegistryService } from '../../src/scrape/adapters/adapter-registry.service';
+import { BayaderaAdapter } from '../../src/scrape/adapters/bayadera';
 import { GoodwineAdapter } from '../../src/scrape/adapters/goodwine';
 import { MaudauAdapter } from '../../src/scrape/adapters/maudau';
 import { OkwineAdapter } from '../../src/scrape/adapters/okwine';
@@ -113,6 +114,7 @@ describe('AdapterRegistryService', () => {
     expect(registry.create(spec('rozetka', { tier: 3, needsBrowser: true })))
       .toBeInstanceOf(RozetkaAdapter);
     expect(registry.create(spec('silpo'))).toBeInstanceOf(SilpoAdapter);
+    expect(registry.create(spec('bayadera'))).toBeInstanceOf(BayaderaAdapter);
   });
 
   it('reports which of the detail-page stores fetch product pages', () => {

@@ -140,6 +140,19 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
   }
 
   /**
+   * LLM-derived flavor tags already stored for the given product names, so the
+   * same bottling is not re-classified once per store.
+   *
+   * @param names - Cleaned product names to look up.
+   * @returns Map from name to its stored LLM tags; names with none are absent.
+   */
+  public async findLlmFlavorsByNames(
+    names: string[],
+  ): Promise<Map<string, string[]>> {
+    return this.repo.findLlmFlavorsByNames(names);
+  }
+
+  /**
    * Products the LLM flavor pass has never answered for.
    *
    * @param storeSlug - Restrict to one store's products, or omit for all.

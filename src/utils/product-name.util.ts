@@ -551,6 +551,28 @@ export class ProductNameUtils {
   }
 
   /**
+   * The name a snapshot will be stored under: the LLM-extracted brand +
+   * expression when that pass produced one, otherwise the deterministic
+   * cleanup of the raw name.
+   *
+   * It exists so the rule lives in one place. Persist uses it to write
+   * `product.name`, and the flavor pass uses it to look up an answer already
+   * stored for the same bottling — if the two computed it separately they could
+   * drift, and the lookup would silently miss every product.
+   *
+   * @param cleanName - The LLM-extracted name, when that pass ran and was
+   *   accepted; null or undefined otherwise.
+   * @param raw - The raw product name as scraped.
+   * @returns The name to store, or `null` when nothing meaningful remains.
+   */
+  public static resolve(
+    cleanName: string | null | undefined,
+    raw: string,
+  ): string | null {
+    return cleanName ?? ProductNameUtils.clean(raw);
+  }
+
+  /**
    * Removes the age / ABV / volume / packaging / bundle tokens and repairs the
    * punctuation they leave behind, without touching a leading category
    * prefix. Applied to a name that is already the product itself — an

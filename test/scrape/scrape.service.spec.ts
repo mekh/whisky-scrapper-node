@@ -42,6 +42,7 @@ interface HarnessOptions {
   skusWithAbv: Set<string>;
   skusWithCoreDetails: Set<string>;
   existingSkus: Set<string>;
+  storedLlmFlavors: Map<string, string[]>;
   brandNames: string[];
   names: { enabled: boolean; extractNames: jest.Mock };
   llm: { enabled: boolean; enrich: jest.Mock };
@@ -58,6 +59,7 @@ interface Harness extends HarnessOptions {
     skusWithAbv: jest.Mock;
     skusWithCoreDetails: jest.Mock;
     existingSkus: jest.Mock;
+    findLlmFlavorsByNames: jest.Mock;
   };
 }
 
@@ -92,6 +94,7 @@ function makeHarness(
     skusWithAbv: new Set<string>(),
     skusWithCoreDetails: new Set<string>(),
     existingSkus: new Set<string>(),
+    storedLlmFlavors: new Map<string, string[]>(),
     brandNames: [],
     names: { enabled: false, extractNames: jest.fn() },
     llm: { enabled: false, enrich: jest.fn() },
@@ -113,6 +116,8 @@ function makeHarness(
     skusWithCoreDetails: jest.fn()
       .mockResolvedValue(options.skusWithCoreDetails),
     existingSkus: jest.fn().mockResolvedValue(options.existingSkus),
+    findLlmFlavorsByNames: jest.fn()
+      .mockResolvedValue(options.storedLlmFlavors),
   };
 
   const brands = {
@@ -329,6 +334,77 @@ describe('ScrapeService.collectStore', () => {
       expect(harness.products.existingSkus).toHaveBeenCalledTimes(1);
     },
   );
+
+  it(
+    'reuses a stored answer instead of re-classifying the same bottling',
+    async () => {
+      const adapter: ScrapeAdapter = {
+        slug: 'faux',
+        supportsDetail: false,
+        fetchListing: jest.fn().mockResolvedValue([
+          rawSnap({ storeSku: 'a', name: 'Віскі Aberlour 12 років 40% 0.7л' }),
+          rawSnap({ storeSku: 'b', name: 'Віскі Ardbeg Ten 46% 0.7л' }),
+        ]),
+        enrichDetail: jest.fn(),
+        sleep: jest.fn().mockResolvedValue(undefined),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      const flavor = { enabled: true, classify: jest.fn() };
+
+      const harness = makeHarness(adapter, {
+        flavor,
+        storedLlmFlavors: new Map([['Aberlour', ['sherry', 'honey']]]),
+      });
+
+      const result = await harness.service.collectStore('faux', {
+        dryRun: true,
+      });
+
+      /**
+       * The lookup key is the name persist would store, so it carries the
+       * expression: `Ten` is part of the product, not a spec token.
+       */
+      expect(harness.products.findLlmFlavorsByNames).toHaveBeenCalledWith(
+        expect.arrayContaining(['Aberlour', 'Ardbeg Ten']),
+      );
+
+      const reused = result.items?.find((snap) => snap.storeSku === 'a');
+
+      expect(reused?.llmFlavorTags).toEqual(['honey', 'sherry']);
+      expect(reused?.llmFlavorChecked).toBe(true);
+      expect(reused?.llmFlavorConfidence).toBeUndefined();
+
+      /**
+       * Only the bottling with no stored answer reaches the model.
+       */
+      expect(flavor.classify).toHaveBeenCalledTimes(1);
+
+      const [pending] = flavor.classify.mock.calls[0] as [ProductSnapshot[]];
+
+      expect(pending.map((snap) => snap.storeSku)).toEqual(['b']);
+    },
+  );
+
+  it('does not call the model when every answer is stored', async () => {
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: false,
+      fetchListing: jest.fn().mockResolvedValue([rawSnap({ storeSku: 'a' })]),
+      enrichDetail: jest.fn(),
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    const flavor = { enabled: true, classify: jest.fn() };
+
+    const service = makeService(adapter, {
+      flavor,
+      storedLlmFlavors: new Map([['Aberlour', ['sherry']]]),
+    });
+
+    await service.collectStore('faux', { dryRun: true });
+
+    expect(flavor.classify).not.toHaveBeenCalled();
+  });
 
   it('skips the flavor pass when the LLM is disabled', async () => {
     const adapter: ScrapeAdapter = {

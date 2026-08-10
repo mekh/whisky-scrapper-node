@@ -353,6 +353,42 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
   }
 
   /**
+   * LLM-derived flavor tags already stored for the given product names.
+   *
+   * The same bottling is listed by many stores under one cleaned name, so an
+   * answer obtained for it once serves every store. The flavor pass consults
+   * this before calling the model: it saves the call, and — more importantly —
+   * keeps the two stores' rows tagged identically, which a second independent
+   * classification of the same name would not guarantee.
+   *
+   * A name classified as "unknown" has no links and so does not appear here;
+   * the caller treats it as unanswered and asks again.
+   *
+   * @param names - Cleaned product names to look up.
+   * @returns Map from name to its stored LLM tags; names with none are absent.
+   */
+  public async findLlmFlavorsByNames(
+    names: string[],
+  ): Promise<Map<string, string[]>> {
+    if (!names.length) {
+      return new Map();
+    }
+
+    const rows = await this.query(
+      `SELECT p."name", array_agg(DISTINCT f."name") AS tags
+       FROM product p
+       JOIN product_flavor pf
+         ON pf."productId" = p."id" AND pf."source" = $2
+       JOIN flavor f ON f."id" = pf."flavorId"
+       WHERE p."name" = ANY($1::text[])
+       GROUP BY p."name"`,
+      [names, FlavorSource.LLM],
+    ) as { name: string; tags: string[] }[];
+
+    return new Map(rows.map((row) => [row.name, row.tags]));
+  }
+
+  /**
    * Loads the products the LLM flavor pass has never answered for, as
    * classification input. Out-of-stock rows are included: a flavor is a
    * property of the bottle, not of its availability, and the product may come

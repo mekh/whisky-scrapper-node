@@ -6,6 +6,7 @@ import { CoreProductService } from '~core/product';
 import { CoreStoreService } from '~core/store';
 import { CoreStoreConfigService } from '~core/store-config';
 import { NotFoundError, ServerError } from '~errors';
+import { ProductNameUtils } from '~utils';
 import type {
   CollectOptions,
   ID,
@@ -321,12 +322,17 @@ export class ScrapeService {
   }
 
   /**
-   * Classifies the flavor profile of the items this store has never stored
-   * before. Known SKUs are skipped because they are the `enrich-flavors`
-   * script's job: it sweeps the whole catalogue once against a model chosen for
-   * the task, and re-asking here would spend a call per sync on a product whose
-   * answer is already stored — the flavor of a bottling does not change between
-   * runs.
+   * Fills in the flavor profile of the items this store has never stored
+   * before, reusing an answer already recorded for the same bottling and
+   * calling the model only for the rest.
+   *
+   * Known SKUs are skipped outright: their answer is already stored, and a
+   * bottling's flavor does not change between runs. The name lookup then covers
+   * the case a SKU gate cannot — a bottling this store is listing for the first
+   * time but another store already carries. Most of the catalogue is in that
+   * position, so without it a new listing would both pay for a redundant call
+   * and risk coming back with different tags than the sibling row, leaving one
+   * product tagged two ways depending on which store you looked at.
    *
    * @param known - SKUs the store has already stored.
    * @param inStock - In-stock snapshots.
@@ -340,7 +346,54 @@ export class ScrapeService {
       return;
     }
 
-    const pending = inStock.filter((snap) => !known.has(snap.storeSku));
+    const fresh = inStock.filter((snap) => !known.has(snap.storeSku));
+
+    if (!fresh.length) {
+      return;
+    }
+
+    /**
+     * Keyed on the name persist will store, so a hit here is a hit on the row
+     * that would be written. A snapshot whose name resolves to null cannot be
+     * matched and goes straight to the model.
+     */
+    const keys = new Map(
+      fresh.map((snap) => [
+        snap,
+        ProductNameUtils.resolve(snap.cleanName, snap.name),
+      ]),
+    );
+
+    const stored = await this.products.findLlmFlavorsByNames([
+      ...new Set([...keys.values()].filter((key): key is string => !!key)),
+    ]);
+
+    const pending = fresh.filter((snap) => {
+      const key = keys.get(snap);
+      const tags = key === null || key === undefined
+        ? undefined
+        : stored.get(key);
+
+      if (!tags) {
+        return true;
+      }
+
+      /**
+       * `llmFlavorConfidence` stays unset: the stored links do not record what
+       * the model claimed when it produced them, and inventing a value here
+       * would misreport it. `llmFlavorChecked` is what persist gates on.
+       */
+      snap.llmFlavorTags = [...tags].sort();
+      snap.llmFlavorChecked = true;
+
+      return false;
+    });
+
+    this.logger.debug(
+      'Flavor pass: %d of %d new SKU(s) reused a stored answer',
+      fresh.length - pending.length,
+      fresh.length,
+    );
 
     if (pending.length > 0) {
       await this.llmFlavor.classify(pending);

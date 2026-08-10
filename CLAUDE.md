@@ -608,6 +608,17 @@ wrappers): `scrape/` has its own internal layering.
   same `existingSkus` lookup, fetched once and shared); stored rows are swept
   once by `pnpm enrich-flavors`. A bottling's flavor does not change between
   runs, so re-asking per sync would be pure spend.
+  **A new SKU still reuses an answer stored under the same name before it asks**
+  (`findLlmFlavorsByNames`, keyed on `ProductNameUtils.resolve` so the key is
+  exactly the name persist will write). The SKU gate alone cannot cover this:
+  724 names are carried by more than one store, spanning 5 527 of 6 990 rows, so
+  a store listing a bottling for the first time would otherwise pay for a call
+  whose answer is already in the table — and could get *different* tags than the
+  sibling row, leaving one product tagged two ways depending on which store you
+  looked at. Measured on the current catalogue, 1 721 of 2 059 names are
+  reusable. A name classified `unknown` has no links, so it is indistinguishable
+  from unasked here and does get re-asked; that is the deliberate second chance,
+  and the only remaining case that reaches the model.
   **The stored back-catalogue was swept by the `flavor-llm-import` migration
   instead of by that script** (see "Whisky domain"), because deduplicating to
   2 059 distinct names cut the work by ~70% versus the script's per-row

@@ -385,6 +385,123 @@ describe('ScrapeService.collectStore', () => {
     },
   );
 
+  it('asks about a bottling once however many SKUs list it', async () => {
+    // Two volumes of one whisky are two SKUs but one flavor profile.
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: false,
+      fetchListing: jest.fn().mockResolvedValue([
+        rawSnap({ storeSku: 'a', name: 'Віскі Aberlour 12 років 40% 0.7л' }),
+        rawSnap({ storeSku: 'b', name: 'Віскі Aberlour 12 років 40% 1л' }),
+        rawSnap({ storeSku: 'c', name: 'Віскі Ardbeg Ten 46% 0.7л' }),
+      ]),
+      enrichDetail: jest.fn(),
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    const flavor = {
+      enabled: true,
+      classify: jest.fn().mockImplementation((heads: ProductSnapshot[]) => {
+        heads.forEach((head) => {
+          head.llmFlavorTags = ['sherry'];
+          head.llmFlavorConfidence = 'high';
+          head.llmFlavorChecked = true;
+        });
+
+        return Promise.resolve();
+      }),
+    };
+
+    const service = makeService(adapter, { flavor });
+
+    const result = await service.collectStore('faux', { dryRun: true });
+
+    const [heads] = flavor.classify.mock.calls[0] as [ProductSnapshot[]];
+
+    expect(heads.map((snap) => snap.storeSku)).toEqual(['a', 'c']);
+
+    /**
+     * The sibling carries the head's answer, so the two rows cannot end up
+     * tagged differently.
+     */
+    const sibling = result.items?.find((snap) => snap.storeSku === 'b');
+
+    expect(sibling?.llmFlavorTags).toEqual(['sherry']);
+    expect(sibling?.llmFlavorConfidence).toBe('high');
+    expect(sibling?.llmFlavorChecked).toBe(true);
+  });
+
+  it('leaves a group unchecked when its head went unanswered', async () => {
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: false,
+      fetchListing: jest.fn().mockResolvedValue([
+        rawSnap({ storeSku: 'a', name: 'Віскі Aberlour 12 років 40% 0.7л' }),
+        rawSnap({ storeSku: 'b', name: 'Віскі Aberlour 12 років 40% 1л' }),
+      ]),
+      enrichDetail: jest.fn(),
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    const flavor = { enabled: true, classify: jest.fn() };
+
+    const service = makeService(adapter, { flavor });
+
+    const result = await service.collectStore('faux', { dryRun: true });
+
+    /**
+     * Half a group recorded as checked would never be asked about again.
+     */
+    expect(result.items?.every((snap) => snap.llmFlavorChecked === undefined))
+      .toBe(true);
+  });
+
+  it('skips every LLM pass once the run is out of LLM budget', async () => {
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: false,
+      fetchListing: jest.fn().mockResolvedValue([rawSnap({})]),
+      enrichDetail: jest.fn(),
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    const llm = { enabled: true, enrich: jest.fn() };
+    const names = { enabled: true, extractNames: jest.fn() };
+    const flavor = { enabled: true, classify: jest.fn() };
+    const skipped: string[] = [];
+    const controller = new AbortController();
+
+    controller.abort();
+
+    const service = makeService(adapter, { llm, names, flavor });
+
+    const result = await service.collectStore('faux', {
+      dryRun: true,
+      llmDeadline: controller.signal,
+      reporter: (event) => {
+        if (event.kind === 'llm-deadline') {
+          skipped.push(event.pass);
+        }
+      },
+    });
+
+    expect(llm.enrich).not.toHaveBeenCalled();
+    expect(names.extractNames).not.toHaveBeenCalled();
+    expect(flavor.classify).not.toHaveBeenCalled();
+
+    /**
+     * The collection still succeeds: the scraped listing is what a sync is
+     * for, and the model's answers are asked for again next run.
+     */
+    expect(result.items).toHaveLength(1);
+
+    /**
+     * The fields pass reports nothing because it had nothing to ask about —
+     * this name states its own ABV and volume, so no field was missing.
+     */
+    expect(skipped).toEqual(['names', 'flavors']);
+  });
+
   it('does not call the model when every answer is stored', async () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',

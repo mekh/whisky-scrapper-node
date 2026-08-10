@@ -338,6 +338,23 @@ export type ScrapeProgressEvent =
   }
   | {
     /**
+     * An LLM pass was skipped: the run's LLM budget was already spent when it
+     * came up. The items keep their gaps and the next run asks about them.
+     */
+    kind: 'llm-deadline';
+
+    /**
+     * Which pass was skipped.
+     */
+    pass: 'fields' | 'names' | 'flavors';
+
+    /**
+     * How many items it would have sent to the model.
+     */
+    pending: number;
+  }
+  | {
+    /**
      * The store's write transaction committed.
      */
     kind: 'persisted';
@@ -471,6 +488,15 @@ export interface CollectOptions {
    * Optional progress sink.
    */
   reporter?: ScrapeProgressReporter;
+
+  /**
+   * Deadline for the LLM passes only, ahead of the caller's own timeout. Once
+   * it fires the passes stop asking and the run goes on to persist what it
+   * collected: the model's answers are the one optional part of a collection,
+   * and losing a scrape that already succeeded to a timeout is far worse than
+   * leaving some fields for the next run to fill.
+   */
+  llmDeadline?: AbortSignal;
 }
 
 /**

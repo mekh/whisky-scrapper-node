@@ -35,6 +35,69 @@ const ENRICH_PROGRESS_EVERY = 10;
  */
 @Injectable()
 export class ScrapeService {
+  /**
+   * Groups snapshots by the resolved name persist will store them under, so one
+   * bottling is classified once however many SKUs of it this store lists. Two
+   * volumes of the same whisky are two SKUs but one flavor profile, and asking
+   * twice both pays twice and risks the two rows disagreeing.
+   *
+   * A snapshot whose name resolves to null matches nothing and stays a group of
+   * its own.
+   *
+   * @param pending - Snapshots awaiting classification.
+   * @param keys - Each snapshot's resolved name, from the caller's lookup map.
+   * @returns One group per distinct name, each headed by the snapshot to
+   *   actually send to the model.
+   */
+  private static groupByFlavorKey(
+    pending: ProductSnapshot[],
+    keys: Map<ProductSnapshot, string | null>,
+  ): ProductSnapshot[][] {
+    const named = new Map<string, ProductSnapshot[]>();
+    const nameless: ProductSnapshot[][] = [];
+
+    pending.forEach((snap) => {
+      const key = keys.get(snap);
+
+      if (key === null || key === undefined) {
+        nameless.push([snap]);
+
+        return;
+      }
+
+      const group = named.get(key);
+
+      if (group) {
+        group.push(snap);
+
+        return;
+      }
+
+      named.set(key, [snap]);
+    });
+
+    return [...named.values(), ...nameless];
+  }
+
+  /**
+   * Copies each group head's answer onto the siblings that share its name. An
+   * unanswered head is copied too — the whole group then stays unchecked and is
+   * asked about again next run, rather than half of it recording a miss.
+   *
+   * @param groups - Groups as built by {@link groupByFlavorKey}.
+   */
+  private static fanOutFlavors(groups: ProductSnapshot[][]): void {
+    groups.forEach(([head, ...siblings]) => {
+      siblings.forEach((snap) => {
+        snap.llmFlavorTags = head.llmFlavorTags
+          ? [...head.llmFlavorTags]
+          : undefined;
+        snap.llmFlavorConfidence = head.llmFlavorConfidence;
+        snap.llmFlavorChecked = head.llmFlavorChecked;
+      });
+    });
+  }
+
   private readonly logger = new Logger(ScrapeService.name);
 
   private readonly stores: CoreStoreService;
@@ -124,7 +187,9 @@ export class ScrapeService {
       inStock: inStock.length,
     });
 
-    await this.runLlm(inStock, backfill, options.reporter);
+    const { llmDeadline } = options;
+
+    await this.runLlm(inStock, backfill, options.reporter, llmDeadline);
 
     /**
      * Both remaining passes only ever act on SKUs this store has never stored,
@@ -132,8 +197,18 @@ export class ScrapeService {
      */
     const known = await this.products.existingSkus(store.id);
 
-    await this.runNameExtraction(known, inStock, options.reporter);
-    await this.runFlavorEnrichment(known, inStock, options.reporter);
+    await this.runNameExtraction(
+      known,
+      inStock,
+      options.reporter,
+      llmDeadline,
+    );
+    await this.runFlavorEnrichment(
+      known,
+      inStock,
+      options.reporter,
+      llmDeadline,
+    );
 
     if (options.dryRun) {
       return {
@@ -284,12 +359,14 @@ export class ScrapeService {
    * @param inStock - In-stock snapshots.
    * @param backfill - Whether the wider backfill trigger applies.
    * @param reporter - Optional progress reporter.
+   * @param signal - Optional LLM deadline.
    * @returns Resolves once enrichment has been attempted.
    */
   private async runLlm(
     inStock: ProductSnapshot[],
     backfill: boolean,
     reporter?: ScrapeProgressReporter,
+    signal?: AbortSignal,
   ): Promise<void> {
     if (!this.llm.enabled) {
       return;
@@ -300,11 +377,17 @@ export class ScrapeService {
       || (backfill && (snap.whiskyType === null || snap.country === null))
     );
 
-    if (pending.length > 0) {
-      reporter?.({ kind: 'llm', pass: 'fields', pending: pending.length });
-
-      await this.llm.enrich(pending);
+    if (!pending.length) {
+      return;
     }
+
+    if (this.outOfLlmBudget('fields', pending.length, reporter, signal)) {
+      return;
+    }
+
+    reporter?.({ kind: 'llm', pass: 'fields', pending: pending.length });
+
+    await this.llm.enrich(pending, signal);
   }
 
   /**
@@ -315,12 +398,14 @@ export class ScrapeService {
    * @param known - SKUs the store has already stored.
    * @param inStock - In-stock snapshots.
    * @param reporter - Optional progress reporter.
+   * @param signal - Optional LLM deadline.
    * @returns Resolves once extraction has been attempted.
    */
   private async runNameExtraction(
     known: Set<string>,
     inStock: ProductSnapshot[],
     reporter?: ScrapeProgressReporter,
+    signal?: AbortSignal,
   ): Promise<void> {
     if (!this.llmNames.enabled || !inStock.length) {
       return;
@@ -328,11 +413,17 @@ export class ScrapeService {
 
     const pending = inStock.filter((snap) => !known.has(snap.storeSku));
 
-    if (pending.length > 0) {
-      reporter?.({ kind: 'llm', pass: 'names', pending: pending.length });
-
-      await this.llmNames.extractNames(pending);
+    if (!pending.length) {
+      return;
     }
+
+    if (this.outOfLlmBudget('names', pending.length, reporter, signal)) {
+      return;
+    }
+
+    reporter?.({ kind: 'llm', pass: 'names', pending: pending.length });
+
+    await this.llmNames.extractNames(pending, undefined, signal);
   }
 
   /**
@@ -351,12 +442,14 @@ export class ScrapeService {
    * @param known - SKUs the store has already stored.
    * @param inStock - In-stock snapshots.
    * @param reporter - Optional progress reporter.
+   * @param signal - Optional LLM deadline.
    * @returns Resolves once classification has been attempted.
    */
   private async runFlavorEnrichment(
     known: Set<string>,
     inStock: ProductSnapshot[],
     reporter?: ScrapeProgressReporter,
+    signal?: AbortSignal,
   ): Promise<void> {
     if (!this.llmFlavor.enabled || !inStock.length) {
       return;
@@ -411,10 +504,60 @@ export class ScrapeService {
       fresh.length,
     );
 
-    if (pending.length > 0) {
-      reporter?.({ kind: 'llm', pass: 'flavors', pending: pending.length });
-
-      await this.llmFlavor.classify(pending);
+    if (!pending.length) {
+      return;
     }
+
+    const groups = ScrapeService.groupByFlavorKey(pending, keys);
+
+    this.logger.debug(
+      'Flavor pass: %d new SKU(s) cover %d distinct name(s)',
+      pending.length,
+      groups.length,
+    );
+
+    if (this.outOfLlmBudget('flavors', groups.length, reporter, signal)) {
+      return;
+    }
+
+    reporter?.({ kind: 'llm', pass: 'flavors', pending: groups.length });
+
+    await this.llmFlavor.classify(
+      groups.map((group) => group[0]),
+      undefined,
+      signal,
+    );
+
+    ScrapeService.fanOutFlavors(groups);
+  }
+
+  /**
+   * Whether an LLM pass has to be skipped because the run's LLM budget is
+   * already spent, reporting the skip when it does.
+   *
+   * @param pass - Which pass is being considered.
+   * @param pending - How many items it would have asked about.
+   * @param reporter - Optional progress reporter.
+   * @param signal - Optional LLM deadline.
+   * @returns True when the pass must not run.
+   */
+  private outOfLlmBudget(
+    pass: 'fields' | 'names' | 'flavors',
+    pending: number,
+    reporter?: ScrapeProgressReporter,
+    signal?: AbortSignal,
+  ): boolean {
+    if (signal?.aborted !== true) {
+      return false;
+    }
+
+    this.logger.warn(
+      'LLM %s pass skipped: the run is out of LLM budget (%d item(s) left)',
+      pass,
+      pending,
+    );
+    reporter?.({ kind: 'llm-deadline', pass, pending });
+
+    return true;
   }
 }

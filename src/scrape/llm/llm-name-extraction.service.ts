@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 
+import { ScrapeConfig } from '~config';
 import { ProductNameUtils } from '~utils';
 
 import { LlmBatchRunner } from './llm-batch.runner';
@@ -86,8 +87,11 @@ export class LlmNameExtractionService {
 
   private readonly client: LlmClientService;
 
-  public constructor(client: LlmClientService) {
+  private readonly config: ScrapeConfig;
+
+  public constructor(client: LlmClientService, config: ScrapeConfig) {
     this.client = client;
+    this.config = config;
   }
 
   /**
@@ -107,11 +111,14 @@ export class LlmNameExtractionService {
    * @param items - Candidates to extract names for (mutated in place).
    * @param onProgress - Optional progress callback, for the backfill script:
    *   the whole catalogue is one long silent wait otherwise.
+   * @param signal - Optional deadline: once it fires, the chunks not yet sent
+   *   are skipped and their candidates fall back to the deterministic pass.
    * @returns Resolves once every chunk has been attempted.
    */
   public async extractNames(
     items: LlmNameCandidate[],
     onProgress?: (done: number, total: number) => void,
+    signal?: AbortSignal,
   ): Promise<void> {
     if (!this.client.enabled || !items.length) {
       return;
@@ -128,6 +135,7 @@ export class LlmNameExtractionService {
           error instanceof Error ? error.message : error,
         ),
       onProgress,
+      { concurrency: this.config.llmConcurrency, signal },
     );
   }
 

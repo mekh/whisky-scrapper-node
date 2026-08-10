@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import {
   IsBoolean,
+  IsInt,
   IsNumber,
   IsOptional,
   IsPositive,
   IsString,
+  Min,
 } from 'class-validator';
 
 import { BaseConfig } from '../base.config';
@@ -24,6 +26,12 @@ const DEFAULT_LLM_BASE_URL = 'https://openrouter.ai/api/v1';
  */
 const DEFAULT_LLM_APP_NAME = 'Whisky dev';
 const DEFAULT_LLM_APP_URL = 'https://whisky.vlm.com.ua/';
+
+const DEFAULT_LLM_CONCURRENCY = 5;
+
+const DEFAULT_LLM_TIMEOUT_MS = 120 * 1000;
+
+const DEFAULT_LLM_MAX_RETRIES = 2;
 
 @Injectable()
 export class ScrapeConfig extends BaseConfig {
@@ -93,6 +101,43 @@ export class ScrapeConfig extends BaseConfig {
   @IsBoolean()
   public readonly llmFlavorReasoning = this.asBoolean('LLM_FLAVOR_REASONING')
     ?? this.llmReasoning;
+
+  /**
+   * How many batches of one pass may be in flight at once. Sending them one at
+   * a time is what used to time a sync out: a store with ~800 pending items is
+   * twenty batches, and the provider sat idle between every one of them.
+   *
+   * OpenRouter publishes no request-rate ceiling for a funded key — only
+   * abuse-level protection — so this is a politeness cap rather than a limit to
+   * fit under, and a rate limit is handled by backing the whole pass off rather
+   * than by keeping this number low.
+   */
+  @IsInt()
+  @IsPositive()
+  public readonly llmConcurrency = this.asNumber('LLM_CONCURRENCY')
+    ?? DEFAULT_LLM_CONCURRENCY;
+
+  /**
+   * Per-attempt timeout for one chat-completions call. The SDK's own default is
+   * ten minutes, which no batch legitimately needs (a 40-item chunk answers in
+   * seconds with reasoning off) and which lets a single stalled call outlast
+   * the sync's whole budget.
+   */
+  @IsInt()
+  @IsPositive()
+  public readonly llmTimeoutMs = this.asNumber('LLM_TIMEOUT_MS')
+    ?? DEFAULT_LLM_TIMEOUT_MS;
+
+  /**
+   * How many times the SDK retries one call itself before the error reaches the
+   * batch runner. The SDK honours the provider's `Retry-After` here, so this is
+   * the first and cheapest response to a rate limit; the runner's own retry
+   * only engages once these are spent.
+   */
+  @IsInt()
+  @Min(0)
+  public readonly llmMaxRetries = this.asNumber('LLM_MAX_RETRIES')
+    ?? DEFAULT_LLM_MAX_RETRIES;
 
   /**
    * Reads a variable that has a default, treating an **empty** value as unset:

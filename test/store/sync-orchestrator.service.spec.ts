@@ -162,6 +162,7 @@ function makeOrchestrator(
     maxParallelTracks: 4,
     storeTimeoutMs: 900000,
     browserStoreTimeoutMs: 2700000,
+    llmDeadlineMarginMs: 120000,
     logDir: './log',
     logRetentionDays: 30,
     ...over,
@@ -367,6 +368,42 @@ describe('SyncOrchestratorService.startStoreSync', () => {
 
     expect(outcome.success).toBe(false);
     expect(outcome.error).toContain('timed out');
+  });
+
+  it('stops the LLM passes before the run itself times out', async () => {
+    // The scrape is what a sync is for; the model's answers are optional.
+    const { orchestrator, syncLogs, scrape } = makeOrchestrator(
+      makeStore(),
+      { storeTimeoutMs: 3_600_000, llmDeadlineMarginMs: 3_599_980 },
+    );
+
+    let deadline: AbortSignal | undefined;
+
+    scrape.collectStore.mockImplementation(
+      (_slug: string, options: { llmDeadline?: AbortSignal }) => {
+        deadline = options.llmDeadline;
+
+        return Promise.resolve(RESULT);
+      },
+    );
+
+    await orchestrator.startStoreSync('maudau', SyncTrigger.CRON);
+
+    expect(deadline).toBeInstanceOf(AbortSignal);
+    expect(deadline?.aborted).toBe(false);
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(deadline?.aborted).toBe(true);
+
+    /**
+     * The run itself still succeeded — only the LLM budget expired.
+     */
+    const [, outcome] = syncLogs.finish.mock.calls[0] as [string, {
+      success: boolean;
+    }];
+
+    expect(outcome.success).toBe(true);
   });
 
   it('gives a browser-tier store the larger time budget', async () => {

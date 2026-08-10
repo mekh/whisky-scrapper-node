@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 
 import { AdapterRegistryService } from '../../src/scrape/adapters/adapter-registry.service';
+import { BayaderaAdapter } from '../../src/scrape/adapters/bayadera';
 import { FozzyAdapter } from '../../src/scrape/adapters/fozzy';
 import { GoodwineAdapter } from '../../src/scrape/adapters/goodwine';
 import { MaudauAdapter } from '../../src/scrape/adapters/maudau';
@@ -114,6 +115,7 @@ describe('AdapterRegistryService', () => {
     expect(registry.create(spec('rozetka', { tier: 3, needsBrowser: true })))
       .toBeInstanceOf(RozetkaAdapter);
     expect(registry.create(spec('silpo'))).toBeInstanceOf(SilpoAdapter);
+    expect(registry.create(spec('bayadera'))).toBeInstanceOf(BayaderaAdapter);
     expect(registry.create(spec('fozzy'))).toBeInstanceOf(FozzyAdapter);
   });
 

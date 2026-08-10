@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 
+import { ScrapeConfig } from '~config';
 import type { ProductSnapshot } from '~types';
 
 import { LlmBatchRunner } from './llm-batch.runner';
@@ -57,8 +58,11 @@ export class LlmEnrichmentService {
 
   private readonly client: LlmClientService;
 
-  public constructor(client: LlmClientService) {
+  private readonly config: ScrapeConfig;
+
+  public constructor(client: LlmClientService, config: ScrapeConfig) {
     this.client = client;
+    this.config = config;
   }
 
   /**
@@ -75,9 +79,14 @@ export class LlmEnrichmentService {
    * when disabled or the batch is empty; never throws.
    *
    * @param snaps - Snapshots to enrich (mutated in place).
+   * @param signal - Optional deadline: once it fires, the chunks not yet sent
+   *   are skipped and their snapshots keep their gaps for the next run.
    * @returns Resolves once enrichment has been attempted.
    */
-  public async enrich(snaps: ProductSnapshot[]): Promise<void> {
+  public async enrich(
+    snaps: ProductSnapshot[],
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (!this.client.enabled || !snaps.length) {
       return;
     }
@@ -92,6 +101,8 @@ export class LlmEnrichmentService {
           batch.length,
           error instanceof Error ? error.message : error,
         ),
+      undefined,
+      { concurrency: this.config.llmConcurrency, signal },
     );
   }
 

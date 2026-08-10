@@ -12,6 +12,7 @@ import type {
 import { HttpClientFactory } from '../http/http-client.factory';
 import { NormalizeService } from '../normalize/normalize.service';
 
+import { BayaderaAdapter } from './bayadera';
 import { FozzyAdapter } from './fozzy';
 import { GoodwineAdapter } from './goodwine';
 import { MaudauAdapter } from './maudau';
@@ -30,6 +31,14 @@ import type { AdapterDeps } from './adapter-registry.interfaces';
  * is therefore absent here.
  */
 const SPECIALIZED: Record<string, (deps: AdapterDeps) => ScrapeAdapter> = {
+  bayadera: (deps) =>
+    new BayaderaAdapter(
+      deps.spec,
+      deps.delayMultiplier,
+      deps.http,
+      deps.normalizer,
+      deps.reporter,
+    ),
   fozzy: (deps) =>
     new FozzyAdapter(
       deps.spec,

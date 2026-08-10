@@ -501,12 +501,13 @@ store, cascading into its products and snapshots), then the flavor overhaul —
 outside the 15-tag vocabulary: 142 of 157 rows and 633 of 7 368 links on a
 production copy, all of them left by the old unfiltered enrichment side effect
 and all re-derivable, which is why its `down()` is a documented no-op) and
-`flavor-llm-import` (the classified back-catalogue, see below) — then
-`sync-log-file` (the `sync_log.logFile` column) and `fozzy-store` (a data
-migration seeding the `fozzy` store + config, same un-onboarding `down()` as
-`silpo-store`; its comment documents that the first fill must run through
-`pnpm backfill --store fozzy`, because ~300 detail pages at the politeness
-delay blow the store sync timeout and a timed-out run persists nothing) — all
+`flavor-llm-import` (the classified back-catalogue, see below), then
+`sync-log-file`, `bayadera-store` and `fozzy-store` (data migrations seeding
+the `bayadera` / `fozzy` stores + config, same shape and un-onboarding
+`down()` semantics as `silpo-store`; the fozzy comment documents that the
+first fill must run through `pnpm backfill --store fozzy`, because ~300
+detail pages at the politeness delay blow the store sync timeout and a
+timed-out run persists nothing) — all
 applied, formatted per the `typeorm-migration-format` skill, and drift-free
 against the entities.
 
@@ -648,12 +649,61 @@ wrappers): `scrape/` has its own internal layering.
   catalogue still disagreed on ~1 % of rows (mostly whether a vintage year is
   part of the name) — so anything that must be stable across runs belongs in
   the deterministic pass, not in the prompt.
-  **`LlmBatchRunner` batches both passes (40) and halves **any** failing batch**,
-  retrying the halves until a single item fails alone. It began as a
-  budget-error-only retry — an OpenRouter slug is served by several upstream
-  providers and not all of them honour the reasoning switch — but a run then
-  lost 40 names in silence to one malformed JSON array, so the rule is now the
-  simpler one: whatever the provider does wrong, it costs one item, not a batch. Prompts
+  **`LlmBatchRunner` batches every pass (40), sends `LLM_CONCURRENCY` batches at
+  a time, and halves a failing batch** down to the single item that fails alone.
+  Halving began as a budget-error-only retry — an OpenRouter slug is served by
+  several upstream providers and not all of them honour the reasoning switch —
+  but a run then lost 40 names in silence to one malformed JSON array, so the
+  rule became the simpler one: whatever the provider answers wrong costs one
+  item, not a batch.
+  **Which failures may be halved is the distinction to keep** (`LlmRetryPolicy`):
+  halving suits an answer the model got wrong, because the halves are smaller
+  questions, and is exactly wrong for a 429 or a 5xx, where the batch was never
+  the problem and splitting it merely aims twice as many requests at whatever is
+  already refusing them. Those are re-sent whole once, after a pause the entire
+  pool observes (`Retry-After` when the provider sent one, else 2 s doubling to
+  10 s), and a rejected key (401/403) stops the run outright instead of spending
+  the budget rediscovering it forty items at a time. A cascade of halves stays
+  inside the worker slot that discovered the failure, so the concurrency cap
+  holds even mid-cascade.
+  **Sending one batch at a time is what used to time syncs out.** A silpo run
+  scraped its 1 069 items in 70 s, then spent the remaining 14 minutes of
+  `SYNC_STORE_TIMEOUT_MS` on a sequential 802-item fields pass and failed with
+  the catalogue already in memory. Two things caused it: the batches waited on
+  each other, and `LlmClientService` built a client per call with the SDK's
+  default 10-minute timeout and 2 retries, so one stalled call could outlast the
+  whole budget on its own. The client is now built once with an explicit
+  `LLM_TIMEOUT_MS`/`LLM_MAX_RETRIES` (lazily — the SDK constructor throws
+  without a key, and running with the LLM off is supported), and the passes run
+  `LLM_CONCURRENCY` batches at once. OpenRouter publishes no request-rate
+  ceiling for a funded key (the old per-credit rule is gone and the key
+  endpoint's `rate_limit` is deprecated), so that number is politeness rather
+  than a limit to fit under; a real 429 is handled by the pool-wide pause.
+  **Measured on `deepseek/deepseek-v4-flash`**: a batch of 40 takes ~13 s, so
+  five chunks of it ran 64.7 s sequentially against 14.6 s at
+  `LLM_CONCURRENCY=5` (4.4×, no 429s). Per-batch latency, not per-item cost, is
+  what made the old sequential pass unaffordable — 21 batches × 13 s is already
+  most of an HTTP store's budget before the other two passes have started. A
+  full silpo dry-run (1 069 items, all three passes, nothing stored yet, so
+  ~60 batches) now finishes in 7 m 40 s including the 70 s scrape, against a
+  15-minute budget the fields pass alone used to exhaust.
+  **The passes also observe a deadline** (`CollectOptions.llmDeadline`, set by
+  the orchestrator to the store's budget minus `SYNC_LLM_DEADLINE_MARGIN_MS`).
+  They are the one optional part of a collection — an unanswered item keeps its
+  gap and is asked about again next run — so when the budget runs short the
+  remaining batches are skipped, a `llm-deadline` line names the pass and the
+  count in the run's log file, and the run goes on to persist what it scraped
+  rather than failing a timeout. A batch already in flight finishes: its answer
+  is paid for either way.
+  **The flavor pass asks once per distinct name within a run, not per SKU.**
+  `ScrapeService` groups pending snapshots by the resolved name persist will
+  write and sends one head per group, then copies the answer onto its siblings —
+  two volumes of one bottling are two SKUs but one flavor profile, so asking
+  twice both paid twice and risked the two rows disagreeing. An unanswered head
+  leaves its whole group unchecked, so the group is retried rather than half of
+  it recording a miss. This composes with the stored-answer reuse above: both
+  key on the same resolved name, so a name is either reused for every SKU
+  carrying it or asked about once. Prompts
   are English-only even though the data is Ukrainian; the enrichment prompt
   still asks for `country` **in Ukrainian** because persist matches it against
   `country.nameUa`), `adapters/`
@@ -687,7 +737,18 @@ wrappers): `scrape/` has its own internal layering.
   but the API host answers plain requests, so the store is tier 1 despite the
   legacy tier-3 classification; the zero-UUID "guest" branch is queried,
   out-of-stock items stay listed with `stock: 0` and feed `inStock` directly,
-  volume comes from `displayRatio`, brand from `brandTitle`), `fozzy/`
+  volume comes from `displayRatio`, brand from `brandTitle`), `bayadera/`
+  (custom SSR platform, tier 1 via plain HTTP, `?page=N` — every listing card
+  carries the whole item as JSON in the buy button's `data-product-info`
+  attribute: `article` is the SKU, prices are kopecks, `volume` is the pack
+  size, and the unlabeled `attributes` values go into `rawAttrs` so the
+  keyword pass finds country and flavors; `data-is-in-stock` feeds `inStock`
+  directly, the pre-discount price only exists as the struck-through
+  `.goodCost.old` text, a brand value sometimes arrives category-prefixed
+  (`Віскі Glenmorangie`) and the prefix is stripped, and the "top sales"
+  slider is excluded by the `:not(.slide)` card selector because a page past
+  the catalog end answers 200 with fallback products — the walk ends via SKU
+  dedup, not an empty page), and `fozzy/`
   (fozzyshop.ua, server-rendered `?page=N` listing behind Cloudflare that
   answers plain GETs; the card's `data-*` attributes carry id/name/prices,
   where `data-secondary-price` is the old price **only** when
@@ -794,6 +855,13 @@ wrappers): `scrape/` has its own internal layering.
   the lock, so it must happen exactly once, and the lock path is never wrapped
   in `@Transactional()` (the ALS context would leak into the background run).
   A timed-out collection is abandoned, not aborted: the row is already closed.
+  It also hands the collection a **second, earlier signal** for the LLM passes
+  alone (`CollectOptions.llmDeadline`, the same budget minus
+  `SYNC_LLM_DEADLINE_MARGIN_MS`). Unlike the hard timeout that only ends the
+  wait, this one is cooperative: the passes stop asking, log which pass and how
+  many items were left, and the run persists its catalogue — which is the
+  difference between a sync that fills some fields next time and one that throws
+  away a successful scrape (see "Scraping engine").
 - `runFullSync()` splits active `ts` stores into tracks (`group ?? id`), runs
   tracks in `SYNC_MAX_PARALLEL_TRACKS`-sized chunks and the stores inside a
   track strictly sequentially; a store that cannot start is warned and skipped.
@@ -969,7 +1037,11 @@ one place where the answer depends on the model actually knowing the bottling
 rather than rewriting an input line, so it is worth a stronger slug than the
 extraction passes (measured: `anthropic/claude-sonnet-5` discriminates per
 product where `deepseek-v4-flash` returns a per-category template — see
-"Scraping engine"); `LLM_APP_NAME` /
+"Scraping engine"); `LLM_CONCURRENCY` (5 — batches in flight per pass; a
+politeness cap, since OpenRouter publishes no rate ceiling for a funded key),
+`LLM_TIMEOUT_MS` (120000) and `LLM_MAX_RETRIES` (2) — the two SDK limits the
+client used to leave at their defaults of ten minutes and two retries, which let
+one stalled call outlast a whole sync; `LLM_APP_NAME` /
 `LLM_APP_URL` — sent as OpenRouter's `X-Title` / `HTTP-Referer` attribution
 pair, which fills the `App` column of its activity log. Default `Whisky dev`,
 with `docker-compose.yaml` defaulting the deployed service to `Whisky prod`,
@@ -980,6 +1052,8 @@ configured); sync vars in
 `SYNC_MAX_PARALLEL_TRACKS` (4), `SYNC_STORE_TIMEOUT_MS` (900000),
 `SYNC_BROWSER_STORE_TIMEOUT_MS` (2700000 — the budget for a `needsBrowser`
 store, which needs ~20 min for a full pass and would never fit the HTTP one),
+`SYNC_LLM_DEADLINE_MARGIN_MS` (120000 — how early the LLM passes must stop so
+the run still has time to persist; see "Scraping engine"),
 `SYNC_LOG_DIR` (`./log`; empty disables per-sync log files) and
 `SYNC_LOG_RETENTION_DAYS` (30; `0` keeps every file — see "Sync
 orchestration").
@@ -1115,9 +1189,10 @@ scrape engine (`normalize`/`http`/`html`/`browser`/`llm`/`persist` +
 endpoints (see "Sync orchestration"), and **every adapter** — the 19 Zakaz.ua
 networks, `maudau`, `okwine`, `winewine`, `wine-point`, `goodwine`, `rozetka`,
 `silpo` (added 2026-08-09, straight to the TS engine via its open catalog
-JSON API — no Python counterpart ever ran it in production), and `fozzy`
-(added 2026-08-10, TS-only as well — fozzyshop.ua, SSR HTML; first fill via
-`pnpm backfill --store fozzy`, see the migration list) —
+JSON API — no Python counterpart ever ran it in production), `bayadera`
+(added 2026-08-10, also TS-only — a brand-new store with no legacy history),
+and `fozzy` (added 2026-08-10, TS-only as well — fozzyshop.ua, SSR HTML;
+first fill via `pnpm backfill --store fozzy`, see the migration list) —
 with golden tests and the parity harness, and the internal daily cron — which **ships disabled**
 (`SYNC_CRON_ENABLED` unset), so the Python system cron still owns the schedule.
 Pending: the web "Sync" button and the Python decommission. **The cutover is

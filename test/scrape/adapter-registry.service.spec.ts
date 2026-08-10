@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 
 import { AdapterRegistryService } from '../../src/scrape/adapters/adapter-registry.service';
+import { AlcomagAdapter } from '../../src/scrape/adapters/alcomag';
 import { BayaderaAdapter } from '../../src/scrape/adapters/bayadera';
 import { FozzyAdapter } from '../../src/scrape/adapters/fozzy';
 import { GoodwineAdapter } from '../../src/scrape/adapters/goodwine';
@@ -105,6 +106,7 @@ describe('AdapterRegistryService', () => {
   it('resolves the specialized adapters by slug', () => {
     const registry = makeRegistry();
 
+    expect(registry.create(spec('alcomag'))).toBeInstanceOf(AlcomagAdapter);
     expect(registry.create(spec('maudau'))).toBeInstanceOf(MaudauAdapter);
     expect(registry.create(spec('okwine'))).toBeInstanceOf(OkwineAdapter);
     expect(registry.create(spec('winewine'))).toBeInstanceOf(WinewineAdapter);
@@ -122,6 +124,7 @@ describe('AdapterRegistryService', () => {
   it('reports which of the detail-page stores fetch product pages', () => {
     const registry = makeRegistry();
 
+    expect(registry.create(spec('alcomag')).supportsDetail).toBe(true);
     expect(registry.create(spec('winewine')).supportsDetail).toBe(true);
     expect(registry.create(spec('wine-point')).supportsDetail).toBe(true);
     expect(registry.create(spec('goodwine')).supportsDetail).toBe(true);

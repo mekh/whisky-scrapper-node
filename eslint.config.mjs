@@ -13,6 +13,9 @@ export default [
       'coverage/**',
       'migrations/**',
       'eslint.config.mjs',
+      // Worktrees created by Claude Code sessions live inside the repo; a
+      // bare `eslint --fix` must not walk into their checkouts.
+      '.claude/**',
     ],
   },
   flatConfigs.recommended,

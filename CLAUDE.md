@@ -507,7 +507,10 @@ the `bayadera` / `fozzy` stores + config, same shape and un-onboarding
 `down()` semantics as `silpo-store`; the fozzy comment documents that the
 first fill must run through `pnpm backfill --store fozzy`, because ~300
 detail pages at the politeness delay blow the store sync timeout and a
-timed-out run persists nothing) — all
+timed-out run persists nothing), and `alcomag-store` (the `alcomag` store +
+config, same shape again; the first fill runs through
+`pnpm backfill --store alcomag` for the same timeout reason — ~600 detail
+pages) — all
 applied, formatted per the `typeorm-migration-format` skill, and drift-free
 against the entities.
 
@@ -748,7 +751,7 @@ wrappers): `scrape/` has its own internal layering.
   (`Віскі Glenmorangie`) and the prefix is stripped, and the "top sales"
   slider is excluded by the `:not(.slide)` card selector because a page past
   the catalog end answers 200 with fallback products — the walk ends via SKU
-  dedup, not an empty page), and `fozzy/`
+  dedup, not an empty page), `fozzy/`
   (fozzyshop.ua, server-rendered `?page=N` listing behind Cloudflare that
   answers plain GETs; the card's `data-*` attributes carry id/name/prices,
   where `data-secondary-price` is the old price **only** when
@@ -757,7 +760,21 @@ wrappers): `scrape/` has its own internal layering.
   the rendered unit label (`0,7л`), only available items are listed, and the
   product page's characteristics list fills country/brand/ABV/age/type via
   `supportsDetail` — age through `parseAgeValue`, added because the field is
-  a bare `12` no age regex matches). The registry
+  a bare `12` no age regex matches), and `alcomag/`
+  (Bitrix/Aspro SSR via cheerio, `?PAGEN_1=N` pagination, `supportsDetail`;
+  the article number is the SKU and may be non-numeric (`МТ10`), availability
+  is a positive «Є в наявності» marker — an unknown label drops the card so a
+  rewording cannot mass-flag the store, and out-of-stock cards carry a
+  `1.00 грн` placeholder price, so an in-stock card at/below 1 is dropped too;
+  the `properties__item` detail list fills abv/volume/type/country and — like
+  okwine's spec field — the `Витримка` age, but **never the brand**: the
+  page's `Виробник` is the legal producer (`Campari Group` for Old Smuggler —
+  94 of 154 in-stock items at onboarding), so brand is left to the pipeline's
+  brand-from-name pass (129/154 measured); the detail pass also stashes
+  the page description into `rawAttrs.description` for the LLM flavor pass,
+  and skips out-of-stock snapshots since only their SKU is persisted; a page
+  number past the catalog end makes Bitrix serve page 1 again, which the
+  no-new-SKU stop absorbs). The registry
   resolves a specialized adapter by slug and falls back to `ZakazAdapter` for
   any store with a `retailChain`/`category`.
 - **selectolax vs cheerio gotcha**: the Python adapters read text with
@@ -1191,8 +1208,11 @@ networks, `maudau`, `okwine`, `winewine`, `wine-point`, `goodwine`, `rozetka`,
 `silpo` (added 2026-08-09, straight to the TS engine via its open catalog
 JSON API — no Python counterpart ever ran it in production), `bayadera`
 (added 2026-08-10, also TS-only — a brand-new store with no legacy history),
-and `fozzy` (added 2026-08-10, TS-only as well — fozzyshop.ua, SSR HTML;
-first fill via `pnpm backfill --store fozzy`, see the migration list) —
+`fozzy` (added 2026-08-10, TS-only as well — fozzyshop.ua, SSR HTML;
+first fill via `pnpm backfill --store fozzy`, see the migration list), and
+`alcomag` (added 2026-08-10, TS-only as well — Bitrix SSR, see "Adapters";
+its first full detail sweep exceeds `SYNC_STORE_TIMEOUT_MS` too, so seed the
+fields with `pnpm backfill --store alcomag` once after deploy) —
 with golden tests and the parity harness, and the internal daily cron — which **ships disabled**
 (`SYNC_CRON_ENABLED` unset), so the Python system cron still owns the schedule.
 Pending: the web "Sync" button and the Python decommission. **The cutover is

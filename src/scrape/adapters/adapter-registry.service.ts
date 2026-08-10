@@ -12,6 +12,7 @@ import type {
 import { HttpClientFactory } from '../http/http-client.factory';
 import { NormalizeService } from '../normalize/normalize.service';
 
+import { AlcomagAdapter } from './alcomag';
 import { GoodwineAdapter } from './goodwine';
 import { MaudauAdapter } from './maudau';
 import { OkwineAdapter } from './okwine';
@@ -29,6 +30,14 @@ import type { AdapterDeps } from './adapter-registry.interfaces';
  * is therefore absent here.
  */
 const SPECIALIZED: Record<string, (deps: AdapterDeps) => ScrapeAdapter> = {
+  alcomag: (deps) =>
+    new AlcomagAdapter(
+      deps.spec,
+      deps.delayMultiplier,
+      deps.http,
+      deps.normalizer,
+      deps.reporter,
+    ),
   maudau: (deps) =>
     new MaudauAdapter(
       deps.spec,

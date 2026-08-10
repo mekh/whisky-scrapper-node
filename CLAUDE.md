@@ -501,7 +501,9 @@ store, cascading into its products and snapshots), then the flavor overhaul —
 outside the 15-tag vocabulary: 142 of 157 rows and 633 of 7 368 links on a
 production copy, all of them left by the old unfiltered enrichment side effect
 and all re-derivable, which is why its `down()` is a documented no-op) and
-`flavor-llm-import` (the classified back-catalogue, see below) — all
+`flavor-llm-import` (the classified back-catalogue, see below), and
+`alcomag-store` (a data migration seeding the `alcomag` store + config, same
+shape and `down()` semantics as `silpo-store`) — all
 applied, formatted per the `typeorm-migration-format` skill, and drift-free
 against the entities.
 
@@ -682,7 +684,21 @@ wrappers): `scrape/` has its own internal layering.
   but the API host answers plain requests, so the store is tier 1 despite the
   legacy tier-3 classification; the zero-UUID "guest" branch is queried,
   out-of-stock items stay listed with `stock: 0` and feed `inStock` directly,
-  volume comes from `displayRatio`, brand from `brandTitle`). The registry
+  volume comes from `displayRatio`, brand from `brandTitle`), `alcomag/`
+  (Bitrix/Aspro SSR via cheerio, `?PAGEN_1=N` pagination, `supportsDetail`;
+  the article number is the SKU and may be non-numeric (`МТ10`), availability
+  is a positive «Є в наявності» marker — an unknown label drops the card so a
+  rewording cannot mass-flag the store, and out-of-stock cards carry a
+  `1.00 грн` placeholder price, so an in-stock card at/below 1 is dropped too;
+  the `properties__item` detail list fills abv/volume/type/country and — like
+  okwine's spec field — the `Витримка` age, but **never the brand**: the
+  page's `Виробник` is the legal producer (`Campari Group` for Old Smuggler —
+  94 of 154 in-stock items at onboarding), so brand is left to the pipeline's
+  brand-from-name pass (129/154 measured); the detail pass also stashes
+  the page description into `rawAttrs.description` for the LLM flavor pass,
+  and skips out-of-stock snapshots since only their SKU is persisted; a page
+  number past the catalog end makes Bitrix serve page 1 again, which the
+  no-new-SKU stop absorbs). The registry
   resolves a specialized adapter by slug and falls back to `ZakazAdapter` for
   any store with a `retailChain`/`category`.
 - **selectolax vs cheerio gotcha**: the Python adapters read text with
@@ -1100,8 +1116,11 @@ scrape engine (`normalize`/`http`/`html`/`browser`/`llm`/`persist` +
 `ScrapeService.collectStore`), the sync orchestrator + on-demand/status
 endpoints (see "Sync orchestration"), and **every adapter** — the 19 Zakaz.ua
 networks, `maudau`, `okwine`, `winewine`, `wine-point`, `goodwine`, `rozetka`,
-and `silpo` (added 2026-08-09, straight to the TS engine via its open catalog
-JSON API — no Python counterpart ever ran it in production) —
+`silpo` (added 2026-08-09, straight to the TS engine via its open catalog
+JSON API — no Python counterpart ever ran it in production), and `alcomag`
+(added 2026-08-10, TS-only as well — Bitrix SSR, see "Adapters"; its first
+full detail sweep exceeds `SYNC_STORE_TIMEOUT_MS`, so seed the fields with
+`pnpm backfill --store alcomag` once after deploy) —
 with golden tests and the parity harness, and the internal daily cron — which **ships disabled**
 (`SYNC_CRON_ENABLED` unset), so the Python system cron still owns the schedule.
 Pending: the web "Sync" button and the Python decommission. **The cutover is

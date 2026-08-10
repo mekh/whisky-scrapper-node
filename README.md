@@ -243,8 +243,7 @@ docker compose run --rm service node dist/scripts/backfill-nulls.js --dry-run
 
 Dry-run the in-process scraper for one store without writing (every store the
 project scrapes has an adapter — the 19 Zakaz.ua networks, `maudau`, `okwine`,
-`winewine`, `wine-point`, `goodwine` and `rozetka`; only the disabled `silpo`
-is left out):
+`winewine`, `wine-point`, `goodwine`, `rozetka`, `silpo` and `alcomag`):
 
 ```bash
 pnpm exec ts-node -r tsconfig-paths/register scripts/scrape-dry-run.ts <slug> \

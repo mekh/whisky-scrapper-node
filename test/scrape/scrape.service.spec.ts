@@ -40,6 +40,7 @@ const STORE: StoreListItem = {
  */
 interface HarnessOptions {
   skusWithCoreDetails: Set<string>;
+  skusWithoutLlmFlavor: Set<string>;
   existingSkus: Set<string>;
   storedLlmFlavors: Map<string, string[]>;
   brandNames: string[];
@@ -56,6 +57,7 @@ interface Harness extends HarnessOptions {
   service: ScrapeService;
   products: {
     skusWithCoreDetails: jest.Mock;
+    skusWithoutLlmFlavor: jest.Mock;
     existingSkus: jest.Mock;
     findLlmFlavorsByNames: jest.Mock;
   };
@@ -90,6 +92,7 @@ function makeHarness(
 ): Harness {
   const options: HarnessOptions = {
     skusWithCoreDetails: new Set<string>(),
+    skusWithoutLlmFlavor: new Set<string>(),
     existingSkus: new Set<string>(),
     storedLlmFlavors: new Map<string, string[]>(),
     brandNames: [],
@@ -111,6 +114,8 @@ function makeHarness(
   const products = {
     skusWithCoreDetails: jest.fn()
       .mockResolvedValue(options.skusWithCoreDetails),
+    skusWithoutLlmFlavor: jest.fn()
+      .mockResolvedValue(options.skusWithoutLlmFlavor),
     existingSkus: jest.fn().mockResolvedValue(options.existingSkus),
     findLlmFlavorsByNames: jest.fn()
       .mockResolvedValue(options.storedLlmFlavors),
@@ -797,5 +802,64 @@ describe('ScrapeService.collectStore in backfill mode', () => {
     });
 
     expect(llm.enrich).toHaveBeenCalledTimes(1);
+  });
+
+  it('classifies stored rows with no flavor answer on file', async () => {
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: false,
+      fetchListing: jest.fn().mockResolvedValue([
+        rawSnap({ storeSku: 'unanswered', name: 'Віскі Aberlour' }),
+        rawSnap({ storeSku: 'answered', name: 'Віскі Bowmore' }),
+      ]),
+      enrichDetail: jest.fn(),
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    const flavor = { enabled: true, classify: jest.fn() };
+
+    const service = makeService(adapter, {
+      flavor,
+      existingSkus: new Set(['unanswered', 'answered']),
+      skusWithoutLlmFlavor: new Set(['unanswered']),
+    });
+
+    await service.collectStore('faux', { dryRun: true, backfill: true });
+
+    /**
+     * `setLlmFlavors` is a plain update rather than an insert-only write, so a
+     * stored row's answer is persistable — but only asked for once, since
+     * `lastLlmFlavorAt` is stamped even for an "unknown" answer.
+     */
+    expect(flavor.classify).toHaveBeenCalledTimes(1);
+
+    const [pending] = flavor.classify.mock.calls[0] as [ProductSnapshot[]];
+
+    expect(pending.map((snap) => snap.storeSku)).toEqual(['unanswered']);
+  });
+
+  it('leaves a normal run still skipping stored rows', async () => {
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: false,
+      fetchListing: jest.fn().mockResolvedValue([
+        rawSnap({ storeSku: 'unanswered', name: 'Віскі Aberlour' }),
+      ]),
+      enrichDetail: jest.fn(),
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    const flavor = { enabled: true, classify: jest.fn() };
+
+    const harness = makeHarness(adapter, {
+      flavor,
+      existingSkus: new Set(['unanswered']),
+      skusWithoutLlmFlavor: new Set(['unanswered']),
+    });
+
+    await harness.service.collectStore('faux', { dryRun: true });
+
+    expect(flavor.classify).not.toHaveBeenCalled();
+    expect(harness.products.skusWithoutLlmFlavor).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,8 @@ import { FakeHttpClient } from './fake-http-client';
 
 import type { ProductSnapshot, StoreScrapeSpec } from '~types';
 import type {
+  SilpoAttribute,
+  SilpoDetail,
   SilpoProduct,
 } from '../../src/scrape/adapters/silpo/silpo.interfaces';
 
@@ -89,6 +91,77 @@ async function snapshotOf(
   const snaps = await adapter.fetchListing();
 
   return snaps[0];
+}
+
+/**
+ * Builds one detail attribute pair.
+ *
+ * @param key - The attribute's machine key.
+ * @param title - The value, as the API sends it (number or string).
+ * @returns The attribute entry.
+ */
+function attr(key: string, title: string | number | null): SilpoAttribute {
+  return { attribute: { key }, value: { title } };
+}
+
+/**
+ * Builds a detail response, mirroring a captured product page: the attributes
+ * arrive spread over groups, some of them empty.
+ *
+ * @param attrs - Attributes of the filled group.
+ * @param descriptionRich - The HTML description, empty when absent.
+ * @returns The raw detail block.
+ */
+function detail(attrs: SilpoAttribute[], descriptionRich = ''): SilpoDetail {
+  return {
+    descriptionRich,
+    attributeGroups: [{ attributes: [] }, { attributes: attrs }],
+  };
+}
+
+/**
+ * Collects a single-product listing and returns the adapter, its snapshot and
+ * the fake client, with the detail endpoint primed but not yet called.
+ *
+ * @param raw - The raw product to serve on page 1.
+ * @param body - The detail response to serve for any product.
+ * @returns The adapter, the listing snapshot and the fake client.
+ */
+async function prepare(
+  raw: SilpoProduct,
+  body: SilpoDetail,
+): Promise<{
+  adapter: SilpoAdapter;
+  snap: ProductSnapshot;
+  http: FakeHttpClient;
+}> {
+  const http = new FakeHttpClient((url) =>
+    url.endsWith('/products')
+      ? { body: { total: 1, items: [raw] } }
+      : { body }
+  );
+  const adapter = new SilpoAdapter(SPEC, 1, http, new NormalizeService());
+  const snaps = await adapter.fetchListing();
+
+  return { adapter, snap: snaps[0], http };
+}
+
+/**
+ * Runs the detail pass over a freshly collected listing snapshot.
+ *
+ * @param raw - The raw product to serve on page 1.
+ * @param body - The detail response to serve for it.
+ * @returns The enriched snapshot.
+ */
+async function enrich(
+  raw: SilpoProduct,
+  body: SilpoDetail,
+): Promise<ProductSnapshot> {
+  const { adapter, snap } = await prepare(raw, body);
+
+  await adapter.enrichDetail(snap);
+
+  return snap;
 }
 
 describe('SilpoAdapter', () => {
@@ -209,5 +282,198 @@ describe('SilpoAdapter', () => {
     const adapter = new SilpoAdapter(SPEC, 1, http, new NormalizeService());
 
     await expect(adapter.fetchListing()).rejects.toThrow('502');
+  });
+});
+
+describe('SilpoAdapter.enrichDetail', () => {
+  it('reads the ABV the listing never states', async () => {
+    const numeric = await enrich(
+      product(1, 'Віскі Laphroaig 12 років'),
+      detail([attr('alcoholcontent', 46)]),
+    );
+    const fractional = await enrich(
+      product(2, 'Віскі Scyfion'),
+      detail([attr('alcoholcontent', 53.9)]),
+    );
+    const text = await enrich(
+      product(3, 'Віскі X'),
+      detail([attr('alcoholcontent', '40.5')]),
+    );
+
+    expect(numeric.abv).toBe(46);
+    expect(fractional.abv).toBe(53.9);
+    expect(text.abv).toBe(40.5);
+  });
+
+  it('requests the detail endpoint by SKU with the JSON headers', async () => {
+    const { adapter, snap, http } = await prepare(
+      product(58113, 'Віскі Jameson'),
+      detail([attr('alcoholcontent', 40)]),
+    );
+
+    await adapter.enrichDetail(snap);
+
+    const call = http.calls[http.calls.length - 1];
+
+    expect(call.url).toBe(
+      'https://sf-ecom-api.silpo.ua/v1/uk/branches/'
+        + '00000000-0000-0000-0000-000000000000/products/58113',
+    );
+  });
+
+  it('reads an exact age statement', async () => {
+    const snap = await enrich(
+      product(1, 'Віскі X'),
+      detail([attr('strokvytrymky', '12 років')]),
+    );
+
+    expect(snap.ageYears).toBe(12);
+  });
+
+  it('reduces an age range to its lower bound', async () => {
+    const snap = await enrich(
+      product(1, 'Віскі X'),
+      detail([attr('strokvytrymky', '3-6 років')]),
+    );
+    const wide = await enrich(
+      product(2, 'Віскі Y'),
+      detail([attr('strokvytrymky', '25-60 років')]),
+    );
+
+    expect(snap.ageYears).toBe(3);
+    expect(wide.ageYears).toBe(25);
+  });
+
+  it('ignores an age stated in months', async () => {
+    const snap = await enrich(
+      product(1, 'Віскі X'),
+      detail([attr('strokvytrymky', '18 місяців')]),
+    );
+
+    expect(snap.ageYears).toBeNull();
+  });
+
+  it('falls back to the bare age field', async () => {
+    const snap = await enrich(
+      product(1, 'Віскі X'),
+      detail([attr('ageofcognac', '12')]),
+    );
+
+    expect(snap.ageYears).toBe(12);
+  });
+
+  it('reads the whisky type, falling back to the subspecies', async () => {
+    const kind = await enrich(
+      product(1, 'Віскі X'),
+      detail([attr('vydviski', 'Односолодове / Single Malt')]),
+    );
+    const subspecies = await enrich(
+      product(2, 'Віскі Y'),
+      detail([attr('subspecies', 'Blended')]),
+    );
+
+    expect(kind.whiskyType).toBe('single malt');
+    expect(subspecies.whiskyType).toBe('blend');
+  });
+
+  it('drops the umbrella country so the brand pass can refine it', async () => {
+    const snap = await enrich(
+      product(1, 'Віскі X'),
+      detail([attr('country', 'Велика Британія')]),
+    );
+
+    expect(snap.country).toBeNull();
+  });
+
+  it('falls back to the bottling country past an umbrella one', async () => {
+    const snap = await enrich(
+      product(1, 'Віскі X'),
+      detail([
+        attr('country', 'Велика Британія'),
+        attr('krayinarozlyvu', 'Ірландія'),
+      ]),
+    );
+
+    expect(snap.country).toBe('Ірландія');
+  });
+
+  it('ignores the volume bucket range', async () => {
+    const snap = await enrich(
+      product(1, 'Віскі X', { ratio: null }),
+      detail([attr('volume', '0,6-0,99'), attr('alcoholcontent', 40)]),
+    );
+
+    expect(snap.volumeMl).toBeNull();
+    expect(snap.abv).toBe(40);
+  });
+
+  it('never overwrites a value the listing already carried', async () => {
+    const { adapter, snap } = await prepare(
+      product(1, 'Віскі X'),
+      detail([attr('alcoholcontent', 46)]),
+    );
+
+    snap.abv = 40;
+
+    await adapter.enrichDetail(snap);
+
+    expect(snap.abv).toBe(40);
+  });
+
+  it('stashes the stated flavors for the keyword pass', async () => {
+    const normalizer = new NormalizeService();
+    const snap = await enrich(
+      product(1, 'Віскі X'),
+      detail([attr('smakviski', "Димний, торф'яний")]),
+    );
+
+    normalizer.normalize(snap);
+
+    expect(snap.rawAttrs.smakviski).toBe("Димний, торф'яний");
+    expect(snap.flavorTags).toEqual(['peated', 'smoky']);
+  });
+
+  it('stashes the description as text for the flavor passes', async () => {
+    const snap = await enrich(
+      product(1, 'Віскі X'),
+      detail(
+        [attr('alcoholcontent', 40)],
+        '<p><strong>Медові акценти</strong></p><p>та карамель</p>',
+      ),
+    );
+
+    expect(snap.rawAttrs.description).toBe('Медові акценти та карамель');
+  });
+
+  it('falls back to the plain-text description attribute', async () => {
+    const snap = await enrich(
+      product(1, 'Віскі X'),
+      detail([attr('descriptionforwebsite', 'Класичний бленд.')]),
+    );
+
+    expect(snap.rawAttrs.description).toBe('Класичний бленд.');
+  });
+
+  it('skips an out-of-stock item without requesting anything', async () => {
+    const { adapter, snap, http } = await prepare(
+      product(1, 'Віскі X', { stock: 0 }),
+      detail([attr('alcoholcontent', 46)]),
+    );
+    const before = http.calls.length;
+
+    const enriched = await adapter.enrichDetail(snap);
+
+    expect(enriched).toBe(false);
+    expect(http.calls).toHaveLength(before);
+    expect(snap.abv).toBeNull();
+  });
+
+  it('reports a product that carries no attribute at all', async () => {
+    const { adapter, snap } = await prepare(
+      product(1, 'Віскі X'),
+      detail([attr('organiceco', null)]),
+    );
+
+    await expect(adapter.enrichDetail(snap)).resolves.toBe(false);
   });
 });

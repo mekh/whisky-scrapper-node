@@ -206,8 +206,10 @@ export class ScrapeService {
       deadline,
     );
     await this.runFlavorEnrichment(
+      store.id,
       known,
       inStock,
+      backfill,
       options.reporter,
       deadline,
     );
@@ -486,27 +488,41 @@ export class ScrapeService {
   }
 
   /**
-   * Fills in the flavor profile of the items this store has never stored
-   * before, reusing an answer already recorded for the same bottling and
-   * calling the model only for the rest.
+   * Fills in the flavor profile of the items with no answer on file yet,
+   * reusing an answer already recorded for the same bottling and calling the
+   * model only for the rest.
    *
-   * Known SKUs are skipped outright: their answer is already stored, and a
-   * bottling's flavor does not change between runs. The name lookup then covers
-   * the case a SKU gate cannot — a bottling this store is listing for the first
-   * time but another store already carries. Most of the catalogue is in that
-   * position, so without it a new listing would both pay for a redundant call
-   * and risk coming back with different tags than the sibling row, leaving one
-   * product tagged two ways depending on which store you looked at.
+   * In a normal run known SKUs are skipped outright: their answer is already
+   * stored, and a bottling's flavor does not change between runs. The name
+   * lookup then covers the case a SKU gate cannot — a bottling this store is
+   * listing for the first time but another store already carries. Most of the
+   * catalogue is in that position, so without it a new listing would both pay
+   * for a redundant call and risk coming back with different tags than the
+   * sibling row, leaving one product tagged two ways depending on which store
+   * you looked at.
    *
+   * A backfill run widens the gate to every in-stock item with no answer on
+   * file, like the detail and field passes widen theirs. Unlike those, this one
+   * is not blocked by the insert-only upsert — `setLlmFlavors` is a plain
+   * update — and it is the only pass that can durably improve a stored row's
+   * flavors, since the keyword pass's `scrape` links are re-derived from
+   * scratch on every persist. It is also the one moment the model sees the
+   * store's description: `rawAttrs` is never persisted, so the standalone
+   * `enrich-flavors` script can only ever ground on the name.
+   *
+   * @param storeId - The store id, for the backfill gate's lookup.
    * @param known - SKUs the store has already stored.
    * @param inStock - In-stock snapshots.
+   * @param backfill - Whether the wider backfill flavor gate applies.
    * @param reporter - Optional progress reporter.
    * @param signal - Optional LLM deadline.
    * @returns Resolves once classification has been attempted.
    */
   private async runFlavorEnrichment(
+    storeId: ID,
     known: Set<string>,
     inStock: ProductSnapshot[],
+    backfill: boolean,
     reporter?: ScrapeProgressReporter,
     signal?: AbortSignal,
   ): Promise<void> {
@@ -514,7 +530,15 @@ export class ScrapeService {
       return;
     }
 
-    const fresh = inStock.filter((snap) => !known.has(snap.storeSku));
+    const unanswered = backfill
+      ? await this.products.skusWithoutLlmFlavor(storeId)
+      : null;
+
+    const fresh = inStock.filter((snap) =>
+      unanswered === null
+        ? !known.has(snap.storeSku)
+        : unanswered.has(snap.storeSku)
+    );
 
     if (!fresh.length) {
       return;

@@ -54,6 +54,17 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
   }
 
   /**
+   * SKUs of a store's products the flavor classification pass has never
+   * answered for (the backfill run's flavor gate).
+   *
+   * @param storeId - Store id.
+   * @returns The set of SKUs with no classification answer on file.
+   */
+  public async skusWithoutLlmFlavor(storeId: ID): Promise<Set<string>> {
+    return this.repo.skusWithoutLlmFlavor(storeId);
+  }
+
+  /**
    * SKUs of a store's products that already exist, in any stock state (the
    * shared gate of a normal run's enrichment passes).
    *

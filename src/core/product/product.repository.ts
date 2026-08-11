@@ -169,6 +169,32 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
   }
 
   /**
+   * SKUs of a store's products the flavor classification pass has never
+   * answered for. The backfill run gates that pass on this (a normal run gates
+   * on {@link existingSkus} instead), which is what makes a stored row's
+   * flavors fixable at all: `setLlmFlavors` is a plain update, not an
+   * insert-only write, and it is the durable half of the taxonomy — the keyword
+   * pass's `scrape` links are re-derived from scratch on every persist, so a
+   * stored row's tags can only be improved through the `llm` source.
+   *
+   * `lastLlmFlavorAt` is stamped even for an "unknown" answer, so an answered
+   * product is never re-asked (and never re-paid for).
+   *
+   * @param storeId - Store id.
+   * @returns The set of SKUs with no classification answer on file.
+   */
+  public async skusWithoutLlmFlavor(storeId: ID): Promise<Set<string>> {
+    const rows = await this.query(
+      `SELECT sku FROM product
+       WHERE "storeId" = $1
+         AND "lastLlmFlavorAt" IS NULL`,
+      [storeId],
+    ) as { sku: string }[];
+
+    return new Set(rows.map((row) => row.sku));
+  }
+
+  /**
    * SKUs of a store's products that already exist, whatever their stock state.
    * A normal run's enrichment passes — detail pages, LLM fields, name
    * extraction, flavor classification — all use this to skip known SKUs: the

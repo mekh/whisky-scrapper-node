@@ -126,10 +126,10 @@ export class ScrapePersistService {
       );
 
       /**
-       * Only when the classification pass actually answered. The pass runs for
-       * new SKUs only, and writing on an unanswered item would stamp
-       * `lastLlmFlavorAt` and so hide the product from the backfill script
-       * forever.
+       * Only when the classification pass actually answered. It runs for new
+       * SKUs only — or, in a backfill run, for stored rows with no answer on
+       * file — and writing on an unanswered item would stamp `lastLlmFlavorAt`
+       * and so hide the product from the backfill script forever.
        */
       if (snap.llmFlavorChecked) {
         await this.products.setLlmFlavors(

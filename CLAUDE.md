@@ -432,18 +432,31 @@ entity/repository/service/module shape:
   cannot be re-derived from the row — a country the row never had is not in the
   row. `pnpm backfill` (`scripts/backfill-nulls.ts`, `--dry-run` /
   `--store <slug>`, repeatable) therefore re-runs the real collection pipeline
-  with `collectStore(slug, { backfill: true })`, which changes exactly three
+  with `collectStore(slug, { backfill: true })`, which changes exactly four
   things: `ProductRepository` uses `BACKFILL_UPSERT_SQL`, whose update clause
   adds `name`/`typeId`/`countryId`/`age`/`abv`/`volumeMl` as
   `COALESCE(product.x, EXCLUDED.x)` — the stored value always wins, so this is
   a fill, never an overwrite; the detail-page gate becomes `skusWithCoreDetails`
   (ABV **and** volume **and** type **and** country stored) instead of the
   normal run's "never stored" gate — a backfill run is the one place a stored
-  row's detail fetch can be persisted at all; and the LLM enrichment trigger
+  row's detail fetch can be persisted at all; the LLM enrichment trigger
   widens from "new SKU with a missing field" to every item with a still-null
-  ABV, volume, type or country. **Age is deliberately in neither widening**: a NAS
-  bottling has no age to find, so including it would re-fetch and re-ask about
-  the same items on every run forever. The script mirrors the engine's
+  ABV, volume, type or country; and the LLM **flavor** gate widens to
+  `skusWithoutLlmFlavor` (`lastLlmFlavorAt IS NULL`). **Age is deliberately in
+  none of the widenings**: a NAS bottling has no age to find, so including it
+  would re-fetch and re-ask about the same items on every run forever.
+  The flavor widening is the one that is _not_ about the insert-only upsert —
+  `setLlmFlavors` is a plain update. It is there because the `llm` source is the
+  only durable half of the taxonomy: the keyword pass's `scrape` links are
+  deleted and re-derived on **every** persist, and a stored row's detail page is
+  never re-fetched by a normal run, so a tag the backfill's richer `rawAttrs`
+  produced would be overwritten by the very next sync unless the model also
+  answered for it. A backfill run is also the only moment the flavor pass sees
+  the store's description at all, since `rawAttrs` is never persisted — which is
+  the grounding `pnpm enrich-flavors` structurally cannot have. The
+  `findLlmFlavorsByNames` reuse still runs first, so most rows resolve from a
+  sibling store's stored answer without a model call.
+  The script mirrors the engine's
   progress events to stdout as timestamped lines (every listing page, every
   tenth detail page, the LLM passes, the persist) so a multi-hour run is
   observably alive, prints per-store and total
@@ -461,6 +474,20 @@ entity/repository/service/module shape:
   listed product can be re-scraped); the rest are in-stock items neither the
   keyword pass nor the LLM could place — a bottler's own series with no brand
   in the catalogue, or a name that states nothing about type or origin.
+  **Measured again for `silpo` alone** right after its adapter learned to read
+  detail pages, over 831 rows on a copy of production (2026-08-11): `abv`
+  778 → **3**, `age` 603 → 385, `typeId` 42 → 8, `countryId` 17 → 5,
+  `volumeMl` 3 → 1, and the flavor widening took `lastLlmFlavorAt IS NULL`
+  from 487 to 0 while tagged products went 384 → 803. The three rows still
+  without an ABV are the ones that should not have one: a 50 ml
+  `The Grouse & Cola` RTD and a `Набір Родина Jack Daniel's` gift set (both
+  outside `parseAbvValue`'s 30–70 whisky range or having no single strength),
+  and a bag of drink ice the store files under whisky. The whole run took
+  ~32 minutes at `SCRAPE_DELAY_MULTIPLIER=0.3`. A normal sync straight
+  afterwards left every one of those numbers unchanged and all 3 105 `llm`
+  flavor links intact while its keyword pass collapsed the `scrape` links to
+  5 — which is the check that the flavor widening, not the keyword pass, is
+  what makes a stored row's tags durable.
   **Flavors are swept by a different script**, `pnpm enrich-flavors`
   (`scripts/enrich-flavors.ts`, `--dry-run` / `--store <slug>` / `--limit <n>`),
   because they are not a null-column backfill: `product_flavor` rows are
@@ -623,11 +650,15 @@ wrappers): `scrape/` has its own internal layering.
   the obscure blends `low`. Neither model ever answered `unknown`, so the
   `unknown` path is under-exercised in practice — treat `low` as the real
   "don't trust this" signal.
-  The pipeline classifies **new SKUs only** (like name extraction and — since
-  the winewine budget fix — the fields pass, all gated on the same
-  `existingSkus` lookup, fetched once and shared); stored rows are swept
-  once by `pnpm enrich-flavors`. A bottling's flavor does not change between
-  runs, so re-asking per sync would be pure spend.
+  A **normal** run classifies **new SKUs only** (like name extraction and —
+  since the winewine budget fix — the fields pass, all gated on the same
+  `existingSkus` lookup, fetched once and shared). A bottling's flavor does not
+  change between runs, so re-asking per sync would be pure spend. A **backfill**
+  run widens that to `skusWithoutLlmFlavor` (`lastLlmFlavorAt IS NULL`) — see
+  `pnpm backfill`, which explains why this pass and not the keyword one is what
+  makes a stored row's flavors durable. Stored rows can also be swept by
+  `pnpm enrich-flavors`, which needs no scrape but is therefore stuck with
+  name-only grounding.
   **A new SKU still reuses an answer stored under the same name before it asks**
   (`findLlmFlavorsByNames`, keyed on `ProductNameUtils.resolve` so the key is
   exactly the name persist will write). The SKU gate alone cannot cover this:
@@ -752,7 +783,35 @@ wrappers): `scrape/` has its own internal layering.
   but the API host answers plain requests, so the store is tier 1 despite the
   legacy tier-3 classification; the zero-UUID "guest" branch is queried,
   out-of-stock items stay listed with `stock: 0` and feed `inStock` directly,
-  volume comes from `displayRatio`, brand from `brandTitle`), `bayadera/`
+  volume comes from `displayRatio`, brand from `brandTitle`.
+  **The listing states no strength, type, age or flavor whatsoever**, which is
+  how the store reached 778 null `abv` rows out of 831 — every other store sat
+  at 0–16 — so the adapter is `supportsDetail` and reads
+  `/products/<sku>`, whose `attributeGroups` carry all of it:
+  `alcoholcontent` → abv (100% of a 30-item live sample; it arrives as a JSON
+  _number_ on some products and a string on others), `strokvytrymky` then
+  `ageofcognac` → age, `vydviski` then `subspecies` → type, `country` then
+  `krayinarozlyvu` → country, and `smakviski`/`taste`/`addtaste` plus the
+  HTML `descriptionRich` into `rawAttrs` for the keyword and LLM flavor
+  passes (measured on that sample: type 28/30, description 24/30, a flavor
+  tag 26/30). Four details are load-bearing. Its `volume` attribute is a
+  bucket range (`0,6-0,99`) and is **never** read — `displayRatio` already
+  states the exact pack size. Each of the paired sources is canonicalized
+  **before** the fallback is consulted, not after: `country` is filled on
+  nearly every product but usually holds the umbrella `Велика Британія`, which
+  `canonicalCountry` drops so the brand pass can refine it to `Шотландія`, so
+  a raw `a ?? b` chain would consume the primary key and never reach
+  `krayinarozlyvu`. An age **range** (`3-6 років`, ~50 products) is rewritten
+  to its lower bound before parsing — `parseAgeValue` alone answers **6**,
+  because its regex backtracks past the first number to the one the unit
+  follows, and rewriting to `3 років` rather than reading the number directly
+  is what keeps `18 місяців` rejected. And the response's top-level
+  `description`, `brand` and `countryOfOrigin` are placeholders holding the
+  literal strings `no desc yet` and `implement with filters` — they are
+  deliberately absent from `SilpoDetail` so they cannot be read by accident.
+  `descriptionRich` is flattened with a separator inserted at every element
+  boundary, because cheerio's `.text()` glues `<p>…витонченості</p><p>Аромат…`
+  into the made-up word `витонченостіАромат`), `bayadera/`
   (custom SSR platform, tier 1 via plain HTTP, `?page=N` — every listing card
   carries the whole item as JSON in the buy button's `data-product-info`
   attribute: `article` is the SKU, prices are kopecks, `volume` is the pack
@@ -844,6 +903,11 @@ wrappers): `scrape/` has its own internal layering.
   the run persists the listing instead of dying on the store timeout — the
   skipped items' fields stay empty until a backfill run, which the log line
   says outright.
+  Three stores' first full detail sweep exceeds `SYNC_STORE_TIMEOUT_MS` and so
+  has to be seeded through `pnpm backfill --store <slug>` once: `fozzy`
+  (~300 pages), `alcomag` (~600) and `silpo` (778 stored rows missing ABV,
+  ~60–110 min at its 4–8 s delay). After that the normal gate leaves only
+  genuinely new SKUs to fetch, which fits the budget easily.
 - **Parity harness**: `scripts/scrape-parity-diff.ts <slug> [--python <dump>]
   [--ts <dump>] [--out <dir>]` runs the legacy Python scraper
   (`scripts/scrape-parity-dump.py` through `../scrapper/.venv`) and the TS

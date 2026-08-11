@@ -7,10 +7,12 @@ import {
   NEW_DAYS,
   WINDOW_DAYS,
 } from '~constants';
-import { CoreProductService } from '~core/product';
+import { CorePriceSnapshotService } from '~core/price-snapshot';
+import { CoreStoreProductService } from '~core/store-product';
 import { ReportKind, ReportWindow } from '~enums';
 import { NotFoundError, ServerError } from '~errors';
 import {
+  ID,
   PriceHistory,
   ReportCurrentRow,
   ReportFilter,
@@ -19,27 +21,12 @@ import {
   TypePaginated,
 } from '~types';
 
-// Tokens dropped when building the "best offer" match key — units and generic
-// category words that carry no identity.
-const MATCH_STOP_TOKENS = new Set([
-  'віскі',
-  'виски',
-  'whisky',
-  'whiskey',
-  'бурбон',
-  'bourbon',
-  'односолодовий',
-  'бленд',
-  'blended',
-  'blend',
-  'single',
-  'malt',
-  'grain',
-]);
-
 @Injectable()
 export class ReportService {
-  public constructor(private readonly products: CoreProductService) {}
+  public constructor(
+    private readonly offers: CoreStoreProductService,
+    private readonly snapshots: CorePriceSnapshotService,
+  ) {}
 
   /**
    * Runs a report: builds the rows for the requested kind, applies an optional
@@ -73,14 +60,14 @@ export class ReportService {
    * @throws {NotFoundError} When no product matches the term.
    */
   public async history(term: string): Promise<PriceHistory> {
-    const id = await this.products.resolveIdByTerm(term);
-    const current = id ? await this.products.findCurrentRowById(id) : null;
+    const id = await this.offers.resolveIdByTerm(term);
+    const current = id ? await this.offers.findCurrentRowById(id) : null;
 
     if (!id || !current) {
       throw new NotFoundError('Product not found', { term });
     }
 
-    const series = await this.products.priceSeries(id, HISTORY_LIMIT);
+    const series = await this.snapshots.priceSeries(id, HISTORY_LIMIT);
     const previous = series.length > 1
       ? series[series.length - 2].price
       : null;
@@ -107,8 +94,8 @@ export class ReportService {
     options: ReportOptions,
   ): Promise<ReportRow[]> {
     const [current, latest] = await Promise.all([
-      this.products.findCurrentRows(filter),
-      this.products.latestDate(),
+      this.offers.findCurrentRows(filter),
+      this.snapshots.latestDate(),
     ]);
 
     if (!latest || !current.length) {
@@ -177,8 +164,8 @@ export class ReportService {
     const cutoff = this.cutoff(current, WINDOW_DAYS[options.window]);
 
     const [extremes, priceSince] = await Promise.all([
-      this.products.priceExtremes(cutoff),
-      this.products.currentPriceSince(),
+      this.snapshots.priceExtremes(cutoff),
+      this.snapshots.currentPriceSince(),
     ]);
 
     const today = this.today();
@@ -214,7 +201,7 @@ export class ReportService {
     options: ReportOptions,
   ): Promise<ReportRow[]> {
     const cutoff = this.cutoff(current, WINDOW_DAYS[options.window]);
-    const extremes = await this.products.priceExtremes(cutoff);
+    const extremes = await this.snapshots.priceExtremes(cutoff);
 
     const rows = current
       .filter((row) => {
@@ -308,7 +295,7 @@ export class ReportService {
     current: ReportCurrentRow[],
     options: ReportOptions,
   ): ReportRow[] {
-    const groups = this.groupByMatchKey(current);
+    const groups = this.groupByProduct(current);
     const rows: ReportRow[] = [];
 
     groups.forEach((group) => {
@@ -324,10 +311,17 @@ export class ReportService {
   }
 
   /**
-   * Picks the cheapest offer from a match-key group, guarding against merging
-   * mismatched SKUs, and marks its saving against the runner-up.
+   * Picks the cheapest offer of one bottling and marks its saving against the
+   * runner-up.
    *
-   * @param group - Current rows sharing a match key.
+   * Both guards still earn their place after the split. A group has to span at
+   * least two stores because one store alone can list the same bottling twice
+   * (two SKUs, say a boxed and a plain listing) and undercutting yourself is
+   * not a deal. And a best price far below the runner-up still means something
+   * is wrong — no longer a name key merging two whiskies, but a mislinked
+   * offer, which is the failure mode manual curation exists to fix.
+   *
+   * @param group - Current rows sharing a canonical product.
    * @returns The best-offer row, or null when the group is not a valid deal.
    */
   private bestOfGroup(group: ReportCurrentRow[]): ReportRow | null {
@@ -351,58 +345,33 @@ export class ReportService {
   }
 
   /**
-   * Groups current rows by a canonical match key (brand + significant name
-   * tokens + volume + age). Rows without a volume are skipped (can't be
-   * matched confidently).
+   * Groups current rows by the bottling they are offers of.
+   *
+   * The grouping is read straight off the persisted link, never recomputed
+   * here. This service used to derive its own token key from the row, which
+   * meant the read side held a second, competing opinion about which offers are
+   * the same whisky — and the two would diverge the moment someone corrected a
+   * link by hand, which is exactly what the catalogue exists to allow. Persist
+   * decides identity once; the report just reads it.
+   *
+   * Volume-less rows are no longer skipped. That skip existed because the old
+   * key embedded the volume, so two unrelated bottlings with no size collapsed
+   * onto one signature and the group could not be trusted. A canonical row is
+   * one curated bottling whatever its volume, so there is nothing left to
+   * guard against, and a genuine cross-store deal stops being invisible.
    *
    * @param current - All matching current rows.
-   * @returns Match key → rows sharing it.
+   * @returns Canonical product id → the offers of it.
    */
-  private groupByMatchKey(
+  private groupByProduct(
     current: ReportCurrentRow[],
-  ): Map<string, ReportCurrentRow[]> {
+  ): Map<ID, ReportCurrentRow[]> {
     return current.reduce((groups, row) => {
-      if (!row.volumeMl) {
-        return groups;
-      }
-
-      const key = this.matchKey(row);
-      const group = groups.get(key) ?? [];
+      const group = groups.get(row.productId) ?? [];
       group.push(row);
 
-      return groups.set(key, group);
-    }, new Map<string, ReportCurrentRow[]>());
-  }
-
-  /**
-   * Builds the canonical match key for a product.
-   *
-   * @param row - The current row.
-   * @returns A stable key identifying the same product across stores.
-   */
-  private matchKey(row: ReportCurrentRow): string {
-    const normalized = (row.name ?? row.nameOrig)
-      .toLowerCase()
-      .replace(/['’`]/g, '')
-      .replace(/[^0-9a-zа-яіїєґ]+/g, ' ');
-
-    const tokens = new Set(
-      normalized
-        .split(' ')
-        .filter((token) =>
-          token.length >= 2
-          && !MATCH_STOP_TOKENS.has(token)
-          && !/^\d+(?:[.,]\d+)?(?:мл|л|l|ml)?$/.test(token)
-        ),
-    );
-
-    if (row.brand) {
-      tokens.add(row.brand.toLowerCase().replace(/[^0-9a-zа-яіїєґ]+/g, ''));
-    }
-
-    const signature = [...tokens].sort().join(' ');
-
-    return `${signature}|v${row.volumeMl ?? 0}|a${row.age ?? 0}`;
+      return groups.set(row.productId, group);
+    }, new Map<ID, ReportCurrentRow[]>());
   }
 
   /**

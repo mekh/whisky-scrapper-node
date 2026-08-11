@@ -1,7 +1,5 @@
 import {
-  IsBoolean,
   IsDate,
-  IsDateString,
   IsInt,
   IsNumber,
   IsOptional,
@@ -11,48 +9,44 @@ import {
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 
 import {
+  PRODUCT_MATCH_KEY_MAX_LENGTH,
   PRODUCT_NAME_MAX_LENGTH,
-  PRODUCT_SKU_MAX_LENGTH,
-  PRODUCT_URL_MAX_LENGTH,
 } from '~constants';
 import { GuidV7Column } from '~decorators/columns';
 import type {
   EntityBrand,
   EntityCountry,
   EntityProduct,
-  EntityStore,
   EntityType,
   ID,
 } from '~types';
 
 import { BaseRichEntity } from '../_common';
 
+/**
+ * A bottling, independent of who sells it. One row per whisky; the stores'
+ * offers hang off it through `store_product`, and everything a buyer would
+ * call a property of the whisky itself — name, brand, strength, size, age,
+ * origin, flavors — lives here, so it is stored and corrected once.
+ *
+ * `matchKey` is the identity. It is derived, unique, and frozen at creation:
+ * see `ProductMatchUtils` for how it is built and `EntityProduct` for why
+ * nothing re-derives it.
+ */
 @Entity('product')
-@Index('product_store_sku_uindex', ['storeId', 'sku'], { unique: true })
+@Index('product_match_key_uindex', ['matchKey'], { unique: true })
 export class ProductEntity extends BaseRichEntity implements EntityProduct {
-  @GuidV7Column()
-  public storeId!: ID;
-
+  @IsOptional()
   @IsString()
-  @MaxLength(PRODUCT_SKU_MAX_LENGTH)
-  @Column({ length: PRODUCT_SKU_MAX_LENGTH })
-  public sku!: string;
-
-  @IsString()
-  @MaxLength(PRODUCT_URL_MAX_LENGTH)
-  @Column({ length: PRODUCT_URL_MAX_LENGTH })
-  public url!: string;
+  @MaxLength(PRODUCT_MATCH_KEY_MAX_LENGTH)
+  @Column({ length: PRODUCT_MATCH_KEY_MAX_LENGTH, nullable: true })
+  public matchKey?: string;
 
   @IsOptional()
   @IsString()
   @MaxLength(PRODUCT_NAME_MAX_LENGTH)
   @Column({ length: PRODUCT_NAME_MAX_LENGTH, nullable: true })
   public name?: string;
-
-  @IsString()
-  @MaxLength(PRODUCT_NAME_MAX_LENGTH)
-  @Column({ length: PRODUCT_NAME_MAX_LENGTH })
-  public nameOrig!: string;
 
   @IsInt()
   @IsOptional()
@@ -78,33 +72,10 @@ export class ProductEntity extends BaseRichEntity implements EntityProduct {
   @GuidV7Column({ nullable: true })
   public countryId?: ID;
 
-  @IsBoolean()
-  @Column({ type: 'boolean', default: true })
-  public inStock!: boolean;
-
-  @IsDateString()
-  @Column({ type: 'date' })
-  public firstSeen!: string;
-
-  @IsDateString()
-  @Column({ type: 'date' })
-  public lastSeen!: string;
-
   @IsDate()
   @IsOptional()
   @Column({ type: 'timestamp', nullable: true })
   public lastLlmFlavorAt?: Date;
-
-  @ManyToOne(
-    'StoreEntity',
-    (store: EntityStore) => store.id,
-    { onDelete: 'CASCADE' },
-  )
-  @JoinColumn({
-    foreignKeyConstraintName: 'fk_product_store',
-    name: 'storeId',
-  })
-  public store!: EntityStore;
 
   @ManyToOne(
     'BrandEntity',

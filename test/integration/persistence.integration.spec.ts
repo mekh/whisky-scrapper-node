@@ -1,13 +1,17 @@
 import { TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 
-import { CoreBrandService } from '~core/brand';
 import { CorePriceSnapshotService } from '~core/price-snapshot';
 import { CoreProductService } from '~core/product';
+import { CoreStoreProductService } from '~core/store-product';
 import { CoreSyncLogService } from '~core/sync-log';
 import { CoreTypeService } from '~core/type';
 import { SyncTrigger } from '~enums';
-import type { ID, ProductUpsertInput } from '~types';
+import type {
+  ID,
+  ProductCanonicalInput,
+  StoreProductUpsertInput,
+} from '~types';
 
 import {
   bootIntegrationModule,
@@ -21,20 +25,17 @@ describe('persistence write path (integration)', () => {
   let moduleRef: TestingModule;
   let dataSource: DataSource;
   let products: CoreProductService;
+  let offers: CoreStoreProductService;
   let snapshots: CorePriceSnapshotService;
   let syncLogs: CoreSyncLogService;
-  let brands: CoreBrandService;
   let types: CoreTypeService;
   let storeId: ID;
   let countryId: ID;
 
-  const baseProduct = (
-    over: Partial<ProductUpsertInput>,
-  ): ProductUpsertInput => ({
-    storeId,
-    sku: 'sku-1',
-    url: 'https://example.test/p1',
-    nameOrig: 'Віскі Sample 0.7л',
+  const bottling = (
+    over: Partial<ProductCanonicalInput> = {},
+  ): ProductCanonicalInput => ({
+    matchKey: `${SLUG}-key`,
     name: 'Sample 0.7l',
     brandId: null,
     typeId: null,
@@ -42,15 +43,43 @@ describe('persistence write path (integration)', () => {
     age: null,
     abv: null,
     volumeMl: null,
+    ...over,
+  });
+
+  /**
+   * Creates a bottling and returns its id, so a test that only cares about the
+   * offer side does not have to spell the catalogue out.
+   */
+  const makeBottling = async (
+    over: Partial<ProductCanonicalInput> = {},
+  ): Promise<ID> => {
+    const { ids } = await products.findOrCreateByMatchKeys([bottling(over)]);
+
+    return [...ids.values()][0];
+  };
+
+  const baseOffer = (
+    productId: ID,
+    over: Partial<StoreProductUpsertInput> = {},
+  ): StoreProductUpsertInput => ({
+    storeId,
+    productId,
+    sku: 'sku-1',
+    url: 'https://example.test/p1',
+    nameOrig: 'Віскі Sample 0.7л',
     seenOn: DAY,
     ...over,
   });
 
-  const productRow = async (sku: string): Promise<Record<string, unknown>> => {
+  const offerRow = async (sku: string): Promise<Record<string, unknown>> => {
     const rows = await dataSource.query(
-      `SELECT name, "nameOrig", url, abv, age, "volumeMl", "brandId",
-              "firstSeen"::text AS "firstSeen", "lastSeen"::text AS "lastSeen"
-       FROM product WHERE "storeId" = $1 AND sku = $2`,
+      `SELECT sp."nameOrig", sp.url, sp."productId", sp."inStock",
+              sp."firstSeen"::text AS "firstSeen",
+              sp."lastSeen"::text AS "lastSeen",
+              p.name, p.abv, p.age, p."volumeMl", p."brandId"
+       FROM store_product sp
+       JOIN product p ON p.id = sp."productId"
+       WHERE sp."storeId" = $1 AND sp.sku = $2`,
       [storeId, sku],
     ) as Record<string, unknown>[];
 
@@ -61,9 +90,9 @@ describe('persistence write path (integration)', () => {
     moduleRef = await bootIntegrationModule();
     dataSource = moduleRef.get(DataSource);
     products = moduleRef.get(CoreProductService, { strict: false });
+    offers = moduleRef.get(CoreStoreProductService, { strict: false });
     snapshots = moduleRef.get(CorePriceSnapshotService, { strict: false });
     syncLogs = moduleRef.get(CoreSyncLogService, { strict: false });
-    brands = moduleRef.get(CoreBrandService, { strict: false });
     types = moduleRef.get(CoreTypeService, { strict: false });
 
     const rows = await dataSource.query(
@@ -93,9 +122,22 @@ describe('persistence write path (integration)', () => {
   });
 
   afterEach(async () => {
-    await dataSource.query('DELETE FROM product WHERE "storeId" = $1', [
+    await dataSource.query('DELETE FROM store_product WHERE "storeId" = $1', [
       storeId,
     ]);
+    /**
+     * The offers go first: a bottling is protected by `RESTRICT` for as long
+     * as any store lists it, which is the guard that keeps a stray delete from
+     * taking a store's price history with it.
+     */
+    await dataSource.query(
+      `DELETE FROM product
+       WHERE "matchKey" LIKE $1
+         AND NOT EXISTS (
+           SELECT 1 FROM store_product sp WHERE sp."productId" = product.id
+         )`,
+      [`${SLUG}%`],
+    );
     await dataSource.query('DELETE FROM sync_log WHERE "storeId" = $1', [
       storeId,
     ]);
@@ -109,140 +151,180 @@ describe('persistence write path (integration)', () => {
     }
   });
 
-  it('upserts a product and reports it as new on first insert', async () => {
-    const result = await products.upsertFromScrape(baseProduct({ abv: 40 }));
+  it('links a new SKU to the bottling it resolves to', async () => {
+    const productId = await makeBottling({ abv: 40 });
+    const offer = await offers.upsertFromScrape(baseOffer(productId));
 
-    expect(result.isNew).toBe(true);
+    expect(offer?.isNew).toBe(true);
+    expect(offer?.productId).toBe(productId);
 
-    const row = await productRow('sku-1');
+    const row = await offerRow('sku-1');
 
     expect(row.abv).toBe(40);
     expect(row.firstSeen).toBe(DAY);
   });
 
-  it('preserves first-insert fields, merges brand on re-upsert', async () => {
-    const brandMap = await brands.resolveByName(['Sample Distillery']);
-    const brandId = brandMap.get('Sample Distillery') ?? null;
+  it('gives two stores one bottling and two price series', async () => {
+    const other = await dataSource.query(
+      `INSERT INTO store (slug, name, "baseUrl", active)
+       VALUES ($1, 'IT Store 2', 'https://example2.test', true)
+       RETURNING id`,
+      [`${SLUG}_b`],
+    ) as { id: ID }[];
 
-    const first = await products.upsertFromScrape(
-      baseProduct({ abv: 40, age: 12, volumeMl: 700, brandId }),
-    );
+    const productId = await makeBottling({ abv: 40 });
 
-    const second = await products.upsertFromScrape(
-      baseProduct({
-        name: 'Renamed Later',
+    const first = await offers.upsertFromScrape(baseOffer(productId));
+    const second = await offers.upsertFromScrape({
+      ...baseOffer(productId),
+      storeId: other[0].id,
+      sku: 'their-sku',
+    });
+
+    await snapshots.upsertForDate(first?.id as ID, DAY, {
+      price: 1000,
+      oldPrice: null,
+      currency: 'UAH',
+      inStock: true,
+      promo: false,
+    });
+    await snapshots.upsertForDate(second?.id as ID, DAY, {
+      price: 1200,
+      oldPrice: null,
+      currency: 'UAH',
+      inStock: true,
+      promo: false,
+    });
+
+    const rows = await dataSource.query(
+      `SELECT sp.id, s.price::float8 AS price
+       FROM store_product sp
+       JOIN price_snapshot s ON s."storeProductId" = sp.id
+       WHERE sp."productId" = $1
+       ORDER BY s.price`,
+      [productId],
+    ) as { price: number }[];
+
+    expect(rows.map((row) => row.price)).toEqual([1000, 1200]);
+
+    await dataSource.query('DELETE FROM store_product WHERE "storeId" = $1', [
+      other[0].id,
+    ]);
+    await dataSource.query('DELETE FROM store WHERE id = $1', [other[0].id]);
+  });
+
+  it('never re-links a stored SKU, whatever the listing now says', async () => {
+    const first = await makeBottling();
+    const second = await makeBottling({ matchKey: `${SLUG}-key-2` });
+
+    await offers.upsertFromScrape(baseOffer(first));
+
+    /**
+     * A null `productId` is how a sync says "this SKU is already on file" —
+     * the update clause leaves the link alone, which is what makes a manual
+     * correction permanent.
+     */
+    const touched = await offers.upsertFromScrape({
+      ...baseOffer(second, {
         nameOrig: 'Віскі Renamed 0.7л',
         url: 'https://example.test/p1-v2',
-        abv: 99,
-        age: 1,
-        volumeMl: 50,
-        brandId: null,
         seenOn: '2026-07-26',
       }),
-    );
+      productId: null,
+    });
 
-    expect(first.id).toBe(second.id);
-    expect(second.isNew).toBe(false);
+    expect(touched?.productId).toBe(first);
 
-    const row = await productRow('sku-1');
+    const row = await offerRow('sku-1');
 
-    // First-insert / manually-editable fields survive the second scrape.
-    expect(row.name).toBe('Sample 0.7l');
-    expect(row.abv).toBe(40);
-    expect(row.age).toBe(12);
-    expect(row.volumeMl).toBe(700);
-    expect(row.firstSeen).toBe(DAY);
-    // brandId is COALESCEd: a later null never clears a known brand.
-    expect(row.brandId).toBe(brandId);
-    // These always refresh.
+    expect(row.productId).toBe(first);
     expect(row.nameOrig).toBe('Віскі Renamed 0.7л');
     expect(row.url).toBe('https://example.test/p1-v2');
+    expect(row.firstSeen).toBe(DAY);
     expect(row.lastSeen).toBe('2026-07-26');
   });
 
-  it("fills a stored row's still-null columns in backfill mode", async () => {
-    await products.upsertFromScrape(baseProduct({ abv: 40 }));
+  it('resolves an existing bottling instead of creating a second', async () => {
+    const first = await products.findOrCreateByMatchKeys([bottling()]);
+    const second = await products.findOrCreateByMatchKeys([
+      bottling({ name: 'Different Name', abv: 43 }),
+    ]);
 
-    await products.upsertFromScrape(
-      baseProduct({
-        age: 12,
-        volumeMl: 700,
-        seenOn: '2026-07-26',
-      }),
-      true,
-    );
-
-    const row = await productRow('sku-1');
-
-    expect(row.age).toBe(12);
-    expect(row.volumeMl).toBe(700);
-    expect(row.abv).toBe(40);
+    expect(first.added).toBe(1);
+    expect(second.added).toBe(0);
+    expect([...second.ids.values()]).toEqual([...first.ids.values()]);
   });
 
-  it('never overwrites a stored value in backfill mode', async () => {
-    await products.upsertFromScrape(
-      baseProduct({ abv: 40, age: 12, volumeMl: 700 }),
-    );
+  it('resolves the same key once under concurrency', async () => {
+    const [a, b] = await Promise.all([
+      products.findOrCreateByMatchKeys([bottling()]),
+      products.findOrCreateByMatchKeys([bottling()]),
+    ]);
 
-    await products.upsertFromScrape(
-      baseProduct({
-        name: 'Renamed Later',
-        abv: 99,
-        age: 1,
-        volumeMl: 50,
-        seenOn: '2026-07-26',
-      }),
-      true,
-    );
+    expect([...a.ids.values()]).toEqual([...b.ids.values()]);
 
-    const row = await productRow('sku-1');
+    const rows = await dataSource.query(
+      'SELECT count(*)::int AS count FROM product WHERE "matchKey" = $1',
+      [`${SLUG}-key`],
+    ) as { count: number }[];
 
-    expect(row.name).toBe('Sample 0.7l');
-    expect(row.abv).toBe(40);
-    expect(row.age).toBe(12);
-    expect(row.volumeMl).toBe(700);
+    expect(rows[0].count).toBe(1);
   });
 
-  it('leaves the nulls alone without the backfill flag', async () => {
-    await products.upsertFromScrape(baseProduct({}));
+  it('leaves every unmatchable bottling on its own', async () => {
+    const first = await products.createUnmatched(bottling({ matchKey: null }));
+    const second = await products.createUnmatched(bottling({ matchKey: null }));
 
-    await products.upsertFromScrape(
-      baseProduct({ abv: 40, age: 12, volumeMl: 700, seenOn: '2026-07-26' }),
-    );
+    expect(first).not.toBe(second);
 
-    const row = await productRow('sku-1');
-
-    expect(row.abv).toBeNull();
-    expect(row.age).toBeNull();
-    expect(row.volumeMl).toBeNull();
+    await dataSource.query('DELETE FROM product WHERE id = ANY($1)', [
+      [first, second],
+    ]);
   });
 
-  it('gates the backfill detail fetch on all four stored fields', async () => {
+  it('fills a still-null field and never overwrites a stored one', async () => {
     const typeMap = await types.resolveByName(['single malt']);
-    const complete = {
-      abv: 40,
-      volumeMl: 700,
-      typeId: typeMap.get('single malt') ?? null,
+    const typeId = typeMap.get('single malt') ?? null;
+    const productId = await makeBottling({ abv: 40 });
+
+    const filled = await products.fillMissing([{
+      id: productId,
+      abv: 99,
+      brandId: null,
+      typeId,
       countryId,
-    };
+    }]);
 
-    await products.upsertFromScrape(baseProduct({ sku: 'full', ...complete }));
-    await products.upsertFromScrape(
-      // No age: a bottling without an age statement still counts as complete.
-      baseProduct({ sku: 'no-age', ...complete, age: null }),
-    );
-    await products.upsertFromScrape(
-      baseProduct({ sku: 'no-country', ...complete, countryId: null }),
-    );
-    await products.upsertFromScrape(baseProduct({ sku: 'abv-only', abv: 40 }));
+    expect(filled).toBe(1);
 
-    const gate = await products.skusWithCoreDetails(storeId);
+    const rows = await dataSource.query(
+      'SELECT abv, "typeId", "countryId" FROM product WHERE id = $1',
+      [productId],
+    ) as { abv: number; typeId: ID; countryId: ID }[];
 
-    expect([...gate].sort()).toEqual(['full', 'no-age']);
+    expect(rows[0].abv).toBe(40);
+    expect(rows[0].typeId).toBe(typeId);
+    expect(rows[0].countryId).toBe(countryId);
+
+    /**
+     * Nothing left to fill means no write at all, so a shared row is not
+     * locked by every store that lists it.
+     */
+    const again = await products.fillMissing([{
+      id: productId,
+      abv: 99,
+      brandId: null,
+      typeId,
+      countryId,
+    }]);
+
+    expect(again).toBe(0);
   });
 
-  it('keeps one snapshot per product per day under concurrency', async () => {
-    const { id } = await products.upsertFromScrape(baseProduct({}));
+  it('keeps one snapshot per offer per day under concurrency', async () => {
+    const productId = await makeBottling();
+    const offer = await offers.upsertFromScrape(baseOffer(productId));
+    const id = offer?.id as ID;
 
     await Promise.all([
       snapshots.upsertForDate(id, DAY, {
@@ -263,7 +345,7 @@ describe('persistence write path (integration)', () => {
 
     const rows = await dataSource.query(
       `SELECT price::float8 AS price FROM price_snapshot
-       WHERE "productId" = $1 AND "capturedOn" = $2`,
+       WHERE "storeProductId" = $1 AND "capturedOn" = $2`,
       [id, DAY],
     ) as { price: number }[];
 
@@ -271,20 +353,17 @@ describe('persistence write path (integration)', () => {
     expect([100, 200]).toContain(rows[0].price);
   });
 
-  it('flags explicit out-of-stock products by sku, not on empty', async () => {
-    await products.upsertFromScrape(baseProduct({ sku: 'keep' }));
-    await products.upsertFromScrape(baseProduct({ sku: 'gone' }));
+  it('flags explicit out-of-stock offers by sku, not on empty', async () => {
+    const productId = await makeBottling();
 
-    const flaggedOnEmpty = await products.markOutOfStockBySkus(storeId, []);
+    await offers.upsertFromScrape(baseOffer(productId, { sku: 'keep' }));
+    await offers.upsertFromScrape(baseOffer(productId, { sku: 'gone' }));
 
-    expect(flaggedOnEmpty).toBe(0);
-
-    const flagged = await products.markOutOfStockBySkus(storeId, ['gone']);
-
-    expect(flagged).toBe(1);
+    expect(await offers.markOutOfStockBySkus(storeId, [])).toBe(0);
+    expect(await offers.markOutOfStockBySkus(storeId, ['gone'])).toBe(1);
 
     const rows = await dataSource.query(
-      `SELECT sku FROM product
+      `SELECT sku FROM store_product
        WHERE "storeId" = $1 AND "inStock" ORDER BY sku`,
       [storeId],
     ) as { sku: string }[];
@@ -293,21 +372,21 @@ describe('persistence write path (integration)', () => {
   });
 
   it('sweeps all not seen in stock; a re-upsert revives it', async () => {
-    await products.upsertFromScrape(baseProduct({ sku: 'seen' }));
-    await products.upsertFromScrape(baseProduct({ sku: 'vanished' }));
+    const productId = await makeBottling();
 
-    const swept = await products.markOutOfStockExcept(storeId, ['seen']);
+    await offers.upsertFromScrape(baseOffer(productId, { sku: 'seen' }));
+    await offers.upsertFromScrape(baseOffer(productId, { sku: 'vanished' }));
 
-    expect(swept).toBe(1);
+    expect(await offers.markOutOfStockExcept(storeId, ['seen'])).toBe(1);
 
-    const revived = await products.upsertFromScrape(
-      baseProduct({ sku: 'vanished' }),
+    const revived = await offers.upsertFromScrape(
+      baseOffer(productId, { sku: 'vanished' }),
     );
 
-    expect(revived.isNew).toBe(false);
+    expect(revived?.isNew).toBe(false);
 
     const rows = await dataSource.query(
-      `SELECT sku FROM product
+      `SELECT sku FROM store_product
        WHERE "storeId" = $1 AND "inStock" ORDER BY sku`,
       [storeId],
     ) as { sku: string }[];
@@ -315,8 +394,12 @@ describe('persistence write path (integration)', () => {
     expect(rows.map((row) => row.sku)).toEqual(['seen', 'vanished']);
   });
 
-  it('hides out-of-stock products from lists, keeps detail', async () => {
-    const { id } = await products.upsertFromScrape(baseProduct({ sku: 'oos' }));
+  it('hides out-of-stock offers from lists, keeps detail', async () => {
+    const productId = await makeBottling();
+    const offer = await offers.upsertFromScrape(
+      baseOffer(productId, { sku: 'oos' }),
+    );
+    const id = offer?.id as ID;
 
     await snapshots.upsertForDate(id, DAY, {
       price: 100,
@@ -326,15 +409,14 @@ describe('persistence write path (integration)', () => {
       promo: false,
     });
 
-    await products.markOutOfStockBySkus(storeId, ['oos']);
+    await offers.markOutOfStockBySkus(storeId, ['oos']);
 
-    const listed = await products.findCurrentRows({ stores: [SLUG] });
+    expect(await offers.findCurrentRows({ stores: [SLUG] })).toHaveLength(0);
 
-    expect(listed).toHaveLength(0);
-
-    const detail = await products.findCurrentRowById(id);
+    const detail = await offers.findCurrentRowById(id);
 
     expect(detail?.inStock).toBe(false);
+    expect(detail?.productId).toBe(productId);
   });
 
   it('finds a product by a term that survives only in nameOrig', async () => {
@@ -342,11 +424,12 @@ describe('persistence write path (integration)', () => {
     // the whole catalogue, and a plain "Welsh" would match real rows when the
     // integration database is a restored production dump.
     const descriptor = `Welsh${SLUG}`;
-    const { id } = await products.upsertFromScrape(baseProduct({
+    const productId = await makeBottling({ name: 'Aber Falls' });
+    const offer = await offers.upsertFromScrape(baseOffer(productId, {
       sku: 'welsh',
-      name: 'Aber Falls',
       nameOrig: `Віскі Aber Falls ${descriptor} 40% 0,7л`,
     }));
+    const id = offer?.id as ID;
 
     await snapshots.upsertForDate(id, DAY, {
       price: 100,
@@ -356,22 +439,31 @@ describe('persistence write path (integration)', () => {
       promo: false,
     });
 
-    const byCleanName = await products.findCurrentRows({
+    const byCleanName = await offers.findCurrentRows({
       stores: [SLUG],
       name: 'Aber Falls',
     });
 
     expect(byCleanName.map((row) => row.id)).toContain(id);
 
-    // The descriptor was stripped from `name`; both search paths still find
-    // it because they match `nameOrig` too.
-    const byDescriptor = await products.findCurrentRows({
+    // The descriptor was stripped from the canonical name; both search paths
+    // still find it because they match the offer's raw name too.
+    const byDescriptor = await offers.findCurrentRows({
       stores: [SLUG],
       name: descriptor,
     });
 
     expect(byDescriptor.map((row) => row.id)).toContain(id);
-    expect(await products.resolveIdByTerm(descriptor)).toBe(id);
+    expect(await offers.resolveIdByTerm(descriptor)).toBe(id);
+
+    /**
+     * A canonical id resolves to one of its offers, which is what lets the
+     * edit endpoint and a future deep link take either id.
+     */
+    const ref = await offers.findOfferRefById(productId);
+
+    expect(ref?.id).toBe(id);
+    expect(ref?.productId).toBe(productId);
   });
 
   it('lets only one concurrent run start in the same group', async () => {

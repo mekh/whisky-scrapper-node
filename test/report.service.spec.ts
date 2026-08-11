@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 
-import { CoreProductService } from '~core/product';
+import { CorePriceSnapshotService } from '~core/price-snapshot';
+import { CoreStoreProductService } from '~core/store-product';
 import { ReportKind, ReportWindow, SortOrder } from '~enums';
 import type {
   ID,
@@ -31,6 +32,7 @@ const OPTIONS: ReportOptions = {
 function makeRow(over: Partial<ReportCurrentRow>): ReportCurrentRow {
   return {
     id: 'p1' as ID,
+    productId: 'b1' as ID,
     sku: 'sku-1',
     url: 'https://example.test/whisky',
     name: 'Whisky Sample 0.7l',
@@ -79,15 +81,19 @@ async function run(
   priceSince?: Map<ID, string>,
   today?: string,
 ): Promise<ReportRow[]> {
-  const products = {
+  const offers = {
     findCurrentRows: jest.fn().mockResolvedValue(rows),
+  };
+
+  const snapshots = {
     latestDate: jest.fn().mockResolvedValue('2026-07-21'),
     priceExtremes: jest.fn().mockResolvedValue(extremes ?? new Map()),
     currentPriceSince: jest.fn().mockResolvedValue(priceSince ?? new Map()),
   };
 
   const service = new ReportService(
-    products as unknown as CoreProductService,
+    offers as unknown as CoreStoreProductService,
+    snapshots as unknown as CorePriceSnapshotService,
   );
 
   if (today !== undefined) {
@@ -210,5 +216,102 @@ describe('ReportService — drops discount age', () => {
     const [row] = await run(ReportKind.DROPS, rows, extremes);
 
     expect(row.daysDiscount).toBeNull();
+  });
+});
+
+describe('ReportService — best offers group by the stored bottling', () => {
+  it('returns the cheapest offer, against the runner-up', async () => {
+    const rows = [
+      makeRow({ id: 'a' as ID, storeSlug: 'one', price: 1200 }),
+      makeRow({ id: 'b' as ID, storeSlug: 'two', price: 1000 }),
+      makeRow({ id: 'c' as ID, storeSlug: 'three', price: 1500 }),
+    ];
+
+    const [row] = await run(ReportKind.BEST, rows);
+
+    /**
+     * The id stays the winning offer's, because that is what the client deep
+     * links and asks for a price history.
+     */
+    expect(row.id).toBe('b');
+    expect(row.price).toBe(1000);
+    expect(row.referencePrice).toBe(1200);
+  });
+
+  it('needs two stores, not two listings from one', async () => {
+    const rows = [
+      makeRow({ id: 'a' as ID, storeSlug: 'one', price: 1000 }),
+      makeRow({ id: 'b' as ID, storeSlug: 'one', price: 1400 }),
+    ];
+
+    expect(await run(ReportKind.BEST, rows)).toHaveLength(0);
+  });
+
+  it('drops a group whose winner is implausibly cheap', async () => {
+    const rows = [
+      makeRow({ id: 'a' as ID, storeSlug: 'one', price: 400 }),
+      makeRow({ id: 'b' as ID, storeSlug: 'two', price: 1000 }),
+    ];
+
+    expect(await run(ReportKind.BEST, rows)).toHaveLength(0);
+  });
+
+  it('keeps a group exactly at the guard boundary', async () => {
+    const rows = [
+      makeRow({ id: 'a' as ID, storeSlug: 'one', price: 500 }),
+      makeRow({ id: 'b' as ID, storeSlug: 'two', price: 1000 }),
+    ];
+
+    expect(await run(ReportKind.BEST, rows)).toHaveLength(1);
+  });
+
+  it('never merges two bottlings that merely read alike', async () => {
+    /**
+     * Same name, same brand, same size — and still two different whiskies.
+     * Identity is the persisted link, so the report cannot second-guess it;
+     * the old token key merged exactly this case.
+     */
+    const rows = [
+      makeRow({ id: 'a' as ID, productId: 'b1' as ID, storeSlug: 'one' }),
+      makeRow({ id: 'b' as ID, productId: 'b2' as ID, storeSlug: 'two' }),
+    ];
+
+    expect(await run(ReportKind.BEST, rows)).toHaveLength(0);
+  });
+
+  it('compares packaging variants of one bottling', async () => {
+    const rows = [
+      makeRow({
+        id: 'a' as ID,
+        storeSlug: 'one',
+        nameOrig: 'Віскі Aberlour 0,7л в коробці',
+        price: 1200,
+      }),
+      makeRow({
+        id: 'b' as ID,
+        storeSlug: 'two',
+        nameOrig: 'Віскі Aberlour 0,7л',
+        price: 1000,
+      }),
+    ];
+
+    const [row] = await run(ReportKind.BEST, rows);
+
+    expect(row.id).toBe('b');
+    expect(row.referencePrice).toBe(1200);
+  });
+
+  it('includes a bottling whose size is unknown', async () => {
+    /**
+     * These used to be dropped outright, because the report's own key put the
+     * volume in the signature and a `v0` group could not be trusted. A stored
+     * bottling is one curated product whatever its size.
+     */
+    const rows = [
+      makeRow({ id: 'a' as ID, storeSlug: 'one', volumeMl: null, price: 1200 }),
+      makeRow({ id: 'b' as ID, storeSlug: 'two', volumeMl: null, price: 1000 }),
+    ];
+
+    expect(await run(ReportKind.BEST, rows)).toHaveLength(1);
   });
 });

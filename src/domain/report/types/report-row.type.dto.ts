@@ -10,8 +10,20 @@ import {
 import type { ID, ReportRow } from '~types';
 
 export class ReportRowType implements ReportRow {
+  /**
+   * Store-offer id: one row per store × SKU, and what `/report/history` and
+   * `/product/:id` take.
+   */
   @IsString()
   public id!: ID;
+
+  /**
+   * Canonical product id: the bottling this row is an offer of. Rows from
+   * different stores sharing it are the same whisky, which is how the `best`
+   * report groups them and what a manual edit applies to.
+   */
+  @IsString()
+  public productId!: ID;
 
   @IsString()
   public sku!: string;

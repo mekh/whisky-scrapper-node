@@ -5,10 +5,11 @@ import { CoreBrandService } from '~core/brand';
 import { CoreProductService } from '~core/product';
 import { CoreStoreService } from '~core/store';
 import { CoreStoreConfigService } from '~core/store-config';
+import { CoreStoreProductService } from '~core/store-product';
 import { NotFoundError, ServerError } from '~errors';
 import type {
   CollectOptions,
-  ID,
+  ProductMatchRow,
   ProductSnapshot,
   ScrapeAdapter,
   ScrapeAdapterFactory,
@@ -17,7 +18,9 @@ import type {
   StoreListItem,
   StoreScrapeSpec,
 } from '~types';
-import { ErrorUtils, ProductNameUtils } from '~utils';
+import { ErrorUtils } from '~utils';
+
+import type { BrandMatchEntry } from './normalize/normalize.interfaces';
 
 import { LlmEnrichmentService } from './llm/llm-enrichment.service';
 import { LlmFlavorService } from './llm/llm-flavor.service';
@@ -36,36 +39,34 @@ const ENRICH_PROGRESS_EVERY = 10;
 @Injectable()
 export class ScrapeService {
   /**
-   * Groups snapshots by the resolved name persist will store them under, so one
-   * bottling is classified once however many SKUs of it this store lists. Two
-   * volumes of the same whisky are two SKUs but one flavor profile, and asking
-   * twice both pays twice and risks the two rows disagreeing.
+   * Groups snapshots by the bottling they resolve to, so one whisky is
+   * classified once however many SKUs of it this store lists — a boxed and a
+   * plain listing of the same bottle are two SKUs but one flavor profile, and
+   * asking twice both pays twice and risks the two answers disagreeing.
    *
-   * A snapshot whose name resolves to null matches nothing and stays a group of
-   * its own.
+   * A snapshot with no match key identifies nothing and stays a group of its
+   * own.
    *
    * @param pending - Snapshots awaiting classification.
-   * @param keys - Each snapshot's resolved name, from the caller's lookup map.
-   * @returns One group per distinct name, each headed by the snapshot to
+   * @returns One group per distinct bottling, each headed by the snapshot to
    *   actually send to the model.
    */
   private static groupByFlavorKey(
     pending: ProductSnapshot[],
-    keys: Map<ProductSnapshot, string | null>,
   ): ProductSnapshot[][] {
-    const named = new Map<string, ProductSnapshot[]>();
-    const nameless: ProductSnapshot[][] = [];
+    const keyed = new Map<string, ProductSnapshot[]>();
+    const unmatchable: ProductSnapshot[][] = [];
 
     pending.forEach((snap) => {
-      const key = keys.get(snap);
+      const key = snap.matchKey;
 
       if (key === null || key === undefined) {
-        nameless.push([snap]);
+        unmatchable.push([snap]);
 
         return;
       }
 
-      const group = named.get(key);
+      const group = keyed.get(key);
 
       if (group) {
         group.push(snap);
@@ -73,10 +74,30 @@ export class ScrapeService {
         return;
       }
 
-      named.set(key, [snap]);
+      keyed.set(key, [snap]);
     });
 
-    return [...named.values(), ...nameless];
+    return [...keyed.values(), ...unmatchable];
+  }
+
+  /**
+   * Whether the catalogue still lacks something a detail page or the model
+   * could supply for a bottling.
+   *
+   * `lastLlmFlavorAt` counts: the detail page is the only source of `rawAttrs`,
+   * which is the only grounding the flavor pass ever gets, so a bottling with
+   * complete specs but no classification still deserves the fetch.
+   *
+   * @param row - What the catalogue knows, or undefined when it knows nothing.
+   * @returns True when there is something left to fill.
+   */
+  private static isIncomplete(row: ProductMatchRow | undefined): boolean {
+    return row === undefined
+      || row.abv === null
+      || row.volumeMl === null
+      || row.typeId === null
+      || row.countryId === null
+      || row.lastLlmFlavorAt === null;
   }
 
   /**
@@ -106,6 +127,8 @@ export class ScrapeService {
 
   private readonly products: CoreProductService;
 
+  private readonly storeProducts: CoreStoreProductService;
+
   private readonly brands: CoreBrandService;
 
   private readonly adapters: ScrapeAdapterFactory;
@@ -124,6 +147,7 @@ export class ScrapeService {
     stores: CoreStoreService,
     storeConfigs: CoreStoreConfigService,
     products: CoreProductService,
+    storeProducts: CoreStoreProductService,
     brands: CoreBrandService,
     @Inject(SCRAPE_ADAPTER_FACTORY) adapters: ScrapeAdapterFactory,
     normalizer: NormalizeService,
@@ -135,6 +159,7 @@ export class ScrapeService {
     this.stores = stores;
     this.storeConfigs = storeConfigs;
     this.products = products;
+    this.storeProducts = storeProducts;
     this.brands = brands;
     this.adapters = adapters;
     this.normalizer = normalizer;
@@ -170,18 +195,27 @@ export class ScrapeService {
     const { deadline } = options;
 
     /**
-     * In a normal run every enrichment pass acts only on SKUs this store has
-     * never stored — the upsert writes the enrichable fields on insert alone,
-     * so an answer for a stored row could never be persisted — which is why
-     * the passes share this one lookup.
+     * Two questions gate every enrichment pass, and they are different
+     * questions. "Has this store listed this SKU before?" decides whether the
+     * run is looking at something new *to the store* — a stored offer's name
+     * and link are written once and never rewritten, so re-deriving them could
+     * not be persisted. "Does the catalogue already know this bottling?"
+     * decides whether the answer is worth paying for at all: another store may
+     * have filled the same fields last week, and the canonical write fills only
+     * what is still null, so a second answer would be bought and discarded.
+     *
+     * The second question is what the split buys. A store onboarding a range
+     * the catalogue already covers now skips almost every detail fetch and
+     * model call, where before each store paid for its own copy of the same
+     * facts.
      */
-    const known = await this.products.existingSkus(store.id);
+    const known = await this.storeProducts.existingSkus(store.id);
 
     const snaps = await this.scrape(
       spec,
-      store.id,
       known,
       backfill,
+      brandIndex,
       options.reporter,
       deadline,
     );
@@ -198,17 +232,35 @@ export class ScrapeService {
       inStock: inStock.length,
     });
 
-    await this.runLlm(known, inStock, backfill, options.reporter, deadline);
-    await this.runNameExtraction(
+    let canon = await this.loadCanonical(inStock, brandIndex);
+
+    await this.runLlm(
       known,
       inStock,
+      canon,
+      backfill,
       options.reporter,
       deadline,
     );
-    await this.runFlavorEnrichment(
-      store.id,
+    await this.runNameExtraction(
       known,
       inStock,
+      canon,
+      options.reporter,
+      deadline,
+    );
+
+    /**
+     * The name pass can rewrite `cleanName`, which changes the key — and a
+     * rewritten name is exactly the case that turns a miss into a hit, right
+     * before the most expensive pass runs.
+     */
+    canon = await this.loadCanonical(inStock, brandIndex);
+
+    await this.runFlavorEnrichment(
+      known,
+      inStock,
+      canon,
       backfill,
       options.reporter,
       deadline,
@@ -231,11 +283,38 @@ export class ScrapeService {
       inStock,
       outOfStock.map((snap) => snap.storeSku),
       capturedOn,
-      backfill,
       options.reporter,
     );
 
     return { slug, found, ...counts };
+  }
+
+  /**
+   * Stamps every snapshot with the bottling it resolves to and loads what the
+   * catalogue already knows about those bottlings.
+   *
+   * Called again whenever a pass may have changed a key's inputs. The stamp is
+   * carried into persist, so the key that decided what to pay for is the same
+   * one the write looks the bottling up by.
+   *
+   * @param snaps - The snapshots to key (stamped in place, as the rest of this
+   *   pipeline does).
+   * @param brandIndex - Known brand names, for a snapshot stating none.
+   * @returns What the catalogue knows, by match key.
+   */
+  private async loadCanonical(
+    snaps: ProductSnapshot[],
+    brandIndex: BrandMatchEntry[],
+  ): Promise<Map<string, ProductMatchRow>> {
+    snaps.forEach((snap) => {
+      snap.matchKey = this.normalizer.matchKey(snap, brandIndex);
+    });
+
+    const keys = snaps
+      .map((snap) => snap.matchKey)
+      .filter((key): key is string => key !== null && key !== undefined);
+
+    return this.products.findByMatchKeys([...new Set(keys)]);
   }
 
   /**
@@ -273,18 +352,18 @@ export class ScrapeService {
    * always closed.
    *
    * @param spec - The scrape spec.
-   * @param storeId - The store id (for the backfill detail-fetch gate).
-   * @param known - SKUs the store has already stored (the normal-run gate).
+   * @param known - SKUs the store has already stored.
    * @param backfill - Whether the wider backfill detail gate applies.
+   * @param brandIndex - Known brand names, for keying the items.
    * @param reporter - Optional progress reporter.
    * @param deadline - Optional soft deadline for the detail pass.
    * @returns The raw scraped snapshots.
    */
   private async scrape(
     spec: StoreScrapeSpec,
-    storeId: ID,
     known: Set<string>,
     backfill: boolean,
+    brandIndex: BrandMatchEntry[],
     reporter?: ScrapeProgressReporter,
     deadline?: AbortSignal,
   ): Promise<ProductSnapshot[]> {
@@ -294,11 +373,13 @@ export class ScrapeService {
       const snaps = await adapter.fetchListing();
 
       if (adapter.supportsDetail && snaps.length > 0) {
+        const canon = await this.loadCanonical(snaps, brandIndex);
+
         await this.enrichDetails(
           adapter,
-          storeId,
           snaps,
           known,
+          canon,
           backfill,
           reporter,
           deadline,
@@ -318,21 +399,25 @@ export class ScrapeService {
    *
    * Only in-stock items qualify — an out-of-stock item is never upserted, so
    * its detail data has nowhere to go (a store listing its sold-out catalogue
-   * used to burn the whole politeness-delay budget on those ghosts). A normal
-   * run then keeps only the SKUs the store has never stored: the enrichable
-   * columns are written on insert alone, so re-fetching a stored row's page
-   * could never be persisted either. A backfill run instead keeps every item
-   * whose stored core fields (ABV, volume, type, country) are incomplete —
-   * there the upsert does fill still-null columns.
+   * used to burn the whole politeness-delay budget on those ghosts). Beyond
+   * that, two conditions have to hold: the store must not already list the SKU
+   * (a backfill run waives this, which is what lets it re-fetch stored rows),
+   * and the catalogue must still be missing something the page could supply.
+   *
+   * That second condition is the one that changed with the split, and it is
+   * where the saving is. The gate used to be per store, so every store paid to
+   * discover the same bottling's strength for itself; it is now per bottling,
+   * so a store onboarding a range the catalogue already knows fetches almost
+   * nothing.
    *
    * The pass also observes the run's soft deadline: it fills secondary fields,
    * so when the budget runs short it stops and the run persists what the
    * listing gave it rather than dying on the store timeout.
    *
    * @param adapter - The store adapter.
-   * @param storeId - The store id.
-   * @param snaps - The scraped snapshots.
+   * @param snaps - The scraped snapshots, already keyed.
    * @param known - SKUs the store has already stored.
+   * @param canon - What the catalogue knows, by match key.
    * @param backfill - Whether the wider backfill detail gate applies.
    * @param reporter - Optional progress reporter.
    * @param deadline - Optional soft deadline; once it fires the remaining
@@ -341,19 +426,17 @@ export class ScrapeService {
    */
   private async enrichDetails(
     adapter: ScrapeAdapter,
-    storeId: ID,
     snaps: ProductSnapshot[],
     known: Set<string>,
+    canon: Map<string, ProductMatchRow>,
     backfill: boolean,
     reporter?: ScrapeProgressReporter,
     deadline?: AbortSignal,
   ): Promise<void> {
-    const complete = backfill
-      ? await this.products.skusWithCoreDetails(storeId)
-      : known;
-
-    const pending = snaps.filter(
-      (snap) => snap.inStock && !complete.has(snap.storeSku),
+    const pending = snaps.filter((snap) =>
+      snap.inStock
+      && (backfill || !known.has(snap.storeSku))
+      && ScrapeService.isIncomplete(this.stored(snap, canon))
     );
 
     if (!pending.length) {
@@ -400,18 +483,17 @@ export class ScrapeService {
    * Runs the LLM fallback for in-stock items still missing key fields, when
    * enabled.
    *
-   * A normal run asks only about the SKUs the store has never stored, like
-   * the name and flavor passes: the upsert writes these columns on insert
-   * alone, so an answer for a stored row would be paid for and then thrown
-   * away — a store whose whole listing lacks ABV used to re-ask about its
-   * entire catalogue on every sync. A backfill run asks about every item with
-   * a gap (its upsert fills still-null columns), including a missing type or
-   * country. Age stays out of the trigger either way: a bottling without an
-   * age statement legitimately has none, so it would make every run ask about
-   * the same items.
+   * An item is worth asking about only where the snapshot's gap and the
+   * catalogue's gap overlap: the canonical write fills what is still null, so
+   * an answer for a field the bottling already carries is bought and thrown
+   * away. A backfill run waives the "new to this store" half of the gate and
+   * additionally chases a missing type or country. Age stays out of the trigger
+   * either way — a bottling without an age statement legitimately has none, so
+   * including it would make every run ask about the same items forever.
    *
    * @param known - SKUs the store has already stored.
-   * @param inStock - In-stock snapshots.
+   * @param inStock - In-stock snapshots, already keyed.
+   * @param canon - What the catalogue knows, by match key.
    * @param backfill - Whether the wider backfill trigger applies.
    * @param reporter - Optional progress reporter.
    * @param signal - Optional LLM deadline.
@@ -420,6 +502,7 @@ export class ScrapeService {
   private async runLlm(
     known: Set<string>,
     inStock: ProductSnapshot[],
+    canon: Map<string, ProductMatchRow>,
     backfill: boolean,
     reporter?: ScrapeProgressReporter,
     signal?: AbortSignal,
@@ -428,15 +511,24 @@ export class ScrapeService {
       return;
     }
 
-    const pending = backfill
-      ? inStock.filter((snap) =>
-        this.normalizer.needsLlm(snap)
-        || snap.whiskyType === null
-        || snap.country === null
-      )
-      : inStock.filter((snap) =>
-        !known.has(snap.storeSku) && this.normalizer.needsLlm(snap)
-      );
+    const pending = inStock.filter((snap) => {
+      if (!backfill && known.has(snap.storeSku)) {
+        return false;
+      }
+
+      const row = this.stored(snap, canon);
+
+      const wantsField = (snap.abv === null && (row?.abv ?? null) === null)
+        || (snap.volumeMl === null && (row?.volumeMl ?? null) === null);
+
+      if (!backfill) {
+        return wantsField;
+      }
+
+      return wantsField
+        || (snap.whiskyType === null && (row?.typeId ?? null) === null)
+        || (snap.country === null && (row?.countryId ?? null) === null);
+    });
 
     if (!pending.length) {
       return;
@@ -452,12 +544,21 @@ export class ScrapeService {
   }
 
   /**
-   * Extracts the brand + expression display name for the items this store has
-   * never stored before. Known SKUs are skipped: `product.name` is written
-   * once on insert, so re-extracting it could never be persisted.
+   * Extracts the brand + expression display name for listings that would
+   * introduce a bottling the catalogue does not have.
+   *
+   * Both halves of the gate are needed. A SKU the store already lists keeps
+   * whatever name it was first given, so a fresh extraction could not be
+   * persisted; and a bottling the catalogue already carries already has its
+   * name, chosen once for every store.
+   *
+   * The catalogue's name is deliberately **not** copied onto the snapshot. The
+   * key that matched was computed from this listing's own cleaned name, and
+   * overwriting it would let the key drift between the gate and the write.
    *
    * @param known - SKUs the store has already stored.
-   * @param inStock - In-stock snapshots.
+   * @param inStock - In-stock snapshots, already keyed.
+   * @param canon - What the catalogue knows, by match key.
    * @param reporter - Optional progress reporter.
    * @param signal - Optional LLM deadline.
    * @returns Resolves once extraction has been attempted.
@@ -465,6 +566,7 @@ export class ScrapeService {
   private async runNameExtraction(
     known: Set<string>,
     inStock: ProductSnapshot[],
+    canon: Map<string, ProductMatchRow>,
     reporter?: ScrapeProgressReporter,
     signal?: AbortSignal,
   ): Promise<void> {
@@ -472,7 +574,9 @@ export class ScrapeService {
       return;
     }
 
-    const pending = inStock.filter((snap) => !known.has(snap.storeSku));
+    const pending = inStock.filter((snap) =>
+      !known.has(snap.storeSku) && this.stored(snap, canon) === undefined
+    );
 
     if (!pending.length) {
       return;
@@ -488,40 +592,35 @@ export class ScrapeService {
   }
 
   /**
-   * Fills in the flavor profile of the items with no answer on file yet,
-   * reusing an answer already recorded for the same bottling and calling the
-   * model only for the rest.
+   * Classifies the flavor profile of the bottlings the model has never
+   * answered for.
    *
-   * In a normal run known SKUs are skipped outright: their answer is already
-   * stored, and a bottling's flavor does not change between runs. The name
-   * lookup then covers the case a SKU gate cannot — a bottling this store is
-   * listing for the first time but another store already carries. Most of the
-   * catalogue is in that position, so without it a new listing would both pay
-   * for a redundant call and risk coming back with different tags than the
-   * sibling row, leaving one product tagged two ways depending on which store
-   * you looked at.
+   * Reuse across stores is now structural rather than looked up: a listing
+   * whose key resolves to a bottling that already carries a `lastLlmFlavorAt`
+   * is simply not asked about, and its stored tags are what every store's row
+   * reads. That is strictly stronger than the name-string lookup it replaces,
+   * which missed the spellings the key folds together (`The Glenlivet` and
+   * `Glenlivet`) and so paid twice for one whisky, sometimes getting two
+   * different answers.
    *
-   * A backfill run widens the gate to every in-stock item with no answer on
-   * file, like the detail and field passes widen theirs. Unlike those, this one
-   * is not blocked by the insert-only upsert — `setLlmFlavors` is a plain
-   * update — and it is the only pass that can durably improve a stored row's
-   * flavors, since the keyword pass's `scrape` links are re-derived from
-   * scratch on every persist. It is also the one moment the model sees the
-   * store's description: `rawAttrs` is never persisted, so the standalone
-   * `enrich-flavors` script can only ever ground on the name.
+   * A backfill run waives the "new to this store" half of the gate, which is
+   * what lets it fill in bottlings whose classification was never obtained.
+   * It is also the one moment the model sees a store's description:
+   * `rawAttrs` is never persisted, so the standalone `enrich-flavors` script
+   * can only ever ground on the name.
    *
-   * @param storeId - The store id, for the backfill gate's lookup.
    * @param known - SKUs the store has already stored.
-   * @param inStock - In-stock snapshots.
+   * @param inStock - In-stock snapshots, already keyed.
+   * @param canon - What the catalogue knows, by match key.
    * @param backfill - Whether the wider backfill flavor gate applies.
    * @param reporter - Optional progress reporter.
    * @param signal - Optional LLM deadline.
    * @returns Resolves once classification has been attempted.
    */
   private async runFlavorEnrichment(
-    storeId: ID,
     known: Set<string>,
     inStock: ProductSnapshot[],
+    canon: Map<string, ProductMatchRow>,
     backfill: boolean,
     reporter?: ScrapeProgressReporter,
     signal?: AbortSignal,
@@ -530,71 +629,22 @@ export class ScrapeService {
       return;
     }
 
-    const unanswered = backfill
-      ? await this.products.skusWithoutLlmFlavor(storeId)
-      : null;
-
-    const fresh = inStock.filter((snap) =>
-      unanswered === null
-        ? !known.has(snap.storeSku)
-        : unanswered.has(snap.storeSku)
-    );
-
-    if (!fresh.length) {
-      return;
-    }
-
-    /**
-     * Keyed on the name persist will store, so a hit here is a hit on the row
-     * that would be written. A snapshot whose name resolves to null cannot be
-     * matched and goes straight to the model.
-     */
-    const keys = new Map(
-      fresh.map((snap) => [
-        snap,
-        ProductNameUtils.resolve(snap.cleanName, snap.name),
-      ]),
-    );
-
-    const stored = await this.products.findLlmFlavorsByNames([
-      ...new Set([...keys.values()].filter((key): key is string => !!key)),
-    ]);
-
-    const pending = fresh.filter((snap) => {
-      const key = keys.get(snap);
-      const tags = key === null || key === undefined
-        ? undefined
-        : stored.get(key);
-
-      if (!tags) {
-        return true;
+    const pending = inStock.filter((snap) => {
+      if (!backfill && known.has(snap.storeSku)) {
+        return false;
       }
 
-      /**
-       * `llmFlavorConfidence` stays unset: the stored links do not record what
-       * the model claimed when it produced them, and inventing a value here
-       * would misreport it. `llmFlavorChecked` is what persist gates on.
-       */
-      snap.llmFlavorTags = [...tags].sort();
-      snap.llmFlavorChecked = true;
-
-      return false;
+      return (this.stored(snap, canon)?.lastLlmFlavorAt ?? null) === null;
     });
-
-    this.logger.debug(
-      'Flavor pass: %d of %d new SKU(s) reused a stored answer',
-      fresh.length - pending.length,
-      fresh.length,
-    );
 
     if (!pending.length) {
       return;
     }
 
-    const groups = ScrapeService.groupByFlavorKey(pending, keys);
+    const groups = ScrapeService.groupByFlavorKey(pending);
 
     this.logger.debug(
-      'Flavor pass: %d new SKU(s) cover %d distinct name(s)',
+      'Flavor pass: %d listing(s) cover %d unclassified bottling(s)',
       pending.length,
       groups.length,
     );
@@ -612,6 +662,21 @@ export class ScrapeService {
     );
 
     ScrapeService.fanOutFlavors(groups);
+  }
+
+  /**
+   * What the catalogue knows about the bottling a snapshot describes.
+   *
+   * @param snap - The keyed snapshot.
+   * @param canon - The lookup built by {@link loadCanonical}.
+   * @returns The stored row, or undefined when the bottling is new or the
+   *   snapshot carries no key at all.
+   */
+  private stored(
+    snap: ProductSnapshot,
+    canon: Map<string, ProductMatchRow>,
+  ): ProductMatchRow | undefined {
+    return snap.matchKey ? canon.get(snap.matchKey) : undefined;
   }
 
   /**

@@ -28,9 +28,7 @@ import {
  * The columns a backfill run can fill, in report order.
  */
 const FIELDS = [
-  'age',
   'abv',
-  'volumeMl',
   'brandId',
   'typeId',
   'countryId',
@@ -42,7 +40,7 @@ const FIELDS = [
 const LABEL_WIDTH = 10;
 
 /**
- * How many null values each backfillable column still holds.
+ * How many null values each fillable canonical column still holds.
  */
 type NullCounts = Record<typeof FIELDS[number], number>;
 
@@ -114,7 +112,7 @@ function parseArgs(argv: string[]): BackfillOptions {
 }
 
 /**
- * Counts the nulls of every backfillable column for one store.
+ * Counts, per fillable canonical column, the nulls a store's offers see.
  *
  * @param products - The product core service.
  * @param storeId - The store to count.
@@ -124,7 +122,7 @@ async function countNulls(
   products: CoreProductService,
   storeId: ID,
 ): Promise<NullCounts> {
-  const rows = await products.findMany({ storeId });
+  const rows = await products.findCarriedByStore(storeId);
 
   const counts = Object.fromEntries(
     FIELDS.map((field) => [field, 0]),
@@ -132,7 +130,7 @@ async function countNulls(
 
   rows.forEach((row) => {
     FIELDS.forEach((field) => {
-      if (row[field] === null || row[field] === undefined) {
+      if (row[field] === null) {
         counts[field] += 1;
       }
     });
@@ -156,7 +154,7 @@ async function countFillable(
   storeId: ID,
   items: ProductSnapshot[],
 ): Promise<NullCounts> {
-  const rows = await products.findMany({ storeId });
+  const rows = await products.findCarriedByStore(storeId);
   const bySku = new Map(items.map((item) => [item.storeSku, item]));
 
   const counts = Object.fromEntries(
@@ -171,9 +169,7 @@ async function countFillable(
     }
 
     const offered: Record<typeof FIELDS[number], unknown> = {
-      age: item.ageYears,
       abv: item.abv,
-      volumeMl: item.volumeMl,
       brandId: item.brand,
       typeId: item.whiskyType,
       countryId: item.country,
@@ -216,6 +212,7 @@ function progressLine(event: ScrapeProgressEvent): string | null {
         + `${event.pending} item(s) left for the next run`;
     case 'persisted':
       return `persisted: ${event.stored} stored, ${event.added} added, `
+        + `${event.addedProducts} new bottling(s), `
         + `${event.removed} flagged out of stock`;
     case 'sweep-guarded':
       return `listing looks truncated (${event.inStock} in stock vs `
@@ -339,14 +336,22 @@ async function backfillStore(
 }
 
 /**
- * Re-scrapes stores in backfill mode so the rows written before the parser
- * could read a field get it filled in.
+ * Re-scrapes stores in backfill mode so the bottlings written before the
+ * parser could read a field get it filled in.
  *
- * `product.name` and the type/country/age/abv/volume columns are written once
- * on insert and never on conflict, so manual edits survive later scrapes — and
- * so do the gaps left by an earlier, weaker parser. The backfill upsert fills
- * exactly those gaps: a stored value is never overwritten, only a null is
- * replaced. Idempotent — a second run finds nothing left to fill.
+ * Filling a null is now what every sync does — the canonical write is
+ * fill-if-null by default — so what backfill mode still changes is *which
+ * items a run bothers to look at*: it waives the "new to this store" half of
+ * every enrichment gate, so stored offers get their detail pages fetched and
+ * their fields asked about again.
+ *
+ * Age and volume are deliberately not in the report. They are components of a
+ * bottling's identity, frozen when the row is created, so a backfill cannot
+ * change them — a wrong one is a manual merge, not a sweep.
+ *
+ * Counts are per store offer but the fills are catalogue-wide, so a store's
+ * nulls can legitimately drop because a *different* store's sync answered for
+ * the same whisky.
  *
  * This bypasses the `sync_log` lock the orchestrator takes, so it must not run
  * while the same store is syncing from the cron or the sync endpoint.

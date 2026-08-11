@@ -10,21 +10,24 @@ import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 
 import { CURRENCY_MAX_LENGTH, DEFAULT_CURRENCY } from '~constants';
 import { GuidV7Column, NumericColumn } from '~decorators/columns';
-import type { EntityPriceSnapshot, EntityProduct, ID } from '~types';
+import type { EntityPriceSnapshot, EntityStoreProduct, ID } from '~types';
 
 import { BaseRichEntity } from '../_common';
 
 @Entity('price_snapshot')
-@Index('price_snapshot_product_created_idx', ['productId', 'createdAt'])
 @Index(
-  'price_snapshot_product_captured_uindex',
-  ['productId', 'capturedOn'],
+  'price_snapshot_store_product_created_idx',
+  ['storeProductId', 'createdAt'],
+)
+@Index(
+  'price_snapshot_store_product_captured_uindex',
+  ['storeProductId', 'capturedOn'],
   { unique: true },
 )
 export class PriceSnapshotEntity extends BaseRichEntity
   implements EntityPriceSnapshot {
   @GuidV7Column()
-  public productId!: ID;
+  public storeProductId!: ID;
 
   @IsNumber()
   @NumericColumn()
@@ -49,20 +52,20 @@ export class PriceSnapshotEntity extends BaseRichEntity
   public promo!: boolean;
 
   // The calendar day this snapshot belongs to, as a UTC date. Paired with a
-  // unique index on (productId, capturedOn) to enforce one row per product per
-  // day at the database level, replacing the old app-only convention.
+  // unique index on (storeProductId, capturedOn) to enforce one row per offer
+  // per day at the database level, replacing the old app-only convention.
   @IsDateString()
   @Column({ type: 'date', default: () => 'CURRENT_DATE' })
   public capturedOn!: string;
 
   @ManyToOne(
-    'ProductEntity',
-    (product: EntityProduct) => product.id,
+    'StoreProductEntity',
+    (storeProduct: EntityStoreProduct) => storeProduct.id,
     { onDelete: 'CASCADE' },
   )
   @JoinColumn({
-    foreignKeyConstraintName: 'fk_snapshot_product',
-    name: 'productId',
+    foreignKeyConstraintName: 'fk_snapshot_store_product',
+    name: 'storeProductId',
   })
-  public product!: EntityProduct;
+  public storeProduct!: EntityStoreProduct;
 }

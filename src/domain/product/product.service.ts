@@ -2,14 +2,16 @@ import { Injectable } from '@nestjs/common';
 
 import { CoreCountryService } from '~core/country';
 import { CoreProductService } from '~core/product';
+import { CoreStoreProductService } from '~core/store-product';
 import { CoreTypeService } from '~core/type';
-import { BadRequestError } from '~errors';
+import { BadRequestError, NotFoundError } from '~errors';
 import { ID, ProductUpdateInput, TypeProduct } from '~types';
 
 @Injectable()
 export class ProductService {
   public constructor(
     private readonly products: CoreProductService,
+    private readonly offers: CoreStoreProductService,
     private readonly countries: CoreCountryService,
     private readonly types: CoreTypeService,
   ) {}
@@ -19,12 +21,30 @@ export class ProductService {
    * (undefined fields are ignored), resolving the country code and type name
    * to their FK ids. A `null` value clears the field.
    *
-   * @param input - The product id plus the fields to update.
-   * @returns The product id with its updated name and raw fallback.
-   * @throws {NotFoundError} When no product has the id.
+   * Every editable field belongs to the bottling rather than to one store's
+   * listing, so **the edit applies to every store at once** — which is the
+   * whole point of keeping a canonical catalogue. The incoming id may be either
+   * a report row (a store offer, which is what the client has) or a canonical
+   * product; both resolve to the same bottling.
+   *
+   * Editing `age` or `volumeMl` does **not** re-derive the bottling's match
+   * key. The key is frozen when the row is created (see `EntityProduct`), so a
+   * correction here changes what is displayed and filtered without detaching
+   * the offers already linked; re-matching is a manual operation.
+   *
+   * @param input - The product or offer id plus the fields to update.
+   * @returns The requested id with the updated name and a raw fallback.
+   * @throws {NotFoundError} When the id matches neither an offer nor a
+   * product.
    * @throws {BadRequestError} When a country code or type name is unknown.
    */
   public async update(input: ProductUpdateInput): Promise<TypeProduct> {
+    const ref = await this.offers.findOfferRefById(input.id);
+
+    if (!ref) {
+      throw new NotFoundError('Product not found', { id: input.id });
+    }
+
     const patch: Record<string, string | number | null> = {};
 
     if (input.name !== undefined) {
@@ -52,14 +72,19 @@ export class ProductService {
     }
 
     const updated = await this.products.updateByIdOrThrow(
-      input.id,
+      ref.productId,
       patch as never,
     );
 
+    /**
+     * The caller's own id is echoed back rather than the canonical one, so the
+     * response still names the thing the client asked about. `nameOrig` has to
+     * come from the resolved offer — the bottling carries no raw name.
+     */
     return {
-      id: updated.id,
+      id: input.id,
       name: updated.name ?? null,
-      nameOrig: updated.nameOrig,
+      nameOrig: ref.nameOrig,
     };
   }
 

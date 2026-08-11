@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
-import { CoreProductService } from '~core/product';
 import { CoreStoreService } from '~core/store';
+import { CoreStoreProductService } from '~core/store-product';
 import { CoreSyncLogService } from '~core/sync-log';
 import { SyncTrigger } from '~enums';
 import { NotFoundError, ServerError } from '~errors';
@@ -22,7 +22,7 @@ const RECENT_SYNC_LIMIT = 10;
 export class StoreService {
   public constructor(
     private readonly stores: CoreStoreService,
-    private readonly products: CoreProductService,
+    private readonly offers: CoreStoreProductService,
     private readonly syncLogs: CoreSyncLogService,
     private readonly orchestrator: SyncOrchestratorService,
     private readonly fileLog: SyncFileLogService,
@@ -67,7 +67,7 @@ export class StoreService {
     }
 
     const [productCount, recentSyncs, lastSyncs] = await Promise.all([
-      this.products.countByStore(item.id),
+      this.offers.countByStore(item.id),
       this.syncLogs.recentByStore(item.id, RECENT_SYNC_LIMIT),
       this.syncLogs.lastSuccessfulByStore(),
     ]);

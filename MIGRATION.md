@@ -40,13 +40,13 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
 | `GET /api/meta`                                                                       | `GET /meta`                                                                                                                                  | any logged-in user |
 | `GET /api/report/{kind}`                                                              | `GET /report/{kind}` (`kind`: catalog\|drops\|low\|new\|best)                                                                                | any logged-in user |
-| `GET /api/history?term=`                                                              | `GET /report/history?term=`                                                                                                                  | any logged-in user |
+| `GET /api/history?term=`                                                              | `GET /report/history?term=` — `term` takes a report row's id (a store offer), a canonical `productId` (resolved to that bottling's in-stock, most recently seen offer), or a name/URL substring. The series is always one store's price history | any logged-in user |
 | `GET /api/config`                                                                     | `GET /store` (sites + config) + fixed constants in `/meta`                                                                                   | admin              |
 | `GET /api/stores/{slug}`                                                              | `GET /store/{slug}`                                                                                                                          | admin              |
 | `PATCH /api/stores/{slug}` `{active}`                                                 | `PATCH /store/{slug}` `{active}`                                                                                                             | admin              |
 | — (new)                                                                               | `POST /store/{slug}/sync` — starts an on-demand sync, `202` + the open sync-log row                                                          | `store:sync`       |
 | — (new)                                                                               | `GET /store/sync-status` — the syncs currently in flight                                                                                     | admin              |
-| — (new)                                                                               | `POST /product/update` `{id, name?, countryCode?, typeName?, age?, abv?, volumeMl?}` — edit product overrides (undefined fields untouched)   | `product:edit`     |
+| — (new)                                                                               | `POST /product/update` `{id, name?, countryCode?, typeName?, age?, abv?, volumeMl?}` — edit product overrides (undefined fields untouched). `id` accepts a report row's id (a store offer) or a canonical `productId`; either way the edit writes the **bottling**, so it applies to every store listing it | `product:edit`     |
 | `GET/POST /api/users`, `POST /api/users/{id}/active`, `POST /api/users/{id}/password` | existing `user` module: `GET/POST /user`, `GET/PATCH/DELETE /user/:id`, `POST /user/password[/:userId]`, `GET/PUT /user/:userId/permissions` | admin              |
 | `GET /` + static                                                                      | unchanged — the frontend is hosted separately (point it at this API's base URL)                                                              | —                  |
 
@@ -91,7 +91,8 @@ An empty array means nothing is running.
 
 | Legacy           | Node                        | Notes                                                                                                                                                                                                                                         |
 | ---------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id` (int)       | `id` (uuid)                 |                                                                                                                                                                                                                                               |
+| `id` (int)       | `id` (uuid)                 | the **store offer** — one row per store × SKU. Unchanged by the catalogue split; still what `/report/history` and `/product/:id` take                                                                                                          |
+| —                | `productId` (uuid)          | new — the **bottling** this row is an offer of. Rows from different stores sharing it are the same whisky: that is how `best` groups them, and an edit through any of them applies to all                                                       |
 | `store`          | `storeName`                 |                                                                                                                                                                                                                                               |
 | —                | `storeSlug`                 | new                                                                                                                                                                                                                                           |
 | —                | `sku`                       | new                                                                                                                                                                                                                                           |
@@ -132,6 +133,23 @@ rows.** A bottling listed as `Aerstone, Land Cask` by one store and
 `Aerstone Land Cask` by another, plain vs boxed, and bottle vs bottle-with-two-
 glasses all collapse onto the same name, so rows that used to look distinct now
 group together. `volumeMl` still separates a multipack from a single bottle.
+
+### Offers vs products
+
+A report row is still one store's offer, and `id` still identifies it. What is
+new is that the offer now points at a **canonical product** — the bottling
+itself — through `productId`, and everything that describes the whisky rather
+than the sale (`name`, `age`, `abv`, `volumeMl`, `brand`, `type`, the country
+fields, `flavors`) is that product's single stored value, read identically by
+every store's row. Only `id`, `sku`, `url`, `nameOrig`, `storeSlug`,
+`storeName`, `inStock`, `firstSeen` and the price fields vary between the
+offers of one bottling.
+
+Two practical consequences: the filters `types`, `countries`, `minVolume`,
+`maxVolume`, `flavors` and `excludeFlavors` now answer the same way for every
+store carrying a whisky (before the split two stores' rows could disagree),
+and `POST /product/update` edits the bottling, so one call fixes every store at
+once.
 
 ### Report query params
 
@@ -175,7 +193,7 @@ order (e.g. `drops` by discount desc); the web `drops` tab defaults its view to
 | --------------- | -------------------------------------------------------------------------- |
 | `url`           | `baseUrl`                                                                  |
 | `created_at`    | `createdAt`                                                                |
-| `product_count` | `productCount`                                                             |
+| `product_count` | `productCount`                                                             | the store's in-stock offers (unchanged meaning) |
 | `last_sync`     | `lastSync`                                                                 |
 | `recent_syncs`  | `recentSyncs`                                                              |
 | —               | `color`, `active`, `tier`, `needsBrowser`, `retailChain`, `category` (new) |
@@ -201,9 +219,15 @@ rows written before the sync overhaul).
   in `/meta`.
 - **Collector settings** exposed by legacy `/api/config` (`delay_multiplier`,
   `apply_exclude_flavors`): belong to the Python scraper, not this API.
-- **`best` offer grouping** uses a match key (brand + significant name tokens +
-  volume + age); implementation differs from legacy but the intent (same
-  product across ≥2 stores, cheapest) is preserved.
+- **`best` offer grouping** reads the persisted `productId` — the offers of one
+  bottling — rather than recomputing a key at read time. The key itself
+  (normalized name + brand + volume + age, no ABV) is derived once, when a
+  store first lists a SKU, and then frozen; a mismatch is corrected by hand and
+  the correction sticks. The intent is unchanged from legacy: the same product
+  across ≥2 stores, cheapest. Two guards remain — a group must span at least
+  two stores (one store can list the same bottling twice), and a winner far
+  below the runner-up is dropped as an implausible deal. Products with no known
+  volume now participate, where the old read-time key had to skip them.
 
 ## Errors
 

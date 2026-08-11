@@ -4,8 +4,8 @@ import { NotFoundError } from '~errors';
 
 import { StoreService } from '../../src/domain/store/store.service';
 
-import type { CoreProductService } from '~core/product';
 import type { CoreStoreService } from '~core/store';
+import type { CoreStoreProductService } from '~core/store-product';
 import type { CoreSyncLogService } from '~core/sync-log';
 import type { SyncFileLogService } from '~lib/sync-file-log';
 import type { EntitySyncLog, StoreListItem } from '~types';
@@ -71,7 +71,7 @@ function makeService(
   };
   const service = new StoreService(
     stores as unknown as CoreStoreService,
-    {} as CoreProductService,
+    {} as CoreStoreProductService,
     syncLogs as unknown as CoreSyncLogService,
     {} as SyncOrchestratorService,
     fileLog as unknown as SyncFileLogService,

@@ -38,12 +38,6 @@ scripts/deploy.sh                # prod deploy: build -> run migrate -> up -d
 # LLM flavor classification of stored products (no sync lock, re-runnable).
 # --limit costs a model on one batch before committing to the full sweep.
 pnpm enrich-flavors [--dry-run] [--store <slug>] [--limit <n>]
-
-# One-time import of the legacy SQLite DB into Postgres. Path resolution:
-# <sqlite-path> arg > $LEGACY_SQLITE_PATH > ./whisky.db (be root); fails fast
-# if the file does not exist.
-pnpm exec ts-node -r tsconfig-paths/register scripts/sync-from-sqlite.ts \
-  [<sqlite-path>] [--dry-run] [--tables=country,store,...]
 ```
 
 Because `scripts/` sits beside `src/`, `nest build` nests the output under
@@ -316,33 +310,79 @@ entity/repository/service/module shape:
   from the legacy SQLite import, see [`PARITY.md`](PARITY.md)), `engine`
   (`python`|`ts`|`python-api`, default `python`) — this is scrape-config,
   unrelated to product category.
-- `product` — `storeId`, `sku`, `url`, `name`, `age?`, `abv?`, `volumeMl?`,
-  FKs `brandId?`/`typeId?`/`countryId?`, `inStock` (bool, default true —
-  current availability), `firstSeen`/`lastSeen` (date). Unique
-  `(storeId, sku)`. Flavors hang off the **explicit** `product_flavor` join
+- `product` — the **bottling**, independent of who sells it: `matchKey?`
+  (unique), `name?`, `age?`, `abv?`, `volumeMl?`, FKs
+  `brandId?`/`typeId?`/`countryId?`, `lastLlmFlavorAt?`. One row per whisky,
+  so a correction, a flavor classification and (next) a photo are stored once
+  and read by every store.
+- `store-product` — one store's **offer** of a bottling: `storeId`,
+  `productId` (FK → `product`, `RESTRICT`), `sku`, `url`, `nameOrig`,
+  `inStock` (bool, default true — current availability),
+  `firstSeen`/`lastSeen` (date). Unique `(storeId, sku)`; prices hang off this
+  row, not off the bottling.
+  **`matchKey` is the cross-store identity** (`ProductMatchUtils`, `~utils`): a
+  normalized signature of the cleaned name plus the brand, then `|v{ml}|a{age}`.
+  Strength is deliberately absent — it is missing on about one row in ten and
+  two stores that both state it disagree often enough (`Balvenie DoubleWood` at
+  40 % and 43 %) that including it would split a bottling more often than it
+  would keep two apart. Bare numbers, on the other hand, are **kept**, unlike in
+  the legacy Python key: the name cleaner already lifts strength, size and age
+  into their own columns, so a surviving number is part of the name, and
+  dropping it merged `Wild Turkey 81` into `Wild Turkey 101` (39 rows on one
+  key), `Maker's Mark 46` into `Maker's Mark` and every Octomore release into
+  one. The stop-token list is evidence-driven and its **exclusions** are the
+  load-bearing part: `bourbon` and `rye` head a cask or grain qualifier far more
+  often than they name a category, and `scottish`, `kentucky`, `canadian`,
+  `irish`, `british`, `english` and `grain` all head real brands in this
+  catalogue (`Scottish Leader`, `Kentucky Owl`, `Canadian Club`, `North
+  British`, `Nikka The Grain`). `box` and `gb` **are** stop tokens — every
+  occurrence is a gift-box marker on an otherwise identical listing.
+  **The key is frozen at creation.** A rename, a filled-in volume or a manual
+  edit never re-derives it: re-keying would silently detach the offers already
+  linked, and identity is meant to be decided once and corrected by hand.
+  Two consequences to keep in mind — a later listing whose key differs creates a
+  *second* bottling that curation must merge, and `age`/`volumeMl` are therefore
+  effectively immutable (which is why `pnpm fix-age` and `pnpm fix-volume` were
+  retired after their final pre-split run).
+  **Matching happens once**, when a store first lists a SKU. The offer upsert
+  leaves `productId` out of its conflict-update clause, so nothing a sync does
+  can undo a manual relink — see `CURATION.md` for the recipes.
+  Flavors hang off the **explicit** `product_flavor` join
   entity (`core/product/product-flavor.entity.ts`) — not a TypeORM
   `@ManyToMany`, because the table carries a third column, `source`
   (`scrape`|`llm`, `FlavorSource`), and an implicit `@JoinTable` junction cannot.
   Nothing loads it as a relation; `ProductRepository` owns every row in raw SQL.
-  **`source` is what makes LLM flavors survive a sync**: `setFlavors` re-derives
-  the keyword pass's links on every run and so deletes and reinserts only
-  `source = 'scrape'`, while `setLlmFlavors` owns the `llm` rows and the sync
-  never touches them. A tag both passes found ends up owned by `llm` (the insert
-  promotes it), so the sync's replace cannot remove it. Promoting the junction to
+  Its `productId` points at the **bottling**, so one classification serves every
+  store — which is what the `flavor-llm-import` migration was already doing by
+  hand, keyed on the name.
+  **The keyword pass now only ever adds links.** It used to delete and re-derive
+  its `scrape` rows on every run, which was coherent only while each store owned
+  its own product row; on a shared bottling a store whose listing does not
+  happen to spell out "торф" would erase what another store's listing stated. A
+  keyword hit is evidence *for* a flavor, never against one, so
+  `addScrapeFlavors` inserts with `ON CONFLICT DO NOTHING` and removes nothing.
+  The cost is that a stale tag never clears on its own; the escape hatch is a
+  data migration, as `flavor-taxonomy-cleanup` already is. `setLlmFlavors` still
+  owns and replaces the `llm` rows, and a tag both passes found ends up owned by
+  `llm` (the insert promotes it). Promoting the junction to
   an entity had to reproduce the implicit table's DDL exactly — `ON UPDATE
   CASCADE` on both FKs plus a plain index per join column, whose TypeORM-hashed
   names (`IDX_ffe61c…`, `IDX_22847b…`) the entity regenerates identically —
-  otherwise `migration:generate` proposes dropping and recreating them.
+  otherwise `migration:generate` proposes dropping and recreating them. The
+  split kept the canonical table named `product` precisely so all of that — the
+  primary key, both hashed indexes, the entity's string relation — stayed
+  untouched.
   `lastLlmFlavorAt` records when the classification pass last answered, **set
   even for an "unknown" answer**: that answer links no flavor, so without the
   marker it is indistinguishable from never having been asked and every run
   would re-ask (and re-pay) for the same products. It stays null when a batch
   failed, which is what makes `pnpm enrich-flavors` retry those items.
-  **Out-of-stock products are never deleted** — the persist pipeline flips
-  `inStock` instead, so price history survives out-of-stock periods and a
-  returning product keeps its identity (`firstSeen`, manual edits). List reads
+  **Out-of-stock offers are never deleted** — the persist pipeline flips
+  `store_product.inStock` instead, so price history survives out-of-stock
+  periods and a returning offer keeps its identity (`firstSeen`, and the
+  bottling it is linked to). List reads
   (`findCurrentRows`, `/report/*`, `/meta` countries, `/store/:slug`
-  `productCount`) filter on `inStock = true`; the single-product history path
+  `productCount`) filter on `inStock = true`; the single-offer history path
   (`findCurrentRowById`, `/report/history`) still returns flagged rows.
   **`name` holds the product alone — brand + expression.** The age, ABV and
   volume live in their own columns and are re-appended by the web client at
@@ -407,13 +447,11 @@ entity/repository/service/module shape:
   whose listings carry long prose. **Insert-only writes mean those rows were
   never corrected**: 227 of the 2 764 aged rows in a production snapshot came
   from before the fix, and a `novus` dry run confirms the current engine now
-  returns no age for exactly those products. `pnpm fix-age`
-  (`scripts/fix-product-age.ts`, `--dry-run` / `--store <slug>`) applies the
-  current rule retroactively — keep an age only where the name states it, or
-  where the store lists it in a spec field (only the `okwine` adapter reads
-  one). Idempotent, no API key; **production still has to be swept once.**
-  Clearing is one-way: a cleared age is **not** re-derived by a later scrape
-  unless the name carries it, so only clear what no source supports.
+  returns no age for exactly those products. `pnpm fix-age` applied the current
+  rule retroactively and was **retired with the catalogue split**: age is now a
+  component of a bottling's identity, frozen at creation, so a sweep can no
+  longer change it. Run it on production *before* the split migration, or a
+  wrong age becomes a manual merge (`CURATION.md`).
   **`volumeMl` is the sum of a gift set's bottles.** `extractVolumeMl` used to
   take the first match in the name, so a set of three 0.7 л bottles was stored
   as 0.7 л — and because the report compares by volume, a three-bottle price
@@ -421,41 +459,35 @@ entity/repository/service/module shape:
   segments a `+` joins, via `ProductNameUtils.bundleSegments`, which returns
   null for an accessory bundle (`+ 2 склянки`) and for a brand spelled with a
   `+` (`Roe + Co`) — and strips the product code first, since several codes are
-  themselves `+`-joined. Insert-only again, so `pnpm fix-volume`
-  (`scripts/fix-bundle-volume.ts`, `--dry-run` / `--store <slug>`) sweeps the
-  stored rows; 11 of the 12 sets in a production snapshot were wrong.
+  themselves `+`-joined. `pnpm fix-volume` swept the stored rows (11 of the 12
+  sets in a production snapshot were wrong) and was **retired with the
+  catalogue split** for the same reason as `pnpm fix-age`: volume is part of a
+  bottling's identity now.
   The same trap is why `LlmNameExtractionService` rejects an answer that drops a
   set's other bottles: told to return "the product", the model answered
   `Jura Journey` for a three-bottle set, and token validation passed it because
   every word it kept was in the raw name.
-  **Insert-only also froze the gaps of every earlier parser**, and those gaps
-  cannot be re-derived from the row — a country the row never had is not in the
-  row. `pnpm backfill` (`scripts/backfill-nulls.ts`, `--dry-run` /
-  `--store <slug>`, repeatable) therefore re-runs the real collection pipeline
-  with `collectStore(slug, { backfill: true })`, which changes exactly four
-  things: `ProductRepository` uses `BACKFILL_UPSERT_SQL`, whose update clause
-  adds `name`/`typeId`/`countryId`/`age`/`abv`/`volumeMl` as
-  `COALESCE(product.x, EXCLUDED.x)` — the stored value always wins, so this is
-  a fill, never an overwrite; the detail-page gate becomes `skusWithCoreDetails`
-  (ABV **and** volume **and** type **and** country stored) instead of the
-  normal run's "never stored" gate — a backfill run is the one place a stored
-  row's detail fetch can be persisted at all; the LLM enrichment trigger
-  widens from "new SKU with a missing field" to every item with a still-null
-  ABV, volume, type or country; and the LLM **flavor** gate widens to
-  `skusWithoutLlmFlavor` (`lastLlmFlavorAt IS NULL`). **Age is deliberately in
-  none of the widenings**: a NAS bottling has no age to find, so including it
-  would re-fetch and re-ask about the same items on every run forever.
-  The flavor widening is the one that is _not_ about the insert-only upsert —
-  `setLlmFlavors` is a plain update. It is there because the `llm` source is the
-  only durable half of the taxonomy: the keyword pass's `scrape` links are
-  deleted and re-derived on **every** persist, and a stored row's detail page is
-  never re-fetched by a normal run, so a tag the backfill's richer `rawAttrs`
-  produced would be overwritten by the very next sync unless the model also
-  answered for it. A backfill run is also the only moment the flavor pass sees
-  the store's description at all, since `rawAttrs` is never persisted — which is
-  the grounding `pnpm enrich-flavors` structurally cannot have. The
-  `findLlmFlavorsByNames` reuse still runs first, so most rows resolve from a
-  sibling store's stored answer without a model call.
+  **Filling a null is now what every sync does.** The canonical write is
+  fill-if-null by construction — `fillMissing` only ever replaces a null, so a
+  store that reads a spec page contributes to a bottling another store listed
+  first, and a manual edit is safe from the next sync. What `pnpm backfill`
+  (`scripts/backfill-nulls.ts`, `--dry-run` / `--store <slug>`, repeatable)
+  still changes, running the real pipeline through
+  `collectStore(slug, { backfill: true })`, is *which items a run looks at*: it
+  waives the "new to this store" half of every enrichment gate, so stored
+  offers get their detail pages fetched and their fields asked about again.
+  **The other half of each gate is the catalogue**, and that is where the
+  saving is: a detail page or a model call is bought only when the *bottling*
+  is still missing something, not when this particular store is. A store
+  onboarding a range the catalogue already covers now fetches almost nothing,
+  where before each store paid for its own copy of the same facts.
+  Age and volume are in none of it — they are identity, frozen at creation, so
+  a backfill cannot change them (a NAS bottling also has no age to find, which
+  is why the old gate excluded age even then).
+  The detail gate additionally chases a bottling with complete specs but no
+  flavor classification: the detail page is the only source of `rawAttrs`,
+  which is the only grounding the flavor pass ever gets — the standalone
+  `pnpm enrich-flavors` structurally cannot have it.
   The script mirrors the engine's
   progress events to stdout as timestamped lines (every listing page, every
   tenth detail page, the LLM passes, the persist) so a multi-hour run is
@@ -504,11 +536,11 @@ entity/repository/service/module shape:
   the pipeline pass — `rawAttrs` is never persisted, so a stored row offers only
   `nameOrig` + type + country, while a live scrape can also pass the zakaz/okwine
   description — so expect a higher `unknown`/`low` rate from the sweep.
-- `price-snapshot` — `productId`, `price`/`oldPrice?` (`NumericColumn`),
+- `price-snapshot` — `storeProductId`, `price`/`oldPrice?` (`NumericColumn`),
   `currency`, `inStock`, `promo`, `capturedOn` (date, default `CURRENT_DATE`).
-  **One row per product per day**, enforced by the unique index
-  `(productId, capturedOn)` + an atomic `INSERT ... ON CONFLICT DO UPDATE`;
-  plus a plain index `(productId, createdAt)`. `capturedOn` is the UTC calendar
+  **One row per offer per day**, enforced by the unique index
+  `(storeProductId, capturedOn)` + an atomic `INSERT ... ON CONFLICT DO UPDATE`;
+  plus a plain index `(storeProductId, createdAt)`. `capturedOn` is the UTC calendar
   day (matches the existing `createdAt::date` report basis).
 - `sync-log` — `storeId`, counters, `success?` (null = still running), `error?`,
   `finishedAt?`, `group?`/`trigger?` (`manual`|`cron`, denormalized at run
@@ -539,10 +571,16 @@ the `bayadera` / `fozzy` stores + config, same shape and un-onboarding
 `down()` semantics as `silpo-store`; the fozzy comment documents that the
 first fill must run through `pnpm backfill --store fozzy`, because ~300
 detail pages at the politeness delay blow the store sync timeout and a
-timed-out run persists nothing), and `alcomag-store` (the `alcomag` store +
+timed-out run persists nothing), `alcomag-store` (the `alcomag` store +
 config, same shape again; the first fill runs through
 `pnpm backfill --store alcomag` for the same timeout reason — ~600 detail
-pages) — all
+pages), and `product-canonical-split` (the catalogue/offer split: renames
+`product` to `store_product` keeping every row id — so the 346k-row
+`price_snapshot` is never rewritten, only its column and constraint names —
+creates the canonical `product` beside it, groups the store rows in TypeScript
+through `ProductMatchUtils`, re-points `product_flavor`, and asserts the counts
+before it commits; its `down()` is structurally exact but semantically
+best-effort, documented in the file) — all
 applied, formatted per the `typeorm-migration-format` skill, and drift-free
 against the entities.
 
@@ -583,17 +621,13 @@ Load-bearing details:
   schema or data — ships as a migration**, never as ad-hoc SQL, so prod picks
   it up through the deploy's migrate gate.
 
-Data migration: `scripts/sync-from-sqlite.ts` (uses the `better-sqlite3`
-devDependency) reads the legacy SQLite DB and upserts into Postgres by natural
-key, resolving FKs by natural key (legacy integer ids are never carried over).
-Brand names pass through `BrandUtils.canonical` (`~utils`, mirrors the scraper's
-`normalize.canonical_brand`) so the case/whitespace/Cyrillic variants stores
-emit collapse onto one lookup row. Idempotent/re-runnable — a one-time importer
-for the historical SQLite data; the Python collector now writes Postgres
-directly, so this is no longer a live bridge. Chunked at 500/1000 rows to stay under the PG 65 535-param
-limit. Verified against the real 24 MB legacy DB (8 724 products, 210 357
-snapshots). Timestamp columns are `timestamp` (no tz); legacy UTC ISO values
-shift by the local offset on display — decide a tz policy before production.
+The legacy SQLite importer (`scripts/sync-from-sqlite.ts`, and the
+`better-sqlite3` devDependency with it) was **deleted with the catalogue
+split**. It had already done its one job — the historical data has lived in
+Postgres since the cutover — and it wrote the single-table `product` shape,
+which no longer exists. Timestamp columns it left behind are `timestamp` (no
+tz); legacy UTC ISO values shift by the local offset on display, so a tz policy
+is still owed.
 
 ## Scraping engine (`src/scrape/`)
 
@@ -654,22 +688,24 @@ wrappers): `scrape/` has its own internal layering.
   since the winewine budget fix — the fields pass, all gated on the same
   `existingSkus` lookup, fetched once and shared). A bottling's flavor does not
   change between runs, so re-asking per sync would be pure spend. A **backfill**
-  run widens that to `skusWithoutLlmFlavor` (`lastLlmFlavorAt IS NULL`) — see
-  `pnpm backfill`, which explains why this pass and not the keyword one is what
-  makes a stored row's flavors durable. Stored rows can also be swept by
-  `pnpm enrich-flavors`, which needs no scrape but is therefore stuck with
-  name-only grounding.
-  **A new SKU still reuses an answer stored under the same name before it asks**
-  (`findLlmFlavorsByNames`, keyed on `ProductNameUtils.resolve` so the key is
-  exactly the name persist will write). The SKU gate alone cannot cover this:
-  724 names are carried by more than one store, spanning 5 527 of 6 990 rows, so
-  a store listing a bottling for the first time would otherwise pay for a call
-  whose answer is already in the table — and could get _different_ tags than the
-  sibling row, leaving one product tagged two ways depending on which store you
-  looked at. Measured on the current catalogue, 1 721 of 2 059 names are
-  reusable. A name classified `unknown` has no links, so it is indistinguishable
-  from unasked here and does get re-asked; that is the deliberate second chance,
-  and the only remaining case that reaches the model.
+  run waives the "new to this store" half of the gate — see `pnpm backfill`.
+  Stored bottlings can also be swept by `pnpm enrich-flavors`, which needs no
+  scrape but is therefore stuck with name-only grounding.
+  **Reuse across stores is structural now, not a lookup.** The gate is
+  `lastLlmFlavorAt IS NULL` on the *bottling*, so a listing whose key resolves
+  to an already-classified whisky is simply never asked about, and its stored
+  tags are what every store's row reads. That replaced a name-string lookup
+  (`findLlmFlavorsByNames`) and is strictly stronger: the key folds spellings
+  the string comparison missed (`The Glenlivet` and `Glenlivet`), which used to
+  mean paying twice for one whisky and sometimes getting two different answers.
+  It matters at scale — 1 273 bottlings are carried by more than one store,
+  spanning 6 600-odd of the 8 418 offers. A bottling classified `unknown` has no
+  links but *is* stamped, so it is not re-asked; only a genuinely unclassified
+  one reaches the model.
+  **In-run grouping keys on the same identity**: one bottling is asked about
+  once however many SKUs a store lists it under, so a boxed and a plain listing
+  of the same bottle cost one call. Two *sizes* are two bottlings and are asked
+  about separately, which the old name-based grouping got wrong.
   **The stored back-catalogue was swept by the `flavor-llm-import` migration
   instead of by that script** (see "Whisky domain"), because deduplicating to
   2 059 distinct names cut the work by ~70% versus the script's per-row
@@ -887,17 +923,23 @@ wrappers): `scrape/` has its own internal layering.
 - **Detail pages**: an adapter with `supportsDetail` gets `enrichDetail(snap)`
   calls from `ScrapeService`, paced with `adapter.sleep()` between items.
   Enrichment only ever fills fields that are still null, so listing values and
-  manual edits win. **The gate is "in stock and never stored"** — the normal
-  upsert writes the detail fields (`abv`/`volumeMl`/`typeId`/`countryId`) on
-  insert alone and persist never upserts an out-of-stock item, so any other
-  fetch is politeness-delay spend whose result the database throws away. The
-  old Python-parity gate ("ABV not stored yet", any stock state) is exactly
+  manual edits win. **The gate is "in stock, new to this store, and the
+  catalogue is still missing something"** — persist never upserts an
+  out-of-stock item, a stored offer's own fields are not rewritten, and the
+  canonical write fills only nulls, so any other fetch is politeness-delay
+  spend whose result the database throws away.
+  The last clause is the one the catalogue split added, and it is where the
+  saving is: the gate asks about the *bottling*, not this store's row, so a
+  store onboarding a range other stores already cover fetches almost nothing.
+  (The `lastLlmFlavorAt IS NULL` case counts as missing: the detail page is the
+  only source of `rawAttrs`, the flavor pass's only grounding.)
+  The old Python-parity gate ("ABV not stored yet", any stock state) is exactly
   how winewine burned 12.5 of its 15 minutes every sync: its WooCommerce
   listing shows 117 sold-out ghosts that were never stored (persist skips
   them), so every run re-fetched all 117 detail pages, discarded the data, and
-  left the LLM passes past their deadline — permanently. A backfill run gates
-  on `skusWithCoreDetails` instead (see `pnpm backfill`), because its upsert
-  is the one that can fill a stored row's nulls. The pass also observes the
+  left the LLM passes past their deadline — permanently. A backfill run waives
+  the "new to this store" clause (see `pnpm backfill`). The pass also observes
+  the
   run's soft deadline (`CollectOptions.deadline`): when the budget runs short
   it stops, a `detail-deadline` line records how many items were skipped, and
   the run persists the listing instead of dying on the store timeout — the
@@ -1227,8 +1269,8 @@ Enforced by ESLint (strict + stylistic type-checked) and dprint:
 
 ## Current state / known gaps
 
-The project builds, `tsc`/`eslint` are clean, and 285 unit tests (24 suites)
-plus 22 integration tests (3 suites, live Postgres) pass. Done:
+The project builds, `tsc`/`eslint` are clean, and 461 unit tests (36 suites)
+plus 25 integration tests (3 suites, live Postgres) pass. Done:
 
 - **Auth works end-to-end.** `domain/auth` (login/refresh/logout/me/sessions)
   is fully implemented with Valkey-backed sessions and a self-describing
@@ -1322,10 +1364,9 @@ move to a `store_config` column.
 
 Still open:
 
-- The Python collector writes Postgres directly, so `sync-from-sqlite.ts` is now
-  a one-time importer for the historical SQLite data, not a live bridge. Still
-  missing: an owned seed for `store`/`store_config`/`country` so a fresh DB can be
-  populated without importing that legacy file.
+- There is still no owned seed for `store`/`store_config`/`country`, so a fresh
+  database cannot be populated from scratch — the legacy SQLite importer that
+  used to fill that gap has been deleted (see "Whisky domain").
 - The React frontend (`../web`) has replaced the legacy Python-served UI (which
   was removed) and consumes this API per `MIGRATION.md` (login returns
   `{ access }`, fields are camelCase, `/meta` keys renamed, etc.).

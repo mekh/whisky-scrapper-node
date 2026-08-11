@@ -7,7 +7,9 @@ import type { CoreBrandService } from '~core/brand';
 import type { CoreProductService } from '~core/product';
 import type { CoreStoreService } from '~core/store';
 import type { CoreStoreConfigService } from '~core/store-config';
+import type { CoreStoreProductService } from '~core/store-product';
 import type {
+  ProductMatchRow,
   ProductSnapshot,
   ScrapeAdapter,
   ScrapeAdapterFactory,
@@ -39,10 +41,8 @@ const STORE: StoreListItem = {
  * an inert default (no stored SKUs, both LLM passes disabled).
  */
 interface HarnessOptions {
-  skusWithCoreDetails: Set<string>;
-  skusWithoutLlmFlavor: Set<string>;
   existingSkus: Set<string>;
-  storedLlmFlavors: Map<string, string[]>;
+  catalogue: Map<string, ProductMatchRow>;
   brandNames: string[];
   names: { enabled: boolean; extractNames: jest.Mock };
   llm: { enabled: boolean; enrich: jest.Mock };
@@ -55,11 +55,25 @@ interface HarnessOptions {
  */
 interface Harness extends HarnessOptions {
   service: ScrapeService;
-  products: {
-    skusWithCoreDetails: jest.Mock;
-    skusWithoutLlmFlavor: jest.Mock;
-    existingSkus: jest.Mock;
-    findLlmFlavorsByNames: jest.Mock;
+  products: { findByMatchKeys: jest.Mock };
+  offers: { existingSkus: jest.Mock };
+}
+
+/**
+ * A bottling the catalogue already knows. Every field defaults to "filled", so
+ * a test states only the gaps it wants a pass to chase.
+ */
+function stored(over: Partial<ProductMatchRow> = {}): ProductMatchRow {
+  return {
+    id: 'product-1',
+    matchKey: 'k',
+    name: 'Aberlour',
+    abv: 40,
+    volumeMl: 700,
+    typeId: 'type-1',
+    countryId: 'country-1',
+    lastLlmFlavorAt: new Date('2026-08-01T00:00:00Z'),
+    ...over,
   };
 }
 
@@ -91,10 +105,8 @@ function makeHarness(
   over: Partial<HarnessOptions> = {},
 ): Harness {
   const options: HarnessOptions = {
-    skusWithCoreDetails: new Set<string>(),
-    skusWithoutLlmFlavor: new Set<string>(),
     existingSkus: new Set<string>(),
-    storedLlmFlavors: new Map<string, string[]>(),
+    catalogue: new Map<string, ProductMatchRow>(),
     brandNames: [],
     names: { enabled: false, extractNames: jest.fn() },
     llm: { enabled: false, enrich: jest.fn() },
@@ -112,13 +124,17 @@ function makeHarness(
   } as unknown as CoreStoreConfigService;
 
   const products = {
-    skusWithCoreDetails: jest.fn()
-      .mockResolvedValue(options.skusWithCoreDetails),
-    skusWithoutLlmFlavor: jest.fn()
-      .mockResolvedValue(options.skusWithoutLlmFlavor),
+    findByMatchKeys: jest.fn().mockImplementation((keys: string[]) =>
+      new Map(
+        keys
+          .filter((key) => options.catalogue.has(key))
+          .map((key) => [key, options.catalogue.get(key)]),
+      )
+    ),
+  };
+
+  const offers = {
     existingSkus: jest.fn().mockResolvedValue(options.existingSkus),
-    findLlmFlavorsByNames: jest.fn()
-      .mockResolvedValue(options.storedLlmFlavors),
   };
 
   const brands = {
@@ -131,6 +147,7 @@ function makeHarness(
     stores,
     storeConfigs,
     products as unknown as CoreProductService,
+    offers as unknown as CoreStoreProductService,
     brands,
     factory,
     new NormalizeService(),
@@ -140,7 +157,7 @@ function makeHarness(
     options.persist as unknown as ScrapePersistService,
   );
 
-  return { ...options, products, service };
+  return { ...options, products, offers, service };
 }
 
 function makeService(
@@ -194,7 +211,12 @@ describe('ScrapeService.collectStore', () => {
       close: jest.fn().mockResolvedValue(undefined),
     };
     const persist = {
-      persist: jest.fn().mockResolvedValue({ stored: 1, added: 1, removed: 1 }),
+      persist: jest.fn().mockResolvedValue({
+        stored: 1,
+        added: 1,
+        addedProducts: 1,
+        removed: 1,
+      }),
     };
 
     const service = makeService(adapter, { persist });
@@ -202,18 +224,23 @@ describe('ScrapeService.collectStore', () => {
     const result = await service.collectStore('faux');
 
     expect(persist.persist).toHaveBeenCalledTimes(1);
-    const [storeId, inStock, oosSkus, , backfill] = persist.persist.mock
-      .calls[0] as [string, ProductSnapshot[], string[], string, boolean];
+    const [storeId, inStock, oosSkus] = persist.persist.mock
+      .calls[0] as [string, ProductSnapshot[], string[], string];
 
     expect(storeId).toBe('store-1');
     expect(inStock.map((snap) => snap.storeSku)).toEqual(['a']);
     expect(oosSkus).toEqual(['gone']);
-    expect(backfill).toBe(false);
+    /**
+     * Every snapshot reaches persist already carrying the bottling it
+     * resolves to, so the write cannot disagree with the gates.
+     */
+    expect(inStock[0].matchKey).toBe('aberlour|v700|a12');
     expect(result).toEqual({
       slug: 'faux',
       found: 2,
       stored: 1,
       added: 1,
+      addedProducts: 1,
       removed: 1,
     });
   });
@@ -433,7 +460,7 @@ describe('ScrapeService.collectStore', () => {
       /**
        * Both passes gate on the same lookup, so it must be fetched once.
        */
-      expect(harness.products.existingSkus).toHaveBeenCalledTimes(1);
+      expect(harness.offers.existingSkus).toHaveBeenCalledTimes(1);
     },
   );
 
@@ -455,29 +482,22 @@ describe('ScrapeService.collectStore', () => {
 
       const harness = makeHarness(adapter, {
         flavor,
-        storedLlmFlavors: new Map([['Aberlour', ['sherry', 'honey']]]),
+        catalogue: new Map([['aberlour|v700|a12', stored()]]),
       });
 
-      const result = await harness.service.collectStore('faux', {
-        dryRun: true,
-      });
+      await harness.service.collectStore('faux', { dryRun: true });
 
       /**
-       * The lookup key is the name persist would store, so it carries the
-       * expression: `Ten` is part of the product, not a spec token.
+       * The lookup key carries the expression: `Ten` is part of the product,
+       * not a spec token, so the two listings are two different bottlings.
        */
-      expect(harness.products.findLlmFlavorsByNames).toHaveBeenCalledWith(
-        expect.arrayContaining(['Aberlour', 'Ardbeg Ten']),
+      expect(harness.products.findByMatchKeys).toHaveBeenCalledWith(
+        expect.arrayContaining(['aberlour|v700|a12', 'ardbegten|v700|a0']),
       );
 
-      const reused = result.items?.find((snap) => snap.storeSku === 'a');
-
-      expect(reused?.llmFlavorTags).toEqual(['honey', 'sherry']);
-      expect(reused?.llmFlavorChecked).toBe(true);
-      expect(reused?.llmFlavorConfidence).toBeUndefined();
-
       /**
-       * Only the bottling with no stored answer reaches the model.
+       * Only the bottling with no answer on file reaches the model — the other
+       * one's tags are already stored against the row every store reads.
        */
       expect(flavor.classify).toHaveBeenCalledTimes(1);
 
@@ -488,13 +508,20 @@ describe('ScrapeService.collectStore', () => {
   );
 
   it('asks about a bottling once however many SKUs list it', async () => {
-    // Two volumes of one whisky are two SKUs but one flavor profile.
+    /**
+     * A store listing the same bottle plain and boxed has two SKUs and one
+     * flavor profile. A different size is a different bottling, though — the
+     * volume is part of the identity — so it is asked about separately.
+     */
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: false,
       fetchListing: jest.fn().mockResolvedValue([
         rawSnap({ storeSku: 'a', name: 'Віскі Aberlour 12 років 40% 0.7л' }),
-        rawSnap({ storeSku: 'b', name: 'Віскі Aberlour 12 років 40% 1л' }),
+        rawSnap({
+          storeSku: 'b',
+          name: 'Віскі Aberlour 12 років 40% 0.7л в коробці',
+        }),
         rawSnap({ storeSku: 'c', name: 'Віскі Ardbeg Ten 46% 0.7л' }),
       ]),
       enrichDetail: jest.fn(),
@@ -539,7 +566,10 @@ describe('ScrapeService.collectStore', () => {
       supportsDetail: false,
       fetchListing: jest.fn().mockResolvedValue([
         rawSnap({ storeSku: 'a', name: 'Віскі Aberlour 12 років 40% 0.7л' }),
-        rawSnap({ storeSku: 'b', name: 'Віскі Aberlour 12 років 40% 1л' }),
+        rawSnap({
+          storeSku: 'b',
+          name: 'Віскі Aberlour 12 років 40% 0.7л в коробці',
+        }),
       ]),
       enrichDetail: jest.fn(),
       sleep: jest.fn().mockResolvedValue(undefined),
@@ -617,7 +647,7 @@ describe('ScrapeService.collectStore', () => {
 
     const service = makeService(adapter, {
       flavor,
-      storedLlmFlavors: new Map([['Aberlour', ['sherry']]]),
+      catalogue: new Map([['aberlour|v700|a12', stored()]]),
     });
 
     await service.collectStore('faux', { dryRun: true });
@@ -688,8 +718,11 @@ describe('ScrapeService.collectStore in backfill mode', () => {
       slug: 'faux',
       supportsDetail: true,
       fetchListing: jest.fn().mockResolvedValue([
-        rawSnap({ storeSku: 'complete' }),
-        rawSnap({ storeSku: 'partial' }),
+        rawSnap({
+          storeSku: 'complete',
+          name: 'Віскі Aberlour 12 років 40% 0.7л',
+        }),
+        rawSnap({ storeSku: 'partial', name: 'Віскі Ardbeg Ten 46% 0.7л' }),
       ]),
       enrichDetail,
       sleep: jest.fn().mockResolvedValue(undefined),
@@ -697,12 +730,16 @@ describe('ScrapeService.collectStore in backfill mode', () => {
     };
 
     /**
-     * Both SKUs are stored, which a normal run would skip outright; the
-     * backfill gate instead fetches whichever stored row is incomplete.
+     * Both SKUs are stored, which a normal run would skip outright. The
+     * backfill gate looks past that — but only at the bottling the catalogue
+     * is still missing something for.
      */
     const harness = makeHarness(adapter, {
       existingSkus: new Set(['complete', 'partial']),
-      skusWithCoreDetails: new Set(['complete']),
+      catalogue: new Map([
+        ['aberlour|v700|a12', stored()],
+        ['ardbegten|v700|a0', stored({ countryId: null })],
+      ]),
     });
 
     await harness.service.collectStore('faux', {
@@ -716,30 +753,29 @@ describe('ScrapeService.collectStore in backfill mode', () => {
     );
   });
 
-  it('tells the persist step to fill still-null columns', async () => {
+  it('skips a detail fetch another store already paid for', async () => {
+    const enrichDetail = jest.fn().mockResolvedValue(true);
     const adapter: ScrapeAdapter = {
       slug: 'faux',
-      supportsDetail: false,
-      fetchListing: jest.fn().mockResolvedValue([rawSnap({ storeSku: 'a' })]),
-      enrichDetail: jest.fn(),
+      supportsDetail: true,
+      fetchListing: jest.fn().mockResolvedValue([rawSnap({ storeSku: 'new' })]),
+      enrichDetail,
       sleep: jest.fn().mockResolvedValue(undefined),
       close: jest.fn().mockResolvedValue(undefined),
     };
-    const persist = {
-      persist: jest.fn().mockResolvedValue({ stored: 1, added: 0, removed: 0 }),
-    };
 
-    await makeService(adapter, { persist })
-      .collectStore('faux', { backfill: true });
+    /**
+     * The SKU is new to this store, which used to be enough to buy its detail
+     * page. The bottling is not new to the catalogue, so there is nothing left
+     * to learn — this is the saving the shared catalogue buys.
+     */
+    const harness = makeHarness(adapter, {
+      catalogue: new Map([['aberlour|v700|a12', stored()]]),
+    });
 
-    expect(persist.persist).toHaveBeenCalledWith(
-      'store-1',
-      expect.anything(),
-      [],
-      expect.any(String),
-      true,
-      undefined,
-    );
+    await harness.service.collectStore('faux', { dryRun: true });
+
+    expect(enrichDetail).not.toHaveBeenCalled();
   });
 
   it('asks the LLM about stored SKUs too', async () => {
@@ -821,14 +857,14 @@ describe('ScrapeService.collectStore in backfill mode', () => {
     const service = makeService(adapter, {
       flavor,
       existingSkus: new Set(['unanswered', 'answered']),
-      skusWithoutLlmFlavor: new Set(['unanswered']),
+      catalogue: new Map([['bowmore|v0|a0', stored()]]),
     });
 
     await service.collectStore('faux', { dryRun: true, backfill: true });
 
     /**
      * `setLlmFlavors` is a plain update rather than an insert-only write, so a
-     * stored row's answer is persistable — but only asked for once, since
+     * stored bottling's answer is persistable — but only asked for once, since
      * `lastLlmFlavorAt` is stamped even for an "unknown" answer.
      */
     expect(flavor.classify).toHaveBeenCalledTimes(1);
@@ -854,12 +890,10 @@ describe('ScrapeService.collectStore in backfill mode', () => {
     const harness = makeHarness(adapter, {
       flavor,
       existingSkus: new Set(['unanswered']),
-      skusWithoutLlmFlavor: new Set(['unanswered']),
     });
 
     await harness.service.collectStore('faux', { dryRun: true });
 
     expect(flavor.classify).not.toHaveBeenCalled();
-    expect(harness.products.skusWithoutLlmFlavor).not.toHaveBeenCalled();
   });
 });

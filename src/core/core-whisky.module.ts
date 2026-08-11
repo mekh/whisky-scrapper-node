@@ -7,6 +7,7 @@ import { CorePriceSnapshotModule } from './price-snapshot';
 import { CoreProductModule } from './product';
 import { CoreStoreModule } from './store';
 import { CoreStoreConfigModule } from './store-config';
+import { CoreStoreProductModule } from './store-product';
 import { CoreSyncLogModule } from './sync-log';
 import { CoreTypeModule } from './type';
 
@@ -24,6 +25,7 @@ import { CoreTypeModule } from './type';
     CoreProductModule,
     CoreStoreModule,
     CoreStoreConfigModule,
+    CoreStoreProductModule,
     CoreSyncLogModule,
     CoreTypeModule,
   ],
@@ -35,6 +37,7 @@ import { CoreTypeModule } from './type';
     CoreProductModule,
     CoreStoreModule,
     CoreStoreConfigModule,
+    CoreStoreProductModule,
     CoreSyncLogModule,
     CoreTypeModule,
   ],

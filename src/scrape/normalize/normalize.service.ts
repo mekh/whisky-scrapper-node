@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import { BrandUtils, ProductNameUtils } from '~utils';
+import { BrandUtils, ProductMatchUtils, ProductNameUtils } from '~utils';
 
 import {
   BRAND_INFO,
@@ -474,6 +474,38 @@ export class NormalizeService {
     snap.flavorTags = [...flavors].sort();
 
     return snap;
+  }
+
+  /**
+   * The cross-store identity of the bottling a snapshot describes.
+   *
+   * Callable before {@link normalize} has run, which is what the detail-page
+   * gate needs: the brand is resolved the same way `normalize` resolves it, and
+   * volume and age fall back to what the name states. Reading the name is
+   * fail-open there — a key that misses costs one detail fetch, never a wrong
+   * link — and deliberately does **not** write the derived values onto the
+   * snapshot, because the detail page's spec fields must still win over
+   * anything guessed from a name.
+   *
+   * @param snap - The snapshot to identify.
+   * @param brandIndex - Known brand names, to read a missing brand from.
+   * @returns The match key, or null when the name carries no identity.
+   */
+  public matchKey(
+    snap: ProductSnapshot,
+    brandIndex: BrandMatchEntry[] = [],
+  ): string | null {
+    const brand = BrandUtils.canonical(snap.brand)
+      ?? (brandIndex.length > 0
+        ? this.detectBrandFromName(snap.name, brandIndex)
+        : null);
+
+    return ProductMatchUtils.key(
+      ProductNameUtils.resolve(snap.cleanName, snap.name),
+      brand,
+      snap.volumeMl ?? this.extractVolumeMl(snap.name),
+      snap.ageYears ?? this.extractAgeYears(snap.name),
+    );
   }
 
   /**

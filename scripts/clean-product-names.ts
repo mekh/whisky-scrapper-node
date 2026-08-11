@@ -251,19 +251,20 @@ function collapseTags(names: (string | null)[]): Map<string, string> {
 }
 
 /**
- * Resolves the store id to filter on, when `--store` was given.
+ * Fails fast when `--store` names a store that does not exist, so a typo does
+ * not silently rewrite nothing.
  *
  * @param stores - The core store service.
  * @param slug - The store slug, or undefined for the whole catalogue.
- * @returns The store id, or undefined when no filter applies.
+ * @returns Resolves when the slug is valid or absent.
  * @throws {Error} When the slug matches no store.
  */
-async function resolveStoreId(
+async function assertStoreExists(
   stores: CoreStoreService,
   slug?: string,
-): Promise<ID | undefined> {
+): Promise<void> {
   if (!slug) {
-    return undefined;
+    return;
   }
 
   const store = await stores.findOne({ slug });
@@ -271,8 +272,6 @@ async function resolveStoreId(
   if (!store) {
     throw new Error(`Unknown store slug: ${slug}`);
   }
-
-  return store.id;
 }
 
 /**
@@ -336,27 +335,25 @@ async function main(): Promise<number> {
     const stores = app.get(CoreStoreService);
     const llmNames = app.get(LlmNameExtractionService);
 
-    const storeId = await resolveStoreId(stores, options.store);
-    const all = await products.findMany();
-    const rows = storeId
-      ? all.filter((row) => row.storeId === storeId)
-      : all;
+    await assertStoreExists(stores, options.store);
+
+    const all = await products.findNameCandidates(options.store);
+    const rows = all.filter((row) => row.carried);
 
     /**
      * `collapseTags` and `canonicalSpelling` weigh a name against the whole
-     * catalogue, so a `--store` run has to see the other stores too — through
-     * the names already stored for them, which a previous run produced.
-     * Deriving the evidence from the store alone let a one-store run undo what
-     * a catalogue-wide run had decided.
+     * catalogue, so a `--store` run has to see the other bottlings too —
+     * through the names already stored for them, which a previous run
+     * produced. Deriving the evidence from one store alone let a one-store run
+     * undo what a catalogue-wide run had decided.
      */
-    const context: (string | null)[] = storeId
-      ? all.filter((row) => row.storeId !== storeId)
-        .map((row) => row.name ?? null)
-      : [];
+    const context: (string | null)[] = all
+      .filter((row) => !row.carried)
+      .map((row) => row.name);
 
     process.stdout.write(
-      `Loaded ${rows.length} products`
-        + (storeId ? ` (of ${all.length} in the catalogue)` : '')
+      `Loaded ${rows.length} bottling(s)`
+        + (options.store ? ` (of ${all.length} in the catalogue)` : '')
         + '\n',
     );
 
@@ -438,7 +435,7 @@ async function main(): Promise<number> {
         ? null
         : spelling.get(spellingKey(name)) ?? name;
 
-      const before = row.name ?? null;
+      const before = row.name;
 
       if (after !== before) {
         rewrites.push({

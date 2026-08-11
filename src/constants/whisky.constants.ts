@@ -13,6 +13,15 @@ export const PRODUCT_SKU_MAX_LENGTH = 128;
 export const PRODUCT_URL_MAX_LENGTH = 1024;
 export const PRODUCT_NAME_MAX_LENGTH = 512;
 
+/**
+ * Ceiling for the derived cross-store match key. The inputs bound it at
+ * roughly 780 characters (a 512-char name plus a 256-char brand plus the
+ * volume and age suffix), which stays under the btree index tuple limit even
+ * if every character is two-byte Cyrillic. Measured keys are far shorter — 82
+ * characters at the catalogue's longest.
+ */
+export const PRODUCT_MATCH_KEY_MAX_LENGTH = 1024;
+
 export const BRAND_NAME_MAX_LENGTH = 256;
 export const WHISKY_TYPE_NAME_MAX_LENGTH = 64;
 export const FLAVOR_NAME_MAX_LENGTH = 64;

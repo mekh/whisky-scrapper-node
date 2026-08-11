@@ -477,6 +477,7 @@ export class SyncOrchestratorService implements OnModuleInit {
       case 'persisted':
         writer.info(
           `Persisted: ${event.stored} stored, ${event.added} added, `
+            + `${event.addedProducts} new bottling(s), `
             + `${event.removed} flagged out of stock`,
         );
         break;

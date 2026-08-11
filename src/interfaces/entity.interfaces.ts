@@ -102,21 +102,31 @@ export interface EntityStoreConfig extends EntityBaseRich {
   engine: string;
 }
 
+/**
+ * A bottling, independent of who sells it: what the whisky is, not what it
+ * costs. Several stores' offers (`EntityStoreProduct`) point at one of these,
+ * which is what lets an edit, a flavor classification or a photo be stored
+ * once and read everywhere.
+ */
 export interface EntityProduct extends EntityBaseRich {
-  storeId: ID;
-  sku: string;
-  url: string;
+  /**
+   * The cross-store identity of the bottling (`ProductMatchUtils.key`): a
+   * normalized signature of name, brand, volume and age. Unique, and **frozen
+   * at creation** — a later rename or a filled-in volume does not re-derive
+   * it, because re-keying would silently detach the offers already linked.
+   * Two rows that turn out to be one product are merged by hand.
+   *
+   * Null when no significant word survived normalization, which means the row
+   * cannot be matched and stays on its own.
+   */
+  matchKey?: string;
   name?: string;
-  nameOrig: string;
   age?: number;
   abv?: number;
   volumeMl?: number;
   brandId?: ID;
   typeId?: ID;
   countryId?: ID;
-  inStock: boolean;
-  firstSeen: string;
-  lastSeen: string;
   /**
    * When the LLM flavor pass last answered for this product. Set even when the
    * answer was "unknown" (which links no flavor at all), so the marker is the
@@ -126,8 +136,29 @@ export interface EntityProduct extends EntityBaseRich {
   lastLlmFlavorAt?: Date;
 }
 
-export interface EntityPriceSnapshot extends EntityBaseRich {
+/**
+ * One store's offer of a bottling: its own SKU, page, availability and the
+ * dates it was seen. Prices hang off this row, not off the product, and the
+ * sweep flips `inStock` here.
+ */
+export interface EntityStoreProduct extends EntityBaseRich {
+  storeId: ID;
+  /**
+   * The bottling this is an offer of. Assigned once, when the SKU is first
+   * seen, and never rewritten by a sync — so moving an offer to another
+   * product is a durable manual correction.
+   */
   productId: ID;
+  sku: string;
+  url: string;
+  nameOrig: string;
+  inStock: boolean;
+  firstSeen: string;
+  lastSeen: string;
+}
+
+export interface EntityPriceSnapshot extends EntityBaseRich {
+  storeProductId: ID;
   price: number;
   oldPrice?: number;
   currency: string;

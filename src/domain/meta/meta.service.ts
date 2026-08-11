@@ -3,8 +3,8 @@ import { Injectable } from '@nestjs/common';
 import { DEFAULT_PER_PAGE, PERIOD_WINDOWS, PER_PAGE_OPTIONS } from '~constants';
 import { CoreCountryService } from '~core/country';
 import { CoreFlavorService } from '~core/flavor';
-import { CoreProductService } from '~core/product';
 import { CoreStoreService } from '~core/store';
+import { CoreStoreProductService } from '~core/store-product';
 import { CoreTypeService } from '~core/type';
 import { Meta, MetaCountry, MetaStore } from '~types';
 
@@ -14,7 +14,7 @@ export class MetaService {
     private readonly stores: CoreStoreService,
     private readonly flavors: CoreFlavorService,
     private readonly types: CoreTypeService,
-    private readonly products: CoreProductService,
+    private readonly offers: CoreStoreProductService,
     private readonly countries: CoreCountryService,
   ) {}
 
@@ -31,7 +31,7 @@ export class MetaService {
         this.stores.findAllWithConfig(),
         this.flavors.allNames(),
         this.types.allNames(),
-        this.products.distinctCountries(),
+        this.offers.distinctCountries(),
         this.countries.findMany(undefined, { order: { nameUa: 'ASC' } }),
       ]);
 

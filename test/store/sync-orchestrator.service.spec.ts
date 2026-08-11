@@ -482,6 +482,7 @@ describe('SyncOrchestratorService log files', () => {
           kind: 'persisted',
           stored: 8,
           added: 3,
+          addedProducts: 1,
           removed: 2,
         });
 
@@ -510,7 +511,8 @@ describe('SyncOrchestratorService log files', () => {
         + 'out-of-stock sweep skipped',
     );
     expect(lines).toContain(
-      'INFO Persisted: 8 stored, 3 added, 2 flagged out of stock',
+      'INFO Persisted: 8 stored, 3 added, 1 new bottling(s), '
+        + '2 flagged out of stock',
     );
     expect(lines.at(-1)).toContain('FOOTER:INFO Sync finished for maudau');
     expect(close).toHaveBeenCalledTimes(1);

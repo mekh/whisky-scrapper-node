@@ -193,9 +193,18 @@ export interface ReportFilter {
 
 export interface ReportCurrentRow {
   /**
-   * Product id (uuid v7).
+   * Store-offer id (uuid v7): one row per store × SKU. This is what the web
+   * deep-links and the history endpoint use, and it survived the split of the
+   * catalogue out of the store rows unchanged.
    */
   id: ID;
+
+  /**
+   * Canonical product id (uuid v7): the bottling this row is an offer of.
+   * Several stores' rows share it, which is what groups the `best` report and
+   * what a manual edit writes to.
+   */
+  productId: ID;
 
   /**
    * Store-specific product SKU.

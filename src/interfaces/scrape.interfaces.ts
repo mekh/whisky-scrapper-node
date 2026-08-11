@@ -121,6 +121,15 @@ export interface ProductSnapshot {
    * `lastLlmFlavorAt` null so a later run retries it.
    */
   llmFlavorChecked?: boolean;
+
+  /**
+   * The bottling this snapshot resolves to (`ProductMatchUtils.key`), computed
+   * once the normalization and enrichment passes have settled the name, brand,
+   * volume and age. Carried into persist so the key that decided which passes
+   * to run is the same one the write looks the product up by. Null when the
+   * name yielded no significant word.
+   */
+  matchKey?: string | null;
 }
 
 /**
@@ -388,7 +397,14 @@ export type ScrapeProgressEvent =
     added: number;
 
     /**
-     * How many products were flagged out of stock.
+     * How many bottlings were new to the catalogue, i.e. matched no stored
+     * product. Much lower than `added` for a store whose range overlaps the
+     * others, and the number to watch when matching changes.
+     */
+    addedProducts: number;
+
+    /**
+     * How many offers were flagged out of stock.
      */
     removed: number;
   }
@@ -556,15 +572,238 @@ export interface SiteResult {
 }
 
 /**
- * A normalized product ready to be written to the `product` table. Lookup
- * names have already been resolved to FK ids, and both the raw and cleaned
- * names are precomputed by the caller — the repository only writes.
+ * A canonical bottling ready to be written to the `product` table. Lookup
+ * names have already been resolved to FK ids and the match key is precomputed
+ * by the caller — the repository only writes.
  */
-export interface ProductUpsertInput {
+export interface ProductCanonicalInput {
+  /**
+   * The cross-store identity (`ProductMatchUtils.key`), or null when the name
+   * yielded no significant word. A null key cannot be matched, so such a
+   * product is always inserted on its own rather than found.
+   */
+  matchKey: string | null;
+
+  /**
+   * Cleaned display name, or null when nothing meaningful remains. Written
+   * once, when the bottling is first seen, so manual edits and the catalogue's
+   * chosen spelling survive later scrapes.
+   */
+  name: string | null;
+
+  /**
+   * Resolved brand id, or null when the brand could not be determined.
+   */
+  brandId: ID | null;
+
+  /**
+   * Resolved whisky-type id, or null.
+   */
+  typeId: ID | null;
+
+  /**
+   * Resolved country id, or null.
+   */
+  countryId: ID | null;
+
+  /**
+   * Age statement in years, or null for a NAS bottling. A key component, so it
+   * is written at creation and never updated.
+   */
+  age: number | null;
+
+  /**
+   * Alcohol by volume percent, or null.
+   */
+  abv: number | null;
+
+  /**
+   * Volume in millilitres, or null. A key component, so it is written at
+   * creation and never updated.
+   */
+  volumeMl: number | null;
+}
+
+/**
+ * A fill-if-null patch for one canonical product: the secondary fields a
+ * scrape may contribute when the catalogue does not have them yet. Name, age
+ * and volume are deliberately absent — the first two are owned by the
+ * catalogue, and age and volume are part of the identity.
+ */
+export interface ProductFillInput {
+  /**
+   * The canonical product to patch.
+   */
+  id: ID;
+
+  /**
+   * Alcohol by volume percent, or null to contribute nothing.
+   */
+  abv: number | null;
+
+  /**
+   * Resolved brand id, or null to contribute nothing.
+   */
+  brandId: ID | null;
+
+  /**
+   * Resolved whisky-type id, or null to contribute nothing.
+   */
+  typeId: ID | null;
+
+  /**
+   * Resolved country id, or null to contribute nothing.
+   */
+  countryId: ID | null;
+}
+
+/**
+ * What the catalogue already knows about a bottling, looked up by match key
+ * before the enrichment passes run. A field that is already filled must not be
+ * asked about again: the canonical write is fill-if-null, so the answer would
+ * be paid for and discarded.
+ */
+export interface ProductMatchRow {
+  /**
+   * The canonical product id.
+   */
+  id: ID;
+
+  /**
+   * The key this row was found by.
+   */
+  matchKey: string;
+
+  /**
+   * The stored display name, or null.
+   */
+  name: string | null;
+
+  /**
+   * Stored strength, or null when still unknown.
+   */
+  abv: number | null;
+
+  /**
+   * Stored volume, or null when still unknown.
+   */
+  volumeMl: number | null;
+
+  /**
+   * Stored whisky-type id, or null when still unknown.
+   */
+  typeId: ID | null;
+
+  /**
+   * Stored country id, or null when still unknown.
+   */
+  countryId: ID | null;
+
+  /**
+   * When the flavor pass last answered, or null when it never has.
+   */
+  lastLlmFlavorAt: Date | null;
+}
+
+/**
+ * A bottling as the name-cleaning sweep sees it: the stored display name plus
+ * one store's raw wording to derive a new one from.
+ */
+export interface ProductNameCandidateRow {
+  /**
+   * Canonical product id.
+   */
+  id: ID;
+
+  /**
+   * The stored display name, or null when none was ever derived.
+   */
+  name: string | null;
+
+  /**
+   * A representative store's raw name — the input the cleaning runs over.
+   */
+  nameOrig: string;
+
+  /**
+   * Whether the run's store filter covers this bottling. A filtered run still
+   * loads the rest of the catalogue, because the whole-catalogue passes need
+   * that evidence, but only rewrites what is carried.
+   */
+  carried: boolean;
+}
+
+/**
+ * The fillable fields of a bottling, as carried by one store's SKU. What the
+ * backfill audit counts nulls over.
+ */
+export interface ProductStoreFieldsRow {
+  /**
+   * The store's SKU for the bottling.
+   */
+  sku: string;
+
+  /**
+   * Age statement in years, or null.
+   */
+  age: number | null;
+
+  /**
+   * Strength, or null.
+   */
+  abv: number | null;
+
+  /**
+   * Volume in millilitres, or null.
+   */
+  volumeMl: number | null;
+
+  /**
+   * Brand id, or null.
+   */
+  brandId: ID | null;
+
+  /**
+   * Whisky-type id, or null.
+   */
+  typeId: ID | null;
+
+  /**
+   * Country id, or null.
+   */
+  countryId: ID | null;
+}
+
+/**
+ * One keyword-derived flavor link, written in a single batch per sync.
+ */
+export interface ProductScrapeFlavorLink {
+  /**
+   * Canonical product the tag belongs to.
+   */
+  productId: ID;
+
+  /**
+   * The flavor tag.
+   */
+  flavorId: ID;
+}
+
+/**
+ * One store's offer, ready to be written to the `store_product` table.
+ */
+export interface StoreProductUpsertInput {
   /**
    * Owning store id.
    */
   storeId: ID;
+
+  /**
+   * The canonical bottling this offer is for, or null when the SKU is already
+   * stored. Null means "leave the existing link alone", which is what makes a
+   * manual relink survive every later sync.
+   */
+  productId: ID | null;
 
   /**
    * Store-side SKU; unique per store, drives the upsert conflict target.
@@ -577,46 +816,10 @@ export interface ProductUpsertInput {
   url: string;
 
   /**
-   * Raw scraped name, refreshed on every sync.
+   * Raw scraped name, refreshed on every sync. The store's own wording, kept
+   * because its descriptors are what the report's name search matches on.
    */
   nameOrig: string;
-
-  /**
-   * Cleaned display name, or null when nothing meaningful remains. Written once
-   * on insert and never overwritten, so manual edits survive later scrapes.
-   */
-  name: string | null;
-
-  /**
-   * Resolved brand id, or null when the brand could not be determined. Merged
-   * with COALESCE on conflict so a later null never clears a known brand.
-   */
-  brandId: ID | null;
-
-  /**
-   * Resolved whisky-type id, or null. Written once on insert only.
-   */
-  typeId: ID | null;
-
-  /**
-   * Resolved country id, or null. Written once on insert only.
-   */
-  countryId: ID | null;
-
-  /**
-   * Age statement in years, or null. Written once on insert only.
-   */
-  age: number | null;
-
-  /**
-   * Alcohol by volume percent, or null. Written once on insert only.
-   */
-  abv: number | null;
-
-  /**
-   * Volume in millilitres, or null. Written once on insert only.
-   */
-  volumeMl: number | null;
 
   /**
    * The sync's capture day (`YYYY-MM-DD`): used for `firstSeen` on insert and
@@ -626,16 +829,22 @@ export interface ProductUpsertInput {
 }
 
 /**
- * Result of a single product upsert.
+ * Result of a single store-offer upsert.
  */
-export interface ProductUpsertResult {
+export interface StoreProductUpsertResult {
   /**
-   * The product id (existing or freshly inserted).
+   * The offer id (existing or freshly inserted). Price snapshots hang off it.
    */
   id: ID;
 
   /**
-   * True when this call inserted a new product, false when it updated an
+   * The canonical product the offer is linked to, which for a known SKU is
+   * whatever the row already pointed at rather than what this run proposed.
+   */
+  productId: ID;
+
+  /**
+   * True when this call inserted a new offer, false when it updated an
    * existing one. Derived from `xmax = 0`; intended for run counters, not
    * correctness-critical branching.
    */

@@ -4,21 +4,22 @@ import { CoreBaseService } from '~core/_common';
 import {
   FlavorCandidateRow,
   ID,
-  MetaCountry,
-  PriceHistoryPoint,
-  ProductUpsertInput,
-  ProductUpsertResult,
-  ReportCurrentRow,
-  ReportFilter,
+  ProductCanonicalInput,
+  ProductFillInput,
+  ProductMatchRow,
+  ProductNameCandidateRow,
+  ProductScrapeFlavorLink,
+  ProductStoreFieldsRow,
 } from '~types';
 
 import { ProductEntity } from './product.entity';
 import { ProductRepository } from './product.repository';
 
 /**
- * Persistence-layer public API for the `product` entity. Uniqueness is the
- * composite `(storeId, sku)` enforced at the database level. Also exposes the
- * read-side report queries (current state, window extremes, price history).
+ * Persistence-layer public API for the canonical `product` entity — the
+ * bottling, not the offer. Identity is the derived `matchKey`, unique at the
+ * database level and frozen once a row exists; the stores' offers live in
+ * `store_product` and reach a bottling through it.
  */
 @Injectable()
 export class CoreProductService extends CoreBaseService<ProductEntity> {
@@ -27,238 +28,112 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
   }
 
   /**
-   * Inserts or updates a product by its `(storeId, sku)` identity, preserving
-   * first-insert and manually-edited fields on conflict. In backfill mode the
-   * still-null columns of an existing row are filled as well.
+   * Looks up what the catalogue already knows about a set of bottlings, so an
+   * enrichment pass can skip whatever is answered already.
    *
-   * @param input - The resolved product to write.
-   * @param backfill - Whether to fill still-null columns on conflict.
-   * @returns The product id and whether it was newly inserted.
+   * @param keys - Match keys to look up.
+   * @returns Map from match key to the stored row; unmatched keys are absent.
    */
-  public async upsertFromScrape(
-    input: ProductUpsertInput,
-    backfill = false,
-  ): Promise<ProductUpsertResult> {
-    return this.repo.upsertFromScrape(input, backfill);
+  public async findByMatchKeys(
+    keys: string[],
+  ): Promise<Map<string, ProductMatchRow>> {
+    return this.repo.findByMatchKeys(keys);
   }
 
   /**
-   * SKUs of a store's products whose ABV, volume, type and country are all
-   * filled (the backfill run's detail-fetch gate).
+   * Resolves a batch of bottlings to canonical ids, creating the unknown ones.
    *
-   * @param storeId - Store id.
-   * @returns The set of SKUs whose detail-page fields are complete.
+   * @param inputs - One entry per distinct match key, deduplicated and sorted
+   *   by key.
+   * @returns Map from match key to canonical id, and how many were created.
    */
-  public async skusWithCoreDetails(storeId: ID): Promise<Set<string>> {
-    return this.repo.skusWithCoreDetails(storeId);
+  public async findOrCreateByMatchKeys(
+    inputs: ProductCanonicalInput[],
+  ): Promise<{ ids: Map<string, ID>; added: number }> {
+    return this.repo.findOrCreateByMatchKeys(inputs);
   }
 
   /**
-   * SKUs of a store's products the flavor classification pass has never
-   * answered for (the backfill run's flavor gate).
+   * Creates a bottling with no match key, which nothing can ever match.
    *
-   * @param storeId - Store id.
-   * @returns The set of SKUs with no classification answer on file.
+   * @param input - The bottling to create.
+   * @returns The new canonical id.
    */
-  public async skusWithoutLlmFlavor(storeId: ID): Promise<Set<string>> {
-    return this.repo.skusWithoutLlmFlavor(storeId);
+  public async createUnmatched(input: ProductCanonicalInput): Promise<ID> {
+    return this.repo.createUnmatched(input);
   }
 
   /**
-   * SKUs of a store's products that already exist, in any stock state (the
-   * shared gate of a normal run's enrichment passes).
+   * Fills still-null strength, brand, type and country on stored bottlings; a
+   * stored value is never overwritten.
    *
-   * @param storeId - Store id.
-   * @returns The set of SKUs already stored for the store.
+   * @param inputs - One patch per canonical product.
+   * @returns How many bottlings gained a value.
    */
-  public async existingSkus(storeId: ID): Promise<Set<string>> {
-    return this.repo.existingSkus(storeId);
+  public async fillMissing(inputs: ProductFillInput[]): Promise<number> {
+    return this.repo.fillMissing(inputs);
   }
 
   /**
-   * Flags a store's products as out of stock by SKU; a no-op when the list is
-   * empty. The rows and their price history are kept.
+   * Adds keyword-derived flavor links without removing any, so one store's
+   * silence cannot erase another's finding.
    *
-   * @param storeId - Store id.
-   * @param skus - SKUs to flag.
-   * @returns How many products were flagged.
+   * @param links - Product/flavor pairs to add.
+   * @returns Resolves once the links are stored.
    */
-  public async markOutOfStockBySkus(
-    storeId: ID,
-    skus: string[],
-  ): Promise<number> {
-    return this.repo.markOutOfStockBySkus(storeId, skus);
+  public async addScrapeFlavors(
+    links: ProductScrapeFlavorLink[],
+  ): Promise<void> {
+    return this.repo.addScrapeFlavors(links);
   }
 
   /**
-   * Flags every in-stock product of a store as out of stock except the given
-   * SKUs (the sweep after a full listing).
+   * Replaces a bottling's LLM-derived flavor links and stamps the answer time,
+   * including when the answer was "unknown".
    *
-   * @param storeId - Store id.
-   * @param keepSkus - SKUs seen in stock this run, to leave untouched.
-   * @returns How many products were flagged.
-   */
-  public async markOutOfStockExcept(
-    storeId: ID,
-    keepSkus: string[],
-  ): Promise<number> {
-    return this.repo.markOutOfStockExcept(storeId, keepSkus);
-  }
-
-  /**
-   * Clears the age of the given products.
-   *
-   * @param ids - Products whose age to clear.
-   * @returns How many rows changed.
-   */
-  public async clearAges(ids: ID[]): Promise<number> {
-    return this.repo.clearAges(ids);
-  }
-
-  /**
-   * Replaces a product's keyword-derived flavor links with the given set. LLM
-   * -derived links are left untouched.
-   *
-   * @param productId - Product id.
-   * @param flavorIds - Flavor ids to link.
-   * @returns Resolves once the links are replaced.
-   */
-  public async setFlavors(productId: ID, flavorIds: ID[]): Promise<void> {
-    return this.repo.setFlavors(productId, flavorIds);
-  }
-
-  /**
-   * Replaces a product's LLM-derived flavor links with the given set and marks
-   * the product as classified, even when the set is empty.
-   *
-   * @param productId - Product id.
+   * @param productId - Canonical product id.
    * @param flavorIds - Flavor ids the model returned.
-   * @returns Resolves once the links are replaced.
+   * @returns Resolves once the links are replaced and the stamp is written.
    */
   public async setLlmFlavors(productId: ID, flavorIds: ID[]): Promise<void> {
     return this.repo.setLlmFlavors(productId, flavorIds);
   }
 
   /**
-   * LLM-derived flavor tags already stored for the given product names, so the
-   * same bottling is not re-classified once per store.
+   * Loads every bottling with a representative raw name, flagging the ones a
+   * store filter covers.
    *
-   * @param names - Cleaned product names to look up.
-   * @returns Map from name to its stored LLM tags; names with none are absent.
+   * @param storeSlug - Restrict the rewrite to bottlings a store carries.
+   * @returns Every bottling, with its representative raw name.
    */
-  public async findLlmFlavorsByNames(
-    names: string[],
-  ): Promise<Map<string, string[]>> {
-    return this.repo.findLlmFlavorsByNames(names);
+  public async findNameCandidates(
+    storeSlug?: string,
+  ): Promise<ProductNameCandidateRow[]> {
+    return this.repo.findNameCandidates(storeSlug);
   }
 
   /**
-   * Products the LLM flavor pass has never answered for.
+   * Loads the bottlings a store carries, one row per SKU, with the fields a
+   * backfill can fill.
    *
-   * @param storeSlug - Restrict to one store's products, or omit for all.
-   * @returns One candidate per product still lacking an LLM answer.
+   * @param storeId - Store id.
+   * @returns One row per offer the store lists.
+   */
+  public async findCarriedByStore(
+    storeId: ID,
+  ): Promise<ProductStoreFieldsRow[]> {
+    return this.repo.findCarriedByStore(storeId);
+  }
+
+  /**
+   * Loads the bottlings the LLM flavor pass has never answered for.
+   *
+   * @param storeSlug - Restrict to bottlings a given store carries.
+   * @returns One candidate per bottling still lacking an answer.
    */
   public async findFlavorCandidates(
     storeSlug?: string,
   ): Promise<FlavorCandidateRow[]> {
     return this.repo.findFlavorCandidates(storeSlug);
-  }
-
-  /**
-   * Current state of every product matching the filter (latest snapshot +
-   * previous price + joins).
-   *
-   * @param filter - The report filter.
-   * @returns One current row per matching product.
-   */
-  public async findCurrentRows(
-    filter: ReportFilter,
-  ): Promise<ReportCurrentRow[]> {
-    return this.repo.findCurrentRows(filter);
-  }
-
-  /**
-   * Current row for a single product by id.
-   *
-   * @param id - Product id.
-   * @returns The current row, or null when the product has no snapshot.
-   */
-  public async findCurrentRowById(id: ID): Promise<ReportCurrentRow | null> {
-    return this.repo.findCurrentRowById(id);
-  }
-
-  /**
-   * The most recent snapshot capture date across all products.
-   *
-   * @returns The latest date (`YYYY-MM-DD`), or null when there are none.
-   */
-  public async latestDate(): Promise<string | null> {
-    return this.repo.latestDate();
-  }
-
-  /**
-   * Min/max price per product over snapshots on/after a cutoff date.
-   *
-   * @param cutoff - Inclusive lower bound date (`YYYY-MM-DD`).
-   * @returns Map from product id to its window `{ min, max }` price.
-   */
-  public async priceExtremes(
-    cutoff: string,
-  ): Promise<Map<ID, { min: number; max: number }>> {
-    return this.repo.priceExtremes(cutoff);
-  }
-
-  /**
-   * For every product, the date since which its price has not been higher than
-   * its current price (when the current price level took hold). Backs the
-   * `drops` report's discount-age column.
-   *
-   * @returns Map from product id to that date (`YYYY-MM-DD`).
-   */
-  public async currentPriceSince(): Promise<Map<ID, string>> {
-    return this.repo.currentPriceSince();
-  }
-
-  /**
-   * A product's chronological price history (oldest first).
-   *
-   * @param id - Product id.
-   * @param limit - Maximum number of most-recent points to return.
-   * @returns Chronological price points.
-   */
-  public async priceSeries(
-    id: ID,
-    limit: number,
-  ): Promise<PriceHistoryPoint[]> {
-    return this.repo.priceSeries(id, limit);
-  }
-
-  /**
-   * Resolves a product id from a search term (id or name/URL substring).
-   *
-   * @param term - A product id or a name/URL substring.
-   * @returns The matching product id, or null when nothing matches.
-   */
-  public async resolveIdByTerm(term: string): Promise<ID | null> {
-    return this.repo.resolveIdByTerm(term);
-  }
-
-  /**
-   * Distinct countries referenced by at least one product.
-   *
-   * @returns Countries present in the catalog, ordered by Ukrainian name.
-   */
-  public async distinctCountries(): Promise<MetaCountry[]> {
-    return this.repo.distinctCountries();
-  }
-
-  /**
-   * Counts the in-stock products of a store.
-   *
-   * @param storeId - Store id.
-   * @returns The in-stock product count.
-   */
-  public async countByStore(storeId: ID): Promise<number> {
-    return this.repo.countByStore(storeId);
   }
 }

@@ -11,7 +11,6 @@ import {
 } from './integration-module';
 
 const SLUG = `__it_flavor_${Date.now()}`;
-const DAY = '2026-08-10';
 
 /**
  * The flavor-link ownership rules, against a real database.
@@ -73,11 +72,8 @@ describe('product flavor links (integration)', () => {
   });
 
   beforeEach(async () => {
-    const result = await products.upsertFromScrape({
-      storeId,
-      sku: 'sku-1',
-      url: 'https://example.test/p1',
-      nameOrig: 'Віскі Sample 0.7л',
+    productId = await products.createUnmatched({
+      matchKey: null,
       name: 'Sample',
       brandId: null,
       typeId: null,
@@ -85,16 +81,14 @@ describe('product flavor links (integration)', () => {
       age: null,
       abv: null,
       volumeMl: null,
-      seenOn: DAY,
     });
-
-    productId = result.id;
   });
 
   afterEach(async () => {
-    await dataSource.query('DELETE FROM product WHERE "storeId" = $1', [
+    await dataSource.query('DELETE FROM store_product WHERE "storeId" = $1', [
       storeId,
     ]);
+    await dataSource.query('DELETE FROM product WHERE id = $1', [productId]);
   });
 
   afterAll(async () => {
@@ -106,7 +100,7 @@ describe('product flavor links (integration)', () => {
   });
 
   it('marks keyword-pass links as scrape-sourced', async () => {
-    await products.setFlavors(productId, [peatedId]);
+    await products.addScrapeFlavors([{ productId, flavorId: peatedId }]);
 
     expect(await links()).toEqual([{ name: 'peated', source: 'scrape' }]);
     expect(await stamp()).toBeNull();
@@ -120,8 +114,31 @@ describe('product flavor links (integration)', () => {
   });
 
   it('takes over a tag the keyword pass had already linked', async () => {
-    await products.setFlavors(productId, [peatedId]);
+    await products.addScrapeFlavors([{ productId, flavorId: peatedId }]);
     await products.setLlmFlavors(productId, [peatedId]);
+
+    expect(await links()).toEqual([{ name: 'peated', source: 'llm' }]);
+  });
+
+  it("never lets a sync erase another store's finding", async () => {
+    /**
+     * The tags now hang off a bottling several stores share. A store whose
+     * listing does not happen to mention peat has learned nothing about peat,
+     * so its sync must not be able to remove what another store's listing
+     * stated — the keyword links only ever accumulate.
+     */
+    await products.addScrapeFlavors([{ productId, flavorId: peatedId }]);
+    await products.addScrapeFlavors([{ productId, flavorId: sherryId }]);
+
+    expect(await links()).toEqual([
+      { name: 'peated', source: 'scrape' },
+      { name: 'sherry', source: 'scrape' },
+    ]);
+  });
+
+  it('does not demote a tag the LLM already owns', async () => {
+    await products.setLlmFlavors(productId, [peatedId]);
+    await products.addScrapeFlavors([{ productId, flavorId: peatedId }]);
 
     expect(await links()).toEqual([{ name: 'peated', source: 'llm' }]);
   });
@@ -129,16 +146,19 @@ describe('product flavor links (integration)', () => {
   it(
     'keeps LLM links when a later sync re-derives the keyword ones',
     async () => {
-      await products.setFlavors(productId, [peatedId]);
+      await products.addScrapeFlavors([{ productId, flavorId: peatedId }]);
       await products.setLlmFlavors(productId, [sherryId]);
 
       /**
-       * The next sync no longer matches `peated` in the listing — before the
-       * `source` column this call wiped both links.
+       * The next sync no longer matches `peated` in the listing. It adds
+       * nothing and removes nothing, so both links stand.
        */
-      await products.setFlavors(productId, []);
+      await products.addScrapeFlavors([]);
 
-      expect(await links()).toEqual([{ name: 'sherry', source: 'llm' }]);
+      expect(await links()).toEqual([
+        { name: 'peated', source: 'scrape' },
+        { name: 'sherry', source: 'llm' },
+      ]);
       expect(await stamp()).not.toBeNull();
     },
   );
@@ -146,7 +166,7 @@ describe('product flavor links (integration)', () => {
   it(
     'replaces the previous LLM answer without touching scrape links',
     async () => {
-      await products.setFlavors(productId, [peatedId]);
+      await products.addScrapeFlavors([{ productId, flavorId: peatedId }]);
       await products.setLlmFlavors(productId, [sherryId]);
       await products.setLlmFlavors(productId, []);
 

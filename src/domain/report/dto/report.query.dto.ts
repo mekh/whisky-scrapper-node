@@ -64,6 +64,10 @@ export class ReportQueryDto implements ReportQuery {
   public window?: ReportWindow;
 
   @IsOptional()
+  @IsEnum(ReportWindow)
+  public discountWindow?: ReportWindow;
+
+  @IsOptional()
   @IsEnum(ReportSortField)
   public sort?: ReportSortField;
 

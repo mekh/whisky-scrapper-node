@@ -150,11 +150,12 @@ export class ReportService {
    * price history. The store's advertised strike price (`oldPrice`) is never
    * used, so a permanent marketing anchor cannot fabricate a discount here.
    * Each row also carries `daysDiscount`: how long the current price has held
-   * (measured against the real current date, like the `new` report's age).
+   * (measured against the real current date, like the `new` report's age), and
+   * `discountWindow` narrows the report to the drops of one day by it.
    * Ordered by discount desc.
    *
    * @param current - All matching current rows.
-   * @param options - Report options (window, min-discount).
+   * @param options - Report options (window, discount window, min-discount).
    * @returns Discount rows.
    */
   private async drops(
@@ -182,7 +183,10 @@ export class ReportService {
           daysDiscount: since === null ? null : this.daysBetween(since, today),
         });
       })
-      .filter((row) => row.discountPct !== null);
+      .filter((row) =>
+        row.discountPct !== null
+        && this.matchesDayWindow(row.daysDiscount, options.discountWindow)
+      );
 
     return this.applyMinDiscount(rows, options)
       .sort((a, b) => (b.discountPct ?? 0) - (a.discountPct ?? 0));
@@ -253,7 +257,7 @@ export class ReportService {
           daysNew: this.daysBetween(row.firstSeen, today),
         })
       )
-      .filter((row) => this.matchesAddedWindow(row.daysNew, window));
+      .filter((row) => this.matchesDayWindow(row.daysNew, window));
 
     return rows.sort((a, b) =>
       (a.daysNew ?? 0) - (b.daysNew ?? 0) || a.price - b.price
@@ -261,23 +265,26 @@ export class ReportService {
   }
 
   /**
-   * Whether a new listing's age matches the requested "added" window.
+   * Whether a day count matches a single-day window. Shared by the `new`
+   * report's "added on" narrowing (`daysNew`) and the `drops` report's
+   * "discounted on" one (`daysDiscount`) — the two carry the same
+   * today/yesterday semantics over different columns.
    *
-   * @param daysNew - Days since the product first appeared (0 = today).
+   * @param days - Days since the event (0 = today), or null when unknown.
    * @param window - The requested window; only `today`/`yesterday` narrow the
-   *   result, every other window matches the full "new" range.
+   *   result, every other window (and none at all) matches everything.
    * @returns True when the row should be kept.
    */
-  private matchesAddedWindow(
-    daysNew: number | null,
-    window: ReportWindow,
+  private matchesDayWindow(
+    days: number | null,
+    window?: ReportWindow,
   ): boolean {
     if (window === ReportWindow.TODAY) {
-      return daysNew === 0;
+      return days === 0;
     }
 
     if (window === ReportWindow.YESTERDAY) {
-      return daysNew === 1;
+      return days === 1;
     }
 
     return true;

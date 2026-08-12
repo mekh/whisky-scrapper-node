@@ -59,6 +59,7 @@ export class ReportController {
   private toOptions(query: ReportQueryDto): ReportOptions {
     return {
       window: query.window ?? ReportWindow.WEEK,
+      discountWindow: query.discountWindow,
       minDiscount: query.minDiscount,
       sort: query.sort,
       order: query.order ?? SortOrder.ASC,

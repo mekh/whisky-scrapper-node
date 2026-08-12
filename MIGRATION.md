@@ -168,6 +168,13 @@ the report is empty when nothing has appeared in the last `NEW_DAYS` days. The
 held (days since it was last higher), measured against the same real current
 date; `null` on every other report.
 
+**`discountWindow`** (node-only, no legacy counterpart) narrows `drops` by that
+`daysDiscount`: `today`/`yesterday` keep only the prices that took effect on
+that day, any other value keeps them all. It exists because `window` is already
+spent on the report's price-reference lookback, so the `new` report's trick of
+repurposing `window` for a day filter has no room here. The web mobile `drops`
+tab surfaces it as the "Знижено" picker, mirroring "Додано" on `new`.
+
 `sort` values (ReportRow fields): `storeName`, `name`, `type`, `countryName`,
 `age`, `abv`, `volumeMl`, `previousPrice`, `price`, `discountPct`,
 `daysDiscount`. Nulls sort last. Omitting `sort` keeps the report's natural

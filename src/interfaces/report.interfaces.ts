@@ -25,6 +25,14 @@ export interface ReportOptions {
   window: ReportWindow;
 
   /**
+   * Narrows the `drops` report to prices that took effect on a given day:
+   * `today`/`yesterday` keep only those, any other value (or undefined) keeps
+   * every discount. Separate from `window`, which the report already spends on
+   * its price-reference lookback.
+   */
+  discountWindow?: ReportWindow;
+
+  /**
    * Minimum whole-percent discount a row must have (applied to reports that
    * compute a discount). Undefined means no minimum.
    */
@@ -115,6 +123,12 @@ export interface ReportQuery {
    * report, `today`/`yesterday` narrow listings to that added-on day.
    */
   window?: ReportWindow;
+
+  /**
+   * Narrows the `drops` report by when the current price took effect:
+   * `today`/`yesterday` keep only those drops, anything else keeps them all.
+   */
+  discountWindow?: ReportWindow;
 
   /**
    * Field to sort the full result by before pagination.

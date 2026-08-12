@@ -72,6 +72,7 @@ function makeRow(over: Partial<ReportCurrentRow>): ReportCurrentRow {
  *   (drives `daysDiscount`).
  * @param today - Optional fixed "today" (`YYYY-MM-DD`) so day-count assertions
  *   are deterministic; when omitted the real current date is used.
+ * @param options - Report options to override on top of the defaults.
  * @returns The report rows (page data) the service produced.
  */
 async function run(
@@ -80,6 +81,7 @@ async function run(
   extremes?: Map<ID, { min: number; max: number }>,
   priceSince?: Map<ID, string>,
   today?: string,
+  options?: Partial<ReportOptions>,
 ): Promise<ReportRow[]> {
   const offers = {
     findCurrentRows: jest.fn().mockResolvedValue(rows),
@@ -102,7 +104,7 @@ async function run(
       .mockReturnValue(today);
   }
 
-  const page = await service.report(kind, FILTER, OPTIONS);
+  const page = await service.report(kind, FILTER, { ...OPTIONS, ...options });
 
   return page.data;
 }
@@ -216,6 +218,73 @@ describe('ReportService — drops discount age', () => {
     const [row] = await run(ReportKind.DROPS, rows, extremes);
 
     expect(row.daysDiscount).toBeNull();
+  });
+});
+
+describe('ReportService — drops discount window', () => {
+  const TODAY = '2026-07-21';
+
+  const extremes = new Map([
+    ['fresh' as ID, { min: 2000, max: 2500 }],
+    ['stale' as ID, { min: 2000, max: 2500 }],
+  ]);
+
+  const priceSince = new Map([
+    ['fresh' as ID, TODAY],
+    ['stale' as ID, '2026-07-20'],
+  ]);
+
+  const rows = [
+    makeRow({ id: 'fresh' as ID, price: 2000 }),
+    makeRow({ id: 'stale' as ID, price: 2000 }),
+  ];
+
+  /**
+   * Runs the `drops` report over the two rows above with a discount window.
+   *
+   * @param discountWindow - The window to narrow by, or undefined for all.
+   * @returns The ids of the rows the report kept, in order.
+   */
+  async function ids(discountWindow?: ReportWindow): Promise<ID[]> {
+    const data = await run(
+      ReportKind.DROPS,
+      rows,
+      extremes,
+      priceSince,
+      TODAY,
+      { discountWindow },
+    );
+
+    return data.map((row) => row.id);
+  }
+
+  it('keeps every drop when no window is requested', async () => {
+    expect(await ids()).toEqual(['fresh', 'stale']);
+  });
+
+  it('keeps only prices that dropped today', async () => {
+    expect(await ids(ReportWindow.TODAY)).toEqual(['fresh']);
+  });
+
+  it('keeps only prices that dropped yesterday', async () => {
+    expect(await ids(ReportWindow.YESTERDAY)).toEqual(['stale']);
+  });
+
+  it('ignores a period window, which means the lookback here', async () => {
+    expect(await ids(ReportWindow.MONTH)).toEqual(['fresh', 'stale']);
+  });
+
+  it('excludes a row whose discount age is unknown', async () => {
+    const data = await run(
+      ReportKind.DROPS,
+      rows,
+      extremes,
+      new Map([['stale' as ID, '2026-07-20']]),
+      TODAY,
+      { discountWindow: ReportWindow.TODAY },
+    );
+
+    expect(data).toHaveLength(0);
   });
 });
 

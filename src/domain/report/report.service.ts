@@ -16,6 +16,8 @@ import {
   PriceHistory,
   ReportCurrentRow,
   ReportFilter,
+  ReportGroup,
+  ReportOffer,
   ReportOptions,
   ReportRow,
   TypePaginated,
@@ -29,21 +31,25 @@ export class ReportService {
   ) {}
 
   /**
-   * Runs a report: builds the rows for the requested kind, applies an optional
-   * global sort, then paginates.
+   * Runs a report: builds the product groups for the requested kind, applies
+   * an optional global sort, then paginates.
+   *
+   * Pagination counts groups, not offers: a page of 50 is 50 distinct
+   * bottlings however many stores carry them, which is the whole point of
+   * grouping — a screen of offers used to be a handful of whiskies repeated.
    *
    * @param kind - Which report to run.
    * @param filter - The SQL-level product filter.
    * @param options - Window, min-discount, sort, and pagination settings.
-   * @returns A page of report rows plus the total matched count.
+   * @returns A page of report groups plus the total matched group count.
    */
   public async report(
     kind: ReportKind,
     filter: ReportFilter,
     options: ReportOptions,
-  ): Promise<TypePaginated<ReportRow>> {
-    const rows = await this.buildRows(kind, filter, options);
-    const sorted = this.sort(rows, options);
+  ): Promise<TypePaginated<ReportGroup>> {
+    const groups = await this.buildGroups(kind, filter, options);
+    const sorted = this.sort(groups, options);
 
     const offset = (options.page - 1) * options.perPage;
     const data = sorted.slice(offset, offset + options.perPage);
@@ -81,18 +87,23 @@ export class ReportService {
   }
 
   /**
-   * Dispatches to the per-kind row builder.
+   * Dispatches to the per-kind group builder.
+   *
+   * Each kind selects its offers exactly as it always did and only then groups
+   * them, so the grouping can never disagree with the selection: an offer a
+   * report rejected is absent from its product's group too. `low` and `best`
+   * pick one offer per row by design and therefore yield single-offer groups.
    *
    * @param kind - Which report to build.
    * @param filter - The product filter.
    * @param options - Report options (window, min-discount).
-   * @returns The report rows in their natural order.
+   * @returns The report groups in their natural order.
    */
-  private async buildRows(
+  private async buildGroups(
     kind: ReportKind,
     filter: ReportFilter,
     options: ReportOptions,
-  ): Promise<ReportRow[]> {
+  ): Promise<ReportGroup[]> {
     const [current, latest] = await Promise.all([
       this.offers.findCurrentRows(filter),
       this.snapshots.latestDate(),
@@ -127,9 +138,9 @@ export class ReportService {
    * Ordered by name then price.
    *
    * @param current - All matching current rows.
-   * @returns Catalog rows.
+   * @returns Catalog groups, one per bottling, holding every in-stock offer.
    */
-  private catalog(current: ReportCurrentRow[]): ReportRow[] {
+  private catalog(current: ReportCurrentRow[]): ReportGroup[] {
     const rows = current.map((row) => {
       const reference = row.previousPrice && row.previousPrice > row.price
         ? row.previousPrice
@@ -138,10 +149,11 @@ export class ReportService {
       return this.enrich(row, { referencePrice: reference, isNew: false });
     });
 
-    return rows.sort((a, b) =>
+    return this.groupOffers(rows).sort((a, b) =>
       (a.name ?? a.nameOrig).toLowerCase()
         .localeCompare((b.name ?? b.nameOrig).toLowerCase())
       || a.price - b.price
+      || a.id.localeCompare(b.id)
     );
   }
 
@@ -156,12 +168,13 @@ export class ReportService {
    *
    * @param current - All matching current rows.
    * @param options - Report options (window, discount window, min-discount).
-   * @returns Discount rows.
+   * @returns Discount groups, each holding only that bottling's discounted
+   *   offers.
    */
   private async drops(
     current: ReportCurrentRow[],
     options: ReportOptions,
-  ): Promise<ReportRow[]> {
+  ): Promise<ReportGroup[]> {
     const cutoff = this.cutoff(current, WINDOW_DAYS[options.window]);
 
     const [extremes, priceSince] = await Promise.all([
@@ -188,22 +201,29 @@ export class ReportService {
         && this.matchesDayWindow(row.daysDiscount, options.discountWindow)
       );
 
-    return this.applyMinDiscount(rows, options)
-      .sort((a, b) => (b.discountPct ?? 0) - (a.discountPct ?? 0));
+    return this.groupOffers(this.applyMinDiscount(rows, options))
+      .sort((a, b) =>
+        (b.discountPct ?? 0) - (a.discountPct ?? 0) || a.id.localeCompare(b.id)
+      );
   }
 
   /**
    * Window lows: products whose current price equals their minimum over the
    * window and that carry a real discount vs the previous snapshot.
    *
+   * Selection is per offer, and it stays that way: two stores can both be at
+   * their own window low, and collapsing them would hide one of the two lows
+   * this report exists to show. Each qualifying offer therefore becomes its own
+   * single-offer group, so what the user sees is unchanged.
+   *
    * @param current - All matching current rows.
    * @param options - Report options (window, min-discount).
-   * @returns Window-low rows.
+   * @returns Window-low groups, one per qualifying offer.
    */
   private async low(
     current: ReportCurrentRow[],
     options: ReportOptions,
-  ): Promise<ReportRow[]> {
+  ): Promise<ReportGroup[]> {
     const cutoff = this.cutoff(current, WINDOW_DAYS[options.window]);
     const extremes = await this.snapshots.priceExtremes(cutoff);
 
@@ -221,8 +241,10 @@ export class ReportService {
       )
       .filter((row) => row.discountPct !== null);
 
-    return this.applyMinDiscount(rows, options)
-      .sort((a, b) => (b.discountPct ?? 0) - (a.discountPct ?? 0));
+    return this.wrapOffers(this.applyMinDiscount(rows, options))
+      .sort((a, b) =>
+        (b.discountPct ?? 0) - (a.discountPct ?? 0) || a.id.localeCompare(b.id)
+      );
   }
 
   /**
@@ -239,13 +261,15 @@ export class ReportService {
    * @param today - Today's date (`YYYY-MM-DD`), the recency reference point.
    * @param window - When `today`/`yesterday`, keeps only products added that
    *   many days ago; any other window keeps the whole "new" window.
-   * @returns New-listing rows.
+   * @returns New-listing groups, each holding only that bottling's newly
+   *   listed offers — a whisky two stores just started carrying lists exactly
+   *   those two, not every store that has had it for months.
    */
   private newest(
     current: ReportCurrentRow[],
     today: string,
     window: ReportWindow,
-  ): ReportRow[] {
+  ): ReportGroup[] {
     const since = this.addDays(today, -(NEW_DAYS - 1));
 
     const rows = current
@@ -259,8 +283,9 @@ export class ReportService {
       )
       .filter((row) => this.matchesDayWindow(row.daysNew, window));
 
-    return rows.sort((a, b) =>
+    return this.groupOffers(rows).sort((a, b) =>
       (a.daysNew ?? 0) - (b.daysNew ?? 0) || a.price - b.price
+      || a.id.localeCompare(b.id)
     );
   }
 
@@ -296,12 +321,15 @@ export class ReportService {
    *
    * @param current - All matching current rows.
    * @param options - Report options (min-discount).
-   * @returns One row per multi-store product group.
+   * @returns One single-offer group per multi-store bottling: this report has
+   *   already chosen the offer that matters, and its `referencePrice` names the
+   *   runner-up, so listing the runner-up again as an offer would state the
+   *   same comparison twice.
    */
   private best(
     current: ReportCurrentRow[],
     options: ReportOptions,
-  ): ReportRow[] {
+  ): ReportGroup[] {
     const groups = this.groupByProduct(current);
     const rows: ReportRow[] = [];
 
@@ -313,8 +341,10 @@ export class ReportService {
       }
     });
 
-    return this.applyMinDiscount(rows, options)
-      .sort((a, b) => (b.discountPct ?? 0) - (a.discountPct ?? 0));
+    return this.wrapOffers(this.applyMinDiscount(rows, options))
+      .sort((a, b) =>
+        (b.discountPct ?? 0) - (a.discountPct ?? 0) || a.id.localeCompare(b.id)
+      );
   }
 
   /**
@@ -367,18 +397,118 @@ export class ReportService {
    * one curated bottling whatever its volume, so there is nothing left to
    * guard against, and a genuine cross-store deal stops being invisible.
    *
-   * @param current - All matching current rows.
+   * @param rows - The rows to group, current or already enriched.
    * @returns Canonical product id → the offers of it.
    */
-  private groupByProduct(
-    current: ReportCurrentRow[],
-  ): Map<ID, ReportCurrentRow[]> {
-    return current.reduce((groups, row) => {
+  private groupByProduct<T extends { productId: ID }>(
+    rows: T[],
+  ): Map<ID, T[]> {
+    return rows.reduce((groups, row) => {
       const group = groups.get(row.productId) ?? [];
       group.push(row);
 
       return groups.set(row.productId, group);
-    }, new Map<ID, ReportCurrentRow[]>());
+    }, new Map<ID, T[]>());
+  }
+
+  /**
+   * Collapses report rows into one group per bottling, cheapest offer first.
+   *
+   * The cheapest offer is always the primary one — the price the collapsed row
+   * states and the value an offer-level sort orders by — even when a pricier
+   * store advertises a bigger percentage off. A user comparing offers is
+   * choosing what to pay, so 1000 at −10% beats 1100 at −15%.
+   *
+   * @param rows - The rows the report selected, already enriched.
+   * @returns One group per bottling, offers ordered by price ascending.
+   */
+  private groupOffers(rows: ReportRow[]): ReportGroup[] {
+    const grouped = Array.from(this.groupByProduct(rows).values());
+
+    return grouped.map((group) => {
+      const ordered = [...group].sort((a, b) => this.byOfferPrice(a, b));
+
+      return this.toGroup(ordered[0], ordered.map((row) => this.toOffer(row)));
+    });
+  }
+
+  /**
+   * Wraps each row as its own single-offer group, for the reports that select
+   * one offer per item and must keep doing so (`low`, `best`).
+   *
+   * @param rows - The rows the report selected.
+   * @returns One single-offer group per row, in the input order.
+   */
+  private wrapOffers(rows: ReportRow[]): ReportGroup[] {
+    return rows.map((row) => this.toGroup(row, [this.toOffer(row)]));
+  }
+
+  /**
+   * Builds a group from its primary offer and its offers.
+   *
+   * Every group-level field is the primary offer's, which is what lets the
+   * whole report keep working unchanged: the global sort, the min-discount
+   * filter and every column the client already renders read the same fields
+   * they always did, now meaning "of the cheapest offer".
+   *
+   * @param primary - The offer the group leads with (the cheapest one).
+   * @param offers - The group's offers, cheapest first.
+   * @returns The report group.
+   */
+  private toGroup(primary: ReportRow, offers: ReportOffer[]): ReportGroup {
+    return { ...primary, offers };
+  }
+
+  /**
+   * Projects a report row onto its offer-level fields.
+   *
+   * Spelled out rather than spread so the payload cannot silently grow: the
+   * bottling's name, specs and flavors are stated once per group, and repeating
+   * them per offer would multiply a page's size by the number of stores.
+   *
+   * @param row - The enriched report row.
+   * @returns The offer view of it.
+   */
+  private toOffer(row: ReportRow): ReportOffer {
+    return {
+      id: row.id,
+      sku: row.sku,
+      url: row.url,
+      nameOrig: row.nameOrig,
+      storeSlug: row.storeSlug,
+      storeName: row.storeName,
+      price: row.price,
+      oldPrice: row.oldPrice,
+      currency: row.currency,
+      promo: row.promo,
+      inStock: row.inStock,
+      previousPrice: row.previousPrice,
+      referencePrice: row.referencePrice,
+      discountPct: row.discountPct,
+      isNew: row.isNew,
+      daysNew: row.daysNew,
+      daysDiscount: row.daysDiscount,
+      firstSeen: row.firstSeen,
+      capturedDate: row.capturedDate,
+    };
+  }
+
+  /**
+   * Orders two offers of one bottling by price, then deterministically.
+   *
+   * The tie-breakers are not cosmetic: the current-rows query has no `ORDER BY`
+   * of its own, so two equally priced offers would otherwise swap places
+   * between requests, and with them the group's primary offer — the store, URL
+   * and history the collapsed row points at.
+   *
+   * @param a - First offer.
+   * @param b - Second offer.
+   * @returns Negative, zero, or positive per standard comparator semantics.
+   */
+  private byOfferPrice(a: ReportRow, b: ReportRow): number {
+    return a.price - b.price
+      || a.storeName.localeCompare(b.storeName)
+      || a.id.localeCompare(b.id);
   }
 
   /**
@@ -402,14 +532,19 @@ export class ReportService {
   }
 
   /**
-   * Sorts rows by the requested field with nulls last, or returns them in the
+   * Sorts items by the requested field with nulls last, or returns them in the
    * report's natural order when no sort field is set.
    *
-   * @param rows - The rows to sort.
+   * Equal sort keys fall back to the item id. Without it the comparator leaves
+   * such items in whatever order the unordered current-rows query returned, so
+   * a product could appear on two pages or on none — which the client's
+   * infinite scroll would show as a duplicate or a gap.
+   *
+   * @param rows - The items to sort (report groups, or the rows behind them).
    * @param options - Report options carrying `sort`/`order`.
-   * @returns The sorted rows (a new array).
+   * @returns The sorted items (a new array).
    */
-  private sort(rows: ReportRow[], options: ReportOptions): ReportRow[] {
+  private sort<T extends ReportRow>(rows: T[], options: ReportOptions): T[] {
     if (!options.sort) {
       return rows;
     }
@@ -422,14 +557,14 @@ export class ReportService {
       const bv = b[field] as number | string | null;
 
       if (av === null || av === undefined) {
-        return bv === null || bv === undefined ? 0 : 1;
+        return bv === null || bv === undefined ? a.id.localeCompare(b.id) : 1;
       }
 
       if (bv === null || bv === undefined) {
         return -1;
       }
 
-      return this.compare(av, bv) * direction;
+      return this.compare(av, bv) * direction || a.id.localeCompare(b.id);
     });
   }
 

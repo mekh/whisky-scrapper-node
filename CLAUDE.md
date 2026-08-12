@@ -1302,7 +1302,17 @@ Pre-existing bugs fixed while wiring auth (context for future changes):
   /store` + `GET /store/:slug` + `PATCH /store/:slug` (admin). The report SQL
   (latest snapshot + previous + joins, keyed on `price_snapshot.createdAt`)
   lives in `ProductRepository`; report logic (per-kind rules, sort, pagination,
-  best-offer grouping) in `ReportService`. Response DTOs are camelCase (DB field
+  best-offer grouping) in `ReportService`. **List items are product groups**
+  (2026-08-12): each kind still selects its offers exactly as before and then
+  groups them by the persisted `productId`, so a page of 50 is 50 distinct
+  bottlings (3 099 groups over 7 673 in-stock offers) and every top-level field
+  is the cheapest offer's, with the rest in `offers` (price ascending).
+  `catalog` groups every in-stock offer, `new`/`drops` only the offers that
+  qualified, and `low`/`best` keep their per-offer selection as single-offer
+  groups. The grouping is JS-side, over the same `findCurrentRows` query — the
+  per-kind rules read values that never existed in SQL (window extremes, the
+  real current date, `minDiscount`), so pushing `LIMIT` down would have forked
+  them. See `MIGRATION.md` "Report groups". Response DTOs are camelCase (DB field
   names), carry no UI text (structured `isNew`/`daysNew`/`discountPct`/
   `referencePrice` instead of the legacy `note`). Whisky types/flavors come from
   the `type`/`flavor` tables, never hardcoded. The whisky core graph is wired

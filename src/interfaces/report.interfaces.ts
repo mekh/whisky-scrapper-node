@@ -370,6 +370,57 @@ export interface ReportRow extends ReportCurrentRow {
   daysDiscount: number | null;
 }
 
+/**
+ * One store's offer inside a report group: the fields that differ between the
+ * offers of the same bottling. Everything a group's offers share — the name,
+ * age, ABV, volume, brand, type, country and flavors — lives on the group
+ * itself, so it is stated once per product instead of once per store.
+ *
+ * Derived from `ReportRow` rather than declared beside it: the two must not be
+ * able to disagree about what an offer's price or discount means, and the
+ * picked fields keep their documentation.
+ */
+export type ReportOffer = Pick<
+  ReportRow,
+  | 'id'
+  | 'sku'
+  | 'url'
+  | 'nameOrig'
+  | 'storeSlug'
+  | 'storeName'
+  | 'price'
+  | 'oldPrice'
+  | 'currency'
+  | 'promo'
+  | 'inStock'
+  | 'previousPrice'
+  | 'referencePrice'
+  | 'discountPct'
+  | 'isNew'
+  | 'daysNew'
+  | 'daysDiscount'
+  | 'firstSeen'
+  | 'capturedDate'
+>;
+
+export interface ReportGroup extends ReportRow {
+  /**
+   * The offers of this bottling the report selected, cheapest first and never
+   * empty. Which offers those are depends on the kind: the catalog groups
+   * every in-stock offer, while `new` and `drops` group only the offers that
+   * qualified (newly listed / discounted), so a product added by two stores
+   * lists exactly those two. `low` and `best` keep their per-offer selection
+   * and therefore carry a single offer.
+   *
+   * Every field the group itself carries is the first offer's — the cheapest
+   * one — which is what the collapsed row shows and what an offer-level sort
+   * orders by. A store may legitimately appear twice (two SKUs of one
+   * bottling, say a boxed and a plain listing), so this counts offers, never
+   * stores.
+   */
+  offers: ReportOffer[];
+}
+
 export interface PriceHistoryPoint {
   /**
    * Capture date of the snapshot (`YYYY-MM-DD`).

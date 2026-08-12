@@ -50,9 +50,11 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 | `GET/POST /api/users`, `POST /api/users/{id}/active`, `POST /api/users/{id}/password` | existing `user` module: `GET/POST /user`, `GET/PATCH/DELETE /user/:id`, `POST /user/password[/:userId]`, `GET/PUT /user/:userId/permissions` | admin              |
 | `GET /` + static                                                                      | unchanged — the frontend is hosted separately (point it at this API's base URL)                                                              | —                  |
 
-Report list responses are paginated: `{ data: ReportRow[], total, limit,
+Report list responses are paginated: `{ data: ReportGroup[], total, limit,
 offset }` (was `{rows, title, latest_date, count, page, per_page, total_pages}`
 — `title` dropped; `total`/`limit`/`offset` replace `count`/`per_page`/`page`).
+**One item is one bottling, not one store's offer, so `total`/`limit`/`offset`
+count products** — see "Report groups" below.
 
 The read endpoints (`GET /meta`, `GET /report/{kind}`, `GET /report/history`,
 `GET /store`, `GET /store/{slug}`) send `Cache-Control: private, max-age=600`
@@ -87,7 +89,47 @@ An empty array means nothing is running.
 
 ## Field maps
 
-### ReportRow (report list items + `history.product`)
+### Report groups (2026-08-12)
+
+A report item is a **bottling with its offers**, not one store's offer. Every
+field in the `ReportRow` table below still means exactly what it did — it is
+now the **cheapest offer's** value — and the item carries one added field:
+
+| Field    | Notes                                                                                                                                                                                                              |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `offers` | the bottling's selected offers, **price ascending, never empty**. `offers[0]` is the primary one, and every top-level field of the item equals it. Offer fields: `id`, `sku`, `url`, `nameOrig`, `storeSlug`, `storeName`, `price`, `oldPrice`, `currency`, `promo`, `inStock`, `previousPrice`, `referencePrice`, `discountPct`, `isNew`, `daysNew`, `daysDiscount`, `firstSeen`, `capturedDate`. The bottling's own fields (`productId`, `name`, `age`, `abv`, `volumeMl`, `brand`, `type`, `country*`, `flavors`) are stated once, on the item |
+
+Which offers a group holds depends on the kind:
+
+| Kind      | `offers`                                                                                                                    |
+| --------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `catalog` | every in-stock offer of the bottling                                                                                        |
+| `new`     | only the offers that qualified — a whisky two stores just started listing holds exactly those two, not the stores that have had it for months |
+| `drops`   | only the discounted offers (after `minDiscount` and the discount-day window)                                                 |
+| `low`     | unchanged selection: one item **per qualifying offer**, each with a single offer. Two stores at their own window low stay two items, so two items can share a `productId` |
+| `best`    | unchanged: one item per multi-store bottling, carrying the winning offer alone (`referencePrice` already names the runner-up) |
+
+Consequences worth knowing:
+
+- **The primary offer is always the cheapest one**, even when a pricier store
+  advertises a deeper cut: 1000 at −10 % leads over 1100 at −15 %, and `drops`
+  ranks groups by the primary offer's `discountPct`. The deeper cut is visible
+  inside the group.
+- **Offer-level filters restrict the array**, not just the page: `stores` and
+  `minPrice`/`maxPrice` leave a group holding only its matching offers, so the
+  headline price is the cheapest *matching* offer. A bottling appears whenever
+  at least one of its offers survives.
+- **`name` search behaves the same way.** The term is matched against the
+  bottling's `name` **or** an offer's `nameOrig`, so a raw-name term like
+  «в коробці» yields a group of just the offers that spell it out.
+- **`id` (not `productId`) is still the item key**, and what `/report/history`
+  and `POST /product/update` take. A store may appear twice in one group (two
+  SKUs of one bottling, e.g. boxed and plain), so `offers.length` counts offers,
+  not stores.
+- **`GET /report/history` is unchanged**: its `product` is a plain `ReportRow`
+  with no `offers` — a single offer's history has no group.
+
+### ReportRow (report item fields + `history.product`)
 
 | Legacy           | Node                        | Notes                                                                                                                                                                                                                                         |
 | ---------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -177,9 +219,12 @@ tab surfaces it as the "Знижено" picker, mirroring "Додано" on `new
 
 `sort` values (ReportRow fields): `storeName`, `name`, `type`, `countryName`,
 `age`, `abv`, `volumeMl`, `previousPrice`, `price`, `discountPct`,
-`daysDiscount`. Nulls sort last. Omitting `sort` keeps the report's natural
-order (e.g. `drops` by discount desc); the web `drops` tab defaults its view to
-`sort=daysDiscount&order=asc` (freshest price drops first).
+`daysDiscount`. Nulls sort last. The offer-level fields (`storeName`, `price`,
+`previousPrice`, `discountPct`, `daysDiscount`) order groups by the **primary
+(cheapest) offer's** value; the rest are the bottling's own. Equal keys break
+ties on the item id, so paging is stable. Omitting `sort` keeps the report's
+natural order (e.g. `drops` by discount desc); the web `drops` tab defaults its
+view to `sort=daysDiscount&order=asc` (freshest price drops first).
 
 ### `/meta`
 

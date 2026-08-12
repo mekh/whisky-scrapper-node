@@ -7,14 +7,14 @@ import { ReportWindow, Resource, SortOrder } from '~enums';
 import type {
   PriceHistory,
   ReportFilter,
+  ReportGroup,
   ReportOptions,
-  ReportRow,
   TypePaginated,
 } from '~types';
 
 import { HistoryQueryDto, ReportKindParamsDto, ReportQueryDto } from './dto';
 import { ReportService } from './report.service';
-import { PriceHistoryType, ReportRowType } from './types';
+import { PriceHistoryType, ReportGroupType } from './types';
 
 @Controller('report')
 export class ReportController {
@@ -29,11 +29,11 @@ export class ReportController {
 
   @Get(':kind')
   @CacheControl(READ_CACHE_MAX_AGE_SECONDS)
-  @Paginated(ReportRowType, Resource.AUTHENTICATED)
+  @Paginated(ReportGroupType, Resource.AUTHENTICATED)
   public report(
     @Param() params: ReportKindParamsDto,
     @Query() query: ReportQueryDto,
-  ): Promise<TypePaginated<ReportRow>> {
+  ): Promise<TypePaginated<ReportGroup>> {
     return this.reportService.report(
       params.kind,
       this.toFilter(query),

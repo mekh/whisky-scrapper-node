@@ -86,7 +86,7 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
 
     const rows = await this.query(
       `SELECT id, "matchKey", name, abv, "volumeMl", "typeId", "countryId",
-              "lastLlmFlavorAt"
+              "lastLlmFlavorAt", "flavorsCuratedAt"
        FROM product
        WHERE "matchKey" = ANY($1::text[])`,
       [keys],
@@ -205,6 +205,11 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
    * A tag the LLM pass already owns keeps its source; the insert never
    * downgrades an `llm` row to `scrape`.
    *
+   * A bottling someone has curated by hand is skipped entirely — the join to
+   * `product` is what enforces that. Accumulating is only ever evidence *for* a
+   * flavor, so without this guard a tag the person deliberately removed would
+   * be re-contributed by the very next sync that still matched the keyword.
+   *
    * @param links - Product/flavor pairs to add. Should be deduplicated and
    *   sorted by the caller so concurrent transactions agree on lock order.
    * @returns Resolves once the links are stored.
@@ -218,8 +223,9 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
 
     await this.query(
       `INSERT INTO product_flavor ("productId", "flavorId", source)
-       SELECT id, flavor, $3 FROM unnest($1::uuid[], $2::uuid[])
+       SELECT v.id, v.flavor, $3 FROM unnest($1::uuid[], $2::uuid[])
          AS v(id, flavor)
+       JOIN product p ON p.id = v.id AND p."flavorsCuratedAt" IS NULL
        ON CONFLICT ("productId", "flavorId") DO NOTHING`,
       [
         links.map((link) => link.productId),
@@ -240,33 +246,80 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
    * duplicated: the composite key allows one row per pair, so the insert
    * promotes its source to `llm`.
    *
+   * A hand-curated bottling keeps its links untouched: both statements below
+   * are gated on `flavorsCuratedAt`, in SQL rather than in a caller, so no
+   * pass can talk over a person's decision. The stamp is still written, which
+   * is what stops the model from being asked about it again.
+   *
    * @param productId - Canonical product id.
    * @param flavorIds - Flavor ids the model returned; duplicates are ignored.
    * @returns Resolves once the links are replaced and the stamp is written.
    */
   public async setLlmFlavors(productId: ID, flavorIds: ID[]): Promise<void> {
     await this.query(
-      'DELETE FROM product_flavor WHERE "productId" = $1 AND source = $2',
+      `DELETE FROM product_flavor pf
+       USING product p
+       WHERE pf."productId" = $1 AND pf.source = $2
+         AND p.id = pf."productId" AND p."flavorsCuratedAt" IS NULL`,
       [productId, FlavorSource.LLM],
     );
 
     const distinct = [...new Set(flavorIds)];
 
     if (distinct.length) {
-      const values = distinct
-        .map((_, index) => `($1, $${index + 2}, '${FlavorSource.LLM}')`)
-        .join(', ');
-
       await this.query(
-        'INSERT INTO product_flavor ("productId", "flavorId", source) VALUES '
-          + `${values} ON CONFLICT ("productId", "flavorId") DO UPDATE SET `
-          + `source = '${FlavorSource.LLM}'`,
-        [productId, ...distinct],
+        `INSERT INTO product_flavor ("productId", "flavorId", source)
+         SELECT p.id, v.flavor, $3 FROM unnest($2::uuid[]) AS v(flavor)
+         JOIN product p ON p.id = $1 AND p."flavorsCuratedAt" IS NULL
+         ON CONFLICT ("productId", "flavorId") DO UPDATE SET source = $3`,
+        [productId, distinct, FlavorSource.LLM],
       );
     }
 
     await this.query(
       'UPDATE product SET "lastLlmFlavorAt" = now() WHERE id = $1',
+      [productId],
+    );
+  }
+
+  /**
+   * Replaces a bottling's whole flavor set with a person's choice and marks it
+   * curated from now on.
+   *
+   * Every existing link goes, whatever its source: the curated set is the whole
+   * truth about the bottling, so a `scrape` or `llm` tag the person did not
+   * keep is one they rejected. `flavorsCuratedAt` then locks both passes
+   * out (see `addScrapeFlavors` and `setLlmFlavors`), which is what makes a
+   * removal stick — the keyword pass would otherwise re-add the tag on the next
+   * sync that still matched it.
+   *
+   * @param productId - Canonical product id.
+   * @param flavorIds - Flavor ids to keep; duplicates are ignored and an empty
+   *   list is valid, meaning "this whisky has no tags".
+   * @returns Resolves once the set is stored and the bottling is marked.
+   */
+  public async setManualFlavors(productId: ID, flavorIds: ID[]): Promise<void> {
+    await this.query(
+      'DELETE FROM product_flavor WHERE "productId" = $1',
+      [productId],
+    );
+
+    /**
+     * Sorted for the same reason the persist path sorts: concurrent
+     * transactions must take their `product_flavor` locks in one agreed order.
+     */
+    const distinct = [...new Set(flavorIds)].sort();
+
+    if (distinct.length) {
+      await this.query(
+        `INSERT INTO product_flavor ("productId", "flavorId", source)
+         SELECT $1, flavor, $3 FROM unnest($2::uuid[]) AS v(flavor)`,
+        [productId, distinct, FlavorSource.MANUAL],
+      );
+    }
+
+    await this.query(
+      'UPDATE product SET "flavorsCuratedAt" = now() WHERE id = $1',
       [productId],
     );
   }
@@ -340,6 +393,10 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
    * are exactly what the model reads. The longest raw name wins as the one
    * carrying the most of them.
    *
+   * A hand-curated bottling is never a candidate: `setLlmFlavors` would refuse
+   * to write its answer anyway, so asking the model about it would only spend
+   * tokens on a result nobody can use.
+   *
    * @param storeSlug - Restrict to bottlings a given store carries, or omit
    *   for the whole catalogue.
    * @returns One candidate per bottling still lacking an LLM answer.
@@ -361,6 +418,7 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
        LEFT JOIN type t ON t.id = p."typeId"
        LEFT JOIN country c ON c.id = p."countryId"
        WHERE p."lastLlmFlavorAt" IS NULL
+         AND p."flavorsCuratedAt" IS NULL
          AND ($1::text IS NULL OR EXISTS (
            SELECT 1 FROM store_product sp
            JOIN store st ON st.id = sp."storeId"

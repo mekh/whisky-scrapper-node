@@ -100,6 +100,18 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
   }
 
   /**
+   * Replaces a bottling's whole flavor set with a person's choice and marks it
+   * curated, which locks the keyword and LLM passes out of it for good.
+   *
+   * @param productId - Canonical product id.
+   * @param flavorIds - Flavor ids to keep; an empty list means "no tags".
+   * @returns Resolves once the set is stored and the bottling is marked.
+   */
+  public async setManualFlavors(productId: ID, flavorIds: ID[]): Promise<void> {
+    return this.repo.setManualFlavors(productId, flavorIds);
+  }
+
+  /**
    * Loads every bottling with a representative raw name, flagging the ones a
    * store filter covers.
    *

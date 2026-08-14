@@ -134,6 +134,14 @@ export interface EntityProduct extends EntityBaseRich {
    * product with no flavor links looks identical either way.
    */
   lastLlmFlavorAt?: Date;
+  /**
+   * When someone last set this product's flavors by hand. Once set, the tag set
+   * is a person's decision and both automatic passes leave it alone: the
+   * keyword pass adds nothing to it and the LLM pass is never asked about it.
+   * Without that lock a removed tag would come back on the next sync, since the
+   * keyword pass re-contributes whatever the listing still says.
+   */
+  flavorsCuratedAt?: Date;
 }
 
 /**

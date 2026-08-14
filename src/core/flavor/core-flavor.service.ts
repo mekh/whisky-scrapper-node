@@ -28,6 +28,16 @@ export class CoreFlavorService extends CoreBaseService<FlavorEntity> {
   }
 
   /**
+   * Resolves flavor names to ids without creating the missing ones.
+   *
+   * @param names - Flavor names; blanks and duplicates are ignored.
+   * @returns Map from each matched name to its id; unknown names are absent.
+   */
+  public async findIdsByName(names: string[]): Promise<Map<string, ID>> {
+    return this.repo.findIdsByName(names);
+  }
+
+  /**
    * Lists every flavor name, alphabetically.
    *
    * @returns Sorted flavor names.

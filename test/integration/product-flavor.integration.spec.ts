@@ -16,9 +16,11 @@ const SLUG = `__it_flavor_${Date.now()}`;
  * The flavor-link ownership rules, against a real database.
  *
  * The behaviour under test is the whole reason `product_flavor.source` exists:
- * `setFlavors` re-derives the keyword pass's links on every sync, so before the
- * column an LLM-written link lived exactly until the next scrape of that store.
- * The last case here is that regression, reproduced end to end.
+ * the keyword pass contributes its links on every sync, so before the column an
+ * LLM-written link lived exactly until the next scrape of that store. That
+ * regression is reproduced end to end below, as is the stronger claim manual
+ * curation makes — that once a person has set the tags, neither pass may add to
+ * them or take them away.
  */
 describe('product flavor links (integration)', () => {
   let moduleRef: TestingModule;
@@ -48,6 +50,15 @@ describe('product flavor links (integration)', () => {
     ) as { lastLlmFlavorAt: Date | null }[];
 
     return rows[0].lastLlmFlavorAt;
+  };
+
+  const curatedStamp = async (): Promise<Date | null> => {
+    const rows = await dataSource.query(
+      'SELECT "flavorsCuratedAt" FROM product WHERE id = $1',
+      [productId],
+    ) as { flavorsCuratedAt: Date | null }[];
+
+    return rows[0].flavorsCuratedAt;
   };
 
   beforeAll(async () => {
@@ -173,4 +184,56 @@ describe('product flavor links (integration)', () => {
       expect(await links()).toEqual([{ name: 'peated', source: 'scrape' }]);
     },
   );
+
+  it('takes over every source when a person sets the tags', async () => {
+    await products.addScrapeFlavors([{ productId, flavorId: peatedId }]);
+    await products.setLlmFlavors(productId, [sherryId]);
+
+    await products.setManualFlavors(productId, [sherryId]);
+
+    /**
+     * The curated set is the whole truth: `peated` was not kept, so it is gone
+     * rather than demoted, and what stays is owned by the person.
+     */
+    expect(await links()).toEqual([{ name: 'sherry', source: 'manual' }]);
+    expect(await curatedStamp()).not.toBeNull();
+  });
+
+  it('marks a bottling curated even with no tags left', async () => {
+    await products.addScrapeFlavors([{ productId, flavorId: peatedId }]);
+
+    await products.setManualFlavors(productId, []);
+
+    expect(await links()).toEqual([]);
+    expect(await curatedStamp()).not.toBeNull();
+  });
+
+  it('lets no later sync re-add a tag a person removed', async () => {
+    await products.addScrapeFlavors([{ productId, flavorId: peatedId }]);
+    await products.setManualFlavors(productId, []);
+
+    /**
+     * The listing still spells out the keyword, so the next sync matches it
+     * again — and this is the case the curation marker exists for: without it
+     * the tag would be back, and the removal would have lasted until the next
+     * sync of any store carrying the bottling.
+     */
+    await products.addScrapeFlavors([{ productId, flavorId: peatedId }]);
+
+    expect(await links()).toEqual([]);
+  });
+
+  it('lets the LLM pass neither add to nor replace a curated set', async () => {
+    await products.setManualFlavors(productId, [peatedId]);
+
+    await products.setLlmFlavors(productId, [sherryId]);
+
+    expect(await links()).toEqual([{ name: 'peated', source: 'manual' }]);
+
+    /**
+     * The stamp is still written: it is what keeps the model from being asked
+     * about this bottling again, and the answer is dropped either way.
+     */
+    expect(await stamp()).not.toBeNull();
+  });
 });

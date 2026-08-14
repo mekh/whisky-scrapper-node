@@ -63,6 +63,17 @@ export interface ProductUpdateInput {
    * Bottle volume in millilitres (positive integer); `null` clears it.
    */
   volumeMl?: number | null;
+
+  /**
+   * The bottling's whole flavor set, by name, as a person chose it. Every name
+   * must already exist in the `flavor` reference table — the client picks from
+   * the list `/meta` publishes — and an empty array means "no tags at all".
+   *
+   * Providing this marks the bottling curated, which locks the keyword and LLM
+   * passes out of its tags for good; otherwise the next sync would put back
+   * whatever the listing still spells out and undo a removal.
+   */
+  flavors?: string[];
 }
 
 /**

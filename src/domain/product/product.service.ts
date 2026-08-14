@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { CoreCountryService } from '~core/country';
+import { CoreFlavorService } from '~core/flavor';
 import { CoreProductService } from '~core/product';
 import { CoreStoreProductService } from '~core/store-product';
 import { CoreTypeService } from '~core/type';
@@ -14,6 +15,7 @@ export class ProductService {
     private readonly offers: CoreStoreProductService,
     private readonly countries: CoreCountryService,
     private readonly types: CoreTypeService,
+    private readonly flavors: CoreFlavorService,
   ) {}
 
   /**
@@ -32,11 +34,18 @@ export class ProductService {
    * correction here changes what is displayed and filtered without detaching
    * the offers already linked; re-matching is a manual operation.
    *
+   * `flavors` is the one field that is not a column on `product`: it replaces
+   * the bottling's whole tag set and marks it curated, so the automatic passes
+   * stop contributing to it. It is written after the column patch, and only if
+   * the patch succeeded — an unknown country code must not leave a product with
+   * new tags and an old country.
+   *
    * @param input - The product or offer id plus the fields to update.
    * @returns The requested id with the updated name and a raw fallback.
    * @throws {NotFoundError} When the id matches neither an offer nor a
    * product.
-   * @throws {BadRequestError} When a country code or type name is unknown.
+   * @throws {BadRequestError} When a country code, type name or flavor name is
+   * unknown.
    */
   public async update(input: ProductUpdateInput): Promise<TypeProduct> {
     const ref = await this.offers.findOfferRefById(input.id);
@@ -75,6 +84,10 @@ export class ProductService {
       ref.productId,
       patch as never,
     );
+
+    if (input.flavors !== undefined) {
+      await this.setFlavors(ref.productId, input.flavors);
+    }
 
     /**
      * The caller's own id is echoed back rather than the canonical one, so the
@@ -128,5 +141,29 @@ export class ProductService {
     }
 
     return type.id;
+  }
+
+  /**
+   * Replaces a bottling's flavor set with the named tags, marking it curated.
+   *
+   * Names are resolved, never created: a tag the client offers comes from the
+   * `/meta` list, so anything else is a bad request rather than a new flavor to
+   * add to the reference table every other product's filter reads from.
+   *
+   * @param productId - Canonical product id.
+   * @param names - Flavor names to keep; an empty list clears the tags.
+   * @returns Resolves once the set is stored and the bottling is marked.
+   * @throws {BadRequestError} When a name matches no known flavor.
+   */
+  private async setFlavors(productId: ID, names: string[]): Promise<void> {
+    const resolved = await this.flavors.findIdsByName(names);
+
+    const unknown = names.filter((name) => !resolved.has(name.trim()));
+
+    if (unknown.length) {
+      throw new BadRequestError('Unknown flavor', { flavors: unknown });
+    }
+
+    await this.products.setManualFlavors(productId, [...resolved.values()]);
   }
 }

@@ -86,7 +86,9 @@ export class ScrapeService {
    *
    * `lastLlmFlavorAt` counts: the detail page is the only source of `rawAttrs`,
    * which is the only grounding the flavor pass ever gets, so a bottling with
-   * complete specs but no classification still deserves the fetch.
+   * complete specs but no classification still deserves the fetch — unless its
+   * flavors are hand-curated, in which case that pass will never run for it and
+   * the fetch would buy nothing.
    *
    * @param row - What the catalogue knows, or undefined when it knows nothing.
    * @returns True when there is something left to fill.
@@ -97,7 +99,7 @@ export class ScrapeService {
       || row.volumeMl === null
       || row.typeId === null
       || row.countryId === null
-      || row.lastLlmFlavorAt === null;
+      || (row.lastLlmFlavorAt === null && row.flavorsCuratedAt === null);
   }
 
   /**
@@ -603,6 +605,10 @@ export class ScrapeService {
    * `Glenlivet`) and so paid twice for one whisky, sometimes getting two
    * different answers.
    *
+   * A bottling whose flavors someone set by hand is never asked about, whatever
+   * the run: `setLlmFlavors` refuses to overwrite a curated set, so the answer
+   * would be paid for and then dropped.
+   *
    * A backfill run waives the "new to this store" half of the gate, which is
    * what lets it fill in bottlings whose classification was never obtained.
    * It is also the one moment the model sees a store's description:
@@ -634,7 +640,13 @@ export class ScrapeService {
         return false;
       }
 
-      return (this.stored(snap, canon)?.lastLlmFlavorAt ?? null) === null;
+      const stored = this.stored(snap, canon);
+
+      if ((stored?.flavorsCuratedAt ?? null) !== null) {
+        return false;
+      }
+
+      return (stored?.lastLlmFlavorAt ?? null) === null;
     });
 
     if (!pending.length) {

@@ -703,6 +703,13 @@ export interface ProductMatchRow {
    * When the flavor pass last answered, or null when it never has.
    */
   lastLlmFlavorAt: Date | null;
+
+  /**
+   * When someone last set this bottling's flavors by hand, or null when nobody
+   * has. A curated bottling is never sent to the flavor pass: the write would
+   * be refused (see `setLlmFlavors`), so asking would only spend tokens.
+   */
+  flavorsCuratedAt: Date | null;
 }
 
 /**

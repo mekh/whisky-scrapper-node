@@ -77,6 +77,11 @@ export class ProductEntity extends BaseRichEntity implements EntityProduct {
   @Column({ type: 'timestamp', nullable: true })
   public lastLlmFlavorAt?: Date;
 
+  @IsDate()
+  @IsOptional()
+  @Column({ type: 'timestamp', nullable: true })
+  public flavorsCuratedAt?: Date;
+
   @ManyToOne(
     'BrandEntity',
     (brand: EntityBrand) => brand.id,

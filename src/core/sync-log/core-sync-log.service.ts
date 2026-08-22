@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { CoreBaseService } from '~core/_common';
 import { SyncTrigger } from '~enums';
-import { ID, RunningSync, SyncOutcome } from '~types';
+import { DashboardSyncDay, ID, RunningSync, SyncOutcome } from '~types';
 
 import { SyncLogEntity } from './sync-log.entity';
 import { SyncLogRepository } from './sync-log.repository';
@@ -102,5 +102,22 @@ export class CoreSyncLogService extends CoreBaseService<SyncLogEntity> {
     const rows = await this.repo.lastSuccessfulByStore();
 
     return new Map(rows.map((row) => [row.storeId, row.lastAt]));
+  }
+
+  /**
+   * Sync-run activity aggregated per calendar day: run/outcome counts, the
+   * persist counters and duration stats.
+   *
+   * @param from - Inclusive range start (`YYYY-MM-DD`).
+   * @param to - Inclusive range end (`YYYY-MM-DD`).
+   * @param stores - Store slugs to scope to, or null for all stores.
+   * @returns One row per day that had runs, ascending by date.
+   */
+  public async activityByDay(
+    from: string,
+    to: string,
+    stores: string[] | null,
+  ): Promise<DashboardSyncDay[]> {
+    return this.repo.activityByDay(from, to, stores);
   }
 }

@@ -3,7 +3,13 @@ import { QueryFailedError } from 'typeorm';
 
 import { BaseRepository } from '~core/_common';
 import { SyncTrigger } from '~enums';
-import { ID, RunningSync, StoreLastSync, SyncOutcome } from '~types';
+import {
+  DashboardSyncDay,
+  ID,
+  RunningSync,
+  StoreLastSync,
+  SyncOutcome,
+} from '~types';
 
 import { SyncLogEntity } from './sync-log.entity';
 
@@ -142,6 +148,52 @@ export class SyncLogRepository extends BaseRepository<SyncLogEntity> {
       .where('log.success = :success', { success: true })
       .groupBy('log.storeId')
       .getRawMany<StoreLastSync>();
+  }
+
+  /**
+   * Sync-run activity aggregated per calendar day (of the run's start time):
+   * run and outcome counts, the persist counters, and finished-run duration
+   * stats. `total` is exposed as `itemsSeen` — it counts everything the
+   * scrape saw, including the out-of-stock items persist skips, so it is not
+   * `added + updated`. The range bound on `createdAt` is half-open
+   * (`>= from AND < to + 1 day`) because the column is a timestamp — a
+   * `BETWEEN` on bare dates would drop every run after midnight on `to`.
+   *
+   * @param from - Inclusive range start (`YYYY-MM-DD`).
+   * @param to - Inclusive range end (`YYYY-MM-DD`).
+   * @param stores - Store slugs to scope to, or null for all stores.
+   * @returns One row per day that had runs, ascending by date.
+   */
+  public async activityByDay(
+    from: string,
+    to: string,
+    stores: string[] | null,
+  ): Promise<DashboardSyncDay[]> {
+    return this.query(
+      `SELECT sl."createdAt"::date::text AS date,
+              COUNT(*)::int AS runs,
+              COUNT(*) FILTER (WHERE sl.success)::int AS succeeded,
+              COUNT(*) FILTER (WHERE sl.success IS FALSE)::int AS failed,
+              COUNT(*) FILTER (WHERE sl.success IS NULL)::int AS running,
+              COALESCE(SUM(sl.added), 0)::int AS added,
+              COALESCE(SUM(sl.removed), 0)::int AS removed,
+              COALESCE(SUM(sl.updated), 0)::int AS updated,
+              COALESCE(SUM(sl.total), 0)::int AS "itemsSeen",
+              ROUND(AVG(
+                EXTRACT(EPOCH FROM (sl."finishedAt" - sl."createdAt")) * 1000
+              ))::int AS "avgDurationMs",
+              ROUND(MAX(
+                EXTRACT(EPOCH FROM (sl."finishedAt" - sl."createdAt")) * 1000
+              ))::int AS "maxDurationMs"
+       FROM sync_log sl
+       JOIN store st ON st.id = sl."storeId"
+       WHERE sl."createdAt" >= $1::date
+         AND sl."createdAt" < ($2::date + 1)
+         AND ($3::text[] IS NULL OR st.slug = ANY($3))
+       GROUP BY 1
+       ORDER BY 1`,
+      [from, to, stores],
+    ) as Promise<DashboardSyncDay[]>;
   }
 
   private isUniqueViolation(error: unknown): boolean {

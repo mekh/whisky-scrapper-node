@@ -36,19 +36,25 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 
 ## Endpoint map
 
-| Legacy                                                                                | Node                                                                                                                                         | Auth               |
-| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| `GET /api/meta`                                                                       | `GET /meta`                                                                                                                                  | any logged-in user |
-| `GET /api/report/{kind}`                                                              | `GET /report/{kind}` (`kind`: catalog\|drops\|low\|new\|best)                                                                                | any logged-in user |
-| `GET /api/history?term=`                                                              | `GET /report/history?term=` — `term` takes a report row's id (a store offer), a canonical `productId` (resolved to that bottling's in-stock, most recently seen offer), or a name/URL substring. The series is always one store's price history | any logged-in user |
-| `GET /api/config`                                                                     | `GET /store` (sites + config) + fixed constants in `/meta`                                                                                   | admin              |
-| `GET /api/stores/{slug}`                                                              | `GET /store/{slug}`                                                                                                                          | admin              |
-| `PATCH /api/stores/{slug}` `{active}`                                                 | `PATCH /store/{slug}` `{active}`                                                                                                             | admin              |
-| — (new)                                                                               | `POST /store/{slug}/sync` — starts an on-demand sync, `202` + the open sync-log row                                                          | `store:sync`       |
-| — (new)                                                                               | `GET /store/sync-status` — the syncs currently in flight                                                                                     | admin              |
+| Legacy                                                                                | Node                                                                                                                                                                                                                                                                                                        | Auth               |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| `GET /api/meta`                                                                       | `GET /meta`                                                                                                                                                                                                                                                                                                 | any logged-in user |
+| `GET /api/report/{kind}`                                                              | `GET /report/{kind}` (`kind`: catalog\|drops\|low\|new\|best)                                                                                                                                                                                                                                               | any logged-in user |
+| `GET /api/history?term=`                                                              | `GET /report/history?term=` — `term` takes a report row's id (a store offer), a canonical `productId` (resolved to that bottling's in-stock, most recently seen offer), or a name/URL substring. The series is always one store's price history                                                             | any logged-in user |
+| `GET /api/config`                                                                     | `GET /store` (sites + config) + fixed constants in `/meta`                                                                                                                                                                                                                                                  | admin              |
+| `GET /api/stores/{slug}`                                                              | `GET /store/{slug}`                                                                                                                                                                                                                                                                                         | admin              |
+| `PATCH /api/stores/{slug}` `{active}`                                                 | `PATCH /store/{slug}` `{active}`                                                                                                                                                                                                                                                                            | admin              |
+| — (new)                                                                               | `POST /store/{slug}/sync` — starts an on-demand sync, `202` + the open sync-log row                                                                                                                                                                                                                         | `store:sync`       |
+| — (new)                                                                               | `GET /store/sync-status` — the syncs currently in flight                                                                                                                                                                                                                                                    | admin              |
 | — (new)                                                                               | `POST /product/update` `{id, name?, countryCode?, typeName?, age?, abv?, volumeMl?}` — edit product overrides (undefined fields untouched). `id` accepts a report row's id (a store offer) or a canonical `productId`; either way the edit writes the **bottling**, so it applies to every store listing it | `product:edit`     |
-| `GET/POST /api/users`, `POST /api/users/{id}/active`, `POST /api/users/{id}/password` | existing `user` module: `GET/POST /user`, `GET/PATCH/DELETE /user/:id`, `POST /user/password[/:userId]`, `GET/PUT /user/:userId/permissions` | admin              |
-| `GET /` + static                                                                      | unchanged — the frontend is hosted separately (point it at this API's base URL)                                                              | —                  |
+| `GET/POST /api/users`, `POST /api/users/{id}/active`, `POST /api/users/{id}/password` | existing `user` module: `GET/POST /user`, `GET/PATCH/DELETE /user/:id`, `POST /user/password[/:userId]`, `GET/PUT /user/:userId/permissions`                                                                                                                                                                | admin              |
+| — (new)                                                                               | `GET /dashboard/meta` — capture bounds + per-store snapshot coverage (data floor, per-store first/last day, listing counts)                                                                                                                                                                                 | any logged-in user |
+| — (new)                                                                               | `GET /dashboard/summary?from&to&stores=` — KPI metrics as `{latest, baseline, delta, deltaPct}` pairs over the range's first/last data day                                                                                                                                                                  | any logged-in user |
+| — (new)                                                                               | `GET /dashboard/series?from&to&stores=&byStore=&byCountry=&granularity=` — per-day metric series (total + optional per-store / per-country partitions)                                                                                                                                                      | any logged-in user |
+| — (new)                                                                               | `GET /dashboard/breakdown?by=type\|country\|priceBucket\|flavor\|store&date=&stores=` — one day's in-stock assortment sliced by a dimension                                                                                                                                                                 | any logged-in user |
+| — (new)                                                                               | `GET /dashboard/movers?from&to&stores=&limit=&minPrice=` — biggest price drops and rises over the range (first vs last snapshot per listing)                                                                                                                                                                | any logged-in user |
+| — (new)                                                                               | `GET /dashboard/sync-activity?from&to&stores=` — sync runs, outcomes and persist counters per day                                                                                                                                                                                                           | any logged-in user |
+| `GET /` + static                                                                      | unchanged — the frontend is hosted separately (point it at this API's base URL)                                                                                                                                                                                                                             | —                  |
 
 Report list responses are paginated: `{ data: ReportGroup[], total, limit,
 offset }` (was `{rows, title, latest_date, count, page, per_page, total_pages}`
@@ -57,7 +63,8 @@ offset }` (was `{rows, title, latest_date, count, page, per_page, total_pages}`
 count products** — see "Report groups" below.
 
 The read endpoints (`GET /meta`, `GET /report/{kind}`, `GET /report/history`,
-`GET /store`, `GET /store/{slug}`) send `Cache-Control: private, max-age=600`
+`GET /store`, `GET /store/{slug}`, every `GET /dashboard/*`) send
+`Cache-Control: private, max-age=600`
 so the browser caches them for 10 minutes; a hard reload bypasses it. Mutations
 (`POST /product/update`, `PATCH /store/{slug}`, `POST /store/{slug}/sync`) and
 `auth`/`user` endpoints are uncached; `GET /store/sync-status` is explicitly
@@ -89,14 +96,57 @@ An empty array means nothing is running.
 
 ## Field maps
 
+### Dashboard (2026-08-22)
+
+Six read-only endpoints under `/dashboard`, all `Resource.AUTHENTICATED`, all
+new (no legacy counterpart). The contract details a client must not guess:
+
+- **Dates are UTC calendar days** (`YYYY-MM-DD`), matching
+  `price_snapshot.capturedOn`; `from`/`to` are inclusive on both ends. Ranges
+  are clamped server-side to the days that actually have data
+  (`/dashboard/meta` names the bounds: `dataFloorDate` / `latestDate`), and
+  the resolved range is echoed. A range longer than 732 days is a 400.
+- **`stores` is a CSV of slugs** and scopes every metric of the response;
+  `byStore`/`byCountry` additionally partition that same scope. The partition
+  envelopes are separate from `total` because distinct counts and medians do
+  not compose across partitions — never sum them.
+- **Out-of-stock is derived, not scraped**:
+  `oosListings(day) = max(0, tracked(day) - inStock(day))` with
+  `tracked = COUNT(listings WHERE firstSeen <= day)`. On the latest day this
+  equals the `inStock = false` listing count the store pages report. It
+  cannot distinguish a delisted SKU from a temporary stock-out, and the very
+  first data days are ramp-up artifacts (see `dataFloorDate`).
+- **`granularity`**: `day` or `week`; an unpinned range longer than 120 days
+  is downsampled to weeks and the response says so. Weekly buckets label
+  themselves with the ISO week's Monday; level metrics take the bucket's last
+  observed day, flow metrics (`newListings`, `departedListings`) sum.
+- `departedListings` is structurally 0 on the latest day (a departure is only
+  knowable once a later sync misses the listing), and `sync-activity.removed`
+  attributes the same event to the sweep's day — one day later.
+- `summary` metrics are `{latest, baseline, delta, deltaPct}` with
+  `baselineDate`/`latestDate` echoed (the range boundary is not always a data
+  day); `deltaPct` is null on a null or zero baseline. `promoShare` is a
+  0..1 fraction.
+- `breakdown` echoes the resolved `date` (an absent or out-of-bounds date
+  resolves to the latest captured day). `by=flavor` sets `overlapping: true` —
+  those buckets must not be rendered as parts of a whole. `priceBucket` keys
+  are `width_bucket` ordinals with explicit `minPrice`/`maxPrice` bounds
+  (null = open-ended).
+- `movers` rows carry `storeProductId` (for `/report/history`) and
+  `productId`, plus per-row `firstDate`/`lastDate` — the compared edges float
+  inside the range when a listing appeared late or departed early.
+- `sync-activity.itemsSeen` is the scrape-side `total` counter renamed: it
+  counts everything the listing walk saw (including out-of-stock items that
+  persist skips), so it is not `added + updated`.
+
 ### Report groups (2026-08-12)
 
 A report item is a **bottling with its offers**, not one store's offer. Every
 field in the `ReportRow` table below still means exactly what it did — it is
 now the **cheapest offer's** value — and the item carries one added field:
 
-| Field    | Notes                                                                                                                                                                                                              |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Field    | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `offers` | the bottling's selected offers, **price ascending, never empty**. `offers[0]` is the primary one, and every top-level field of the item equals it. Offer fields: `id`, `sku`, `url`, `nameOrig`, `storeSlug`, `storeName`, `price`, `oldPrice`, `currency`, `promo`, `inStock`, `previousPrice`, `referencePrice`, `discountPct`, `isNew`, `daysNew`, `daysDiscount`, `firstSeen`, `capturedDate`. The bottling's own fields (`productId`, `name`, `age`, `abv`, `volumeMl`, `brand`, `type`, `country*`, `flavors`) are stated once, on the item |
 
 Which offers a group holds depends on the kind:
@@ -117,7 +167,7 @@ Consequences worth knowing:
   inside the group.
 - **Offer-level filters restrict the array**, not just the page: `stores` and
   `minPrice`/`maxPrice` leave a group holding only its matching offers, so the
-  headline price is the cheapest *matching* offer. A bottling appears whenever
+  headline price is the cheapest _matching_ offer. A bottling appears whenever
   at least one of its offers survives.
 - **`best` is the exception to the price bounds** (2026-08-22): it compares a
   bottling's offers against each other, so it is given every offer whatever it
@@ -142,8 +192,8 @@ Consequences worth knowing:
 
 | Legacy           | Node                        | Notes                                                                                                                                                                                                                                         |
 | ---------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id` (int)       | `id` (uuid)                 | the **store offer** — one row per store × SKU. Unchanged by the catalogue split; still what `/report/history` and `/product/:id` take                                                                                                          |
-| —                | `productId` (uuid)          | new — the **bottling** this row is an offer of. Rows from different stores sharing it are the same whisky: that is how `best` groups them, and an edit through any of them applies to all                                                       |
+| `id` (int)       | `id` (uuid)                 | the **store offer** — one row per store × SKU. Unchanged by the catalogue split; still what `/report/history` and `/product/:id` take                                                                                                         |
+| —                | `productId` (uuid)          | new — the **bottling** this row is an offer of. Rows from different stores sharing it are the same whisky: that is how `best` groups them, and an edit through any of them applies to all                                                     |
 | `store`          | `storeName`                 |                                                                                                                                                                                                                                               |
 | —                | `storeSlug`                 | new                                                                                                                                                                                                                                           |
 | —                | `sku`                       | new                                                                                                                                                                                                                                           |
@@ -254,7 +304,7 @@ view to `sort=daysDiscount&order=asc` (freshest price drops first).
 | --------------- | -------------------------------------------------------------------------- |
 | `url`           | `baseUrl`                                                                  |
 | `created_at`    | `createdAt`                                                                |
-| `product_count` | `productCount`                                                             | the store's in-stock offers (unchanged meaning) |
+| `product_count` | `productCount`                                                             |
 | `last_sync`     | `lastSync`                                                                 |
 | `recent_syncs`  | `recentSyncs`                                                              |
 | —               | `color`, `active`, `tier`, `needsBrowser`, `retailChain`, `category` (new) |

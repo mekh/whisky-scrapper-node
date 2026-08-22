@@ -341,7 +341,7 @@ entity/repository/service/module shape:
   edit never re-derives it: re-keying would silently detach the offers already
   linked, and identity is meant to be decided once and corrected by hand.
   Two consequences to keep in mind — a later listing whose key differs creates a
-  *second* bottling that curation must merge, and `age`/`volumeMl` are therefore
+  _second_ bottling that curation must merge, and `age`/`volumeMl` are therefore
   effectively immutable (which is why `pnpm fix-age` and `pnpm fix-volume` were
   retired after their final pre-split run).
   **Matching happens once**, when a store first lists a SKU. The offer upsert
@@ -359,7 +359,7 @@ entity/repository/service/module shape:
   its `scrape` rows on every run, which was coherent only while each store owned
   its own product row; on a shared bottling a store whose listing does not
   happen to spell out "торф" would erase what another store's listing stated. A
-  keyword hit is evidence *for* a flavor, never against one, so
+  keyword hit is evidence _for_ a flavor, never against one, so
   `addScrapeFlavors` inserts with `ON CONFLICT DO NOTHING` and removes nothing.
   The cost is that a stale tag never clears on its own; the escape hatch is a
   data migration, as `flavor-taxonomy-cleanup` already is. `setLlmFlavors` still
@@ -426,9 +426,8 @@ entity/repository/service/module shape:
   store spells it differently (`12 yo`, `12 років`), so no single substring
   could reach `Glenfiddich Triple Oak`. The two passes are OR-ed
   (`SearchTermUtils.splitAge` + `findCurrentRows`) — a fallback would have kept
-  hiding those rows behind the standard bottling the substring does match.
-  Existing rows are rewritten by `pnpm clean-names`
-  (`scripts/clean-product-names.ts`,
+  hiding those rows behind the standard bottling the substring does match. Existing rows are
+  rewritten by `pnpm clean-names` (`scripts/clean-product-names.ts`,
   `--dry-run` / `--no-llm` / `--store <slug>`), which is a script and not a
   migration on purpose: migrations gate every deploy and must not depend on an
   external API. It does overwrite manual name edits.
@@ -458,7 +457,7 @@ entity/repository/service/module shape:
   returns no age for exactly those products. `pnpm fix-age` applied the current
   rule retroactively and was **retired with the catalogue split**: age is now a
   component of a bottling's identity, frozen at creation, so a sweep can no
-  longer change it. Run it on production *before* the split migration, or a
+  longer change it. Run it on production _before_ the split migration, or a
   wrong age becomes a manual merge (`CURATION.md`).
   **`volumeMl` is the sum of a gift set's bottles.** `extractVolumeMl` used to
   take the first match in the name, so a set of three 0.7 л bottles was stored
@@ -481,11 +480,11 @@ entity/repository/service/module shape:
   first, and a manual edit is safe from the next sync. What `pnpm backfill`
   (`scripts/backfill-nulls.ts`, `--dry-run` / `--store <slug>`, repeatable)
   still changes, running the real pipeline through
-  `collectStore(slug, { backfill: true })`, is *which items a run looks at*: it
+  `collectStore(slug, { backfill: true })`, is _which items a run looks at_: it
   waives the "new to this store" half of every enrichment gate, so stored
   offers get their detail pages fetched and their fields asked about again.
   **The other half of each gate is the catalogue**, and that is where the
-  saving is: a detail page or a model call is bought only when the *bottling*
+  saving is: a detail page or a model call is bought only when the _bottling_
   is still missing something, not when this particular store is. A store
   onboarding a range the catalogue already covers now fetches almost nothing,
   where before each store paid for its own copy of the same facts.
@@ -700,7 +699,7 @@ wrappers): `scrape/` has its own internal layering.
   Stored bottlings can also be swept by `pnpm enrich-flavors`, which needs no
   scrape but is therefore stuck with name-only grounding.
   **Reuse across stores is structural now, not a lookup.** The gate is
-  `lastLlmFlavorAt IS NULL` on the *bottling*, so a listing whose key resolves
+  `lastLlmFlavorAt IS NULL` on the _bottling_, so a listing whose key resolves
   to an already-classified whisky is simply never asked about, and its stored
   tags are what every store's row reads. That replaced a name-string lookup
   (`findLlmFlavorsByNames`) and is strictly stronger: the key folds spellings
@@ -708,11 +707,11 @@ wrappers): `scrape/` has its own internal layering.
   mean paying twice for one whisky and sometimes getting two different answers.
   It matters at scale — 1 273 bottlings are carried by more than one store,
   spanning 6 600-odd of the 8 418 offers. A bottling classified `unknown` has no
-  links but *is* stamped, so it is not re-asked; only a genuinely unclassified
+  links but _is_ stamped, so it is not re-asked; only a genuinely unclassified
   one reaches the model.
   **In-run grouping keys on the same identity**: one bottling is asked about
   once however many SKUs a store lists it under, so a boxed and a plain listing
-  of the same bottle cost one call. Two *sizes* are two bottlings and are asked
+  of the same bottle cost one call. Two _sizes_ are two bottlings and are asked
   about separately, which the old name-based grouping got wrong.
   **The stored back-catalogue was swept by the `flavor-llm-import` migration
   instead of by that script** (see "Whisky domain"), because deduplicating to
@@ -937,7 +936,7 @@ wrappers): `scrape/` has its own internal layering.
   canonical write fills only nulls, so any other fetch is politeness-delay
   spend whose result the database throws away.
   The last clause is the one the catalogue split added, and it is where the
-  saving is: the gate asks about the *bottling*, not this store's row, so a
+  saving is: the gate asks about the _bottling_, not this store's row, so a
   store onboarding a range other stores already cover fetches almost nothing.
   (The `lastLlmFlavorAt IS NULL` case counts as missing: the detail page is the
   only source of `rawAttrs`, the flavor pass's only grounding.)
@@ -1349,6 +1348,50 @@ Pre-existing bugs fixed while wiring auth (context for future changes):
   `Cache-Control: private, max-age=600` via the `@CacheControl` decorator
   (`~decorators/http`), so the browser caches them for 10 minutes and a hard
   reload bypasses it; mutations and `auth`/`user` endpoints stay uncached.
+
+- **Dashboard API is built** (`domain/dashboard`, 2026-08-22): six read-only
+  endpoints under `/dashboard` (`meta`, `summary`, `series`, `breakdown`,
+  `movers`, `sync-activity`), all `Resource.AUTHENTICATED` +
+  `@CacheControl(600)`, powering the web dashboard's time-series charts. The
+  contract lives in `MIGRATION.md` ("Dashboard"); the load-bearing decisions:
+  - **All dashboard SQL keys on `price_snapshot.capturedOn`** (the column with
+    the one-row-per-offer-per-day unique index and, since
+    `dashboard-captured-index`, a plain index for date-range scans) — never on
+    the `createdAt::date` the legacy report queries use. The two agree on
+    every existing row, but `capturedOn` carries the semantic guarantee; see
+    `FOLLOWUPS.md`.
+  - **A snapshot row exists only for in-stock offers**, so in-stock(day) is a
+    row count and **out-of-stock is derived**:
+    `max(0, tracked(day) − inStock(day))`,
+    `tracked = COUNT(store_product WHERE firstSeen <= day)`. Measured against
+    a production dump this lands exactly on `COUNT(WHERE NOT "inStock")` for
+    the latest day (1,034 on 2026-08-21), i.e. it agrees with `/store/:slug`.
+    The tempting `lastSeen >= day` variant collapses to 0 on the latest day —
+    the comparison table lives in `DashboardMetricsUtils.deriveOos`'s JSDoc,
+    and a unit test pins the identity. The formula cannot tell a delisted SKU
+    from a stock-out, and it clamps a one-day retention artifact at the data
+    floor (snapshots exist on 2026-06-12 for offers whose `firstSeen` is the
+    13th).
+  - **Left-censoring**: ~46% of listings share `firstSeen = 2026-06-13` and
+    only 3 stores have data on 06-12, so the first days are ramp-up, not
+    market growth; four stores (silpo, fozzy, alcomag, bayadera) only start
+    2026-08-09/10. Ranges are clamped to `[MIN(capturedOn), MAX(capturedOn)]`
+    server-side; `/dashboard/meta` exposes the bounds and per-store first/last
+    days so the client can annotate instead of misreading steps as trends.
+  - **Aggregates stay in SQL, composition in TypeScript**: repositories keep
+    their own grain (`price-snapshot` owns the daily/boundary/breakdown/mover
+    aggregates, `store-product` the `firstSeen`/`lastSeen` lifecycle,
+    `sync-log` the per-day run stats), and `DashboardMetricsUtils` (~utils,
+    pure static) merges the sides, derives OOS, downsamples weeks (levels =
+    last observed day, flows = summed) and does the KPI delta arithmetic —
+    unit-testable without a database. No rollup table on purpose: distinct
+    counts and medians do not compose across partitions, and the worst full
+    query measures ~350 ms; revisit only past ~12 months of retention with a
+    materialized view refreshed after `runFullSync`.
+  - Query DTO composites added for it: `@IsoDate()` (bare `YYYY-MM-DD` only —
+    `@IsDateString` would accept timestamps whose day is timezone-ambiguous)
+    and `@BoolQuery()` (explicit `'true'`/`'false'` mapping, since
+    `@Type(() => Boolean)` turns `'false'` into `true`).
 
 **`MIGRATION.md`** is the endpoint + field map (legacy → node) for the future
 React frontend — update it alongside any API contract change.

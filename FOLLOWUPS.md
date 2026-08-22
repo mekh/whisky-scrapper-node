@@ -89,3 +89,34 @@ without ever visiting their pages.
 
 **Availability detection itself is fixed** (2026-07-25, both engines): the tile's
 buy button is now the positive marker, see [`PARITY.md`](PARITY.md).
+
+## 4. Legacy report SQL keys on `createdAt::date`, not `capturedOn`
+
+**Status**: open. **Blocked by**: nothing technical — pure consistency debt.
+
+The report-era queries (`latestDate`, `priceExtremes`, `currentPriceSince`,
+`priceSeries` in `price-snapshot.repository.ts`, plus `CURRENT_SQL` in
+`store-product.repository.ts`) key the snapshot day on `"createdAt"::date`,
+while the dashboard queries (2026-08-22) key on `capturedOn` — the column
+that carries the one-row-per-offer-per-day unique index and the semantic
+guarantee. Verified on a production dump: the two agree on 100% of 422,565
+rows today, so there is no live bug — but nothing *enforces* that agreement
+(a backdated upsert or a midnight-straddling run could split them), and the
+legacy form cannot use the `price_snapshot_captured_idx` index.
+
+**Fix**: migrate the legacy queries to `capturedOn`, one behavioral
+equivalence test per query. No schema change needed.
+
+## 5. Dashboard cache lifetime is static for immutable ranges
+
+**Status**: open (deliberately deferred at the dashboard's v1).
+
+A `/dashboard/*` range whose `to` lies strictly before today is immutable —
+historical snapshot rows are only ever rewritten by `upsertForDate` for the
+current day — yet it is served with the same `Cache-Control: max-age=600` as
+a live range. A dynamic max-age (a day or more for closed ranges) is a real
+win once dashboard use grows, but `@CacheControl` compiles to a static Nest
+`@Header`, so the fix needs a small response interceptor.
+
+**Fix**: an interceptor that inspects the resolved `to` and lengthens
+`max-age` for closed ranges; keep 600s for anything touching today.

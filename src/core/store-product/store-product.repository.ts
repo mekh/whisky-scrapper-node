@@ -2,6 +2,9 @@ import { TypeormRepository } from '@toxicoder/nestjs-typeorm-repository';
 
 import { BaseRepository } from '~core/_common';
 import {
+  DashboardLifecycleGroupRow,
+  DashboardLifecycleRow,
+  DashboardSeriesGrouping,
   ID,
   MetaCountry,
   ReportCurrentRow,
@@ -13,6 +16,28 @@ import {
 import { SearchTermUtils } from '~utils';
 
 import { StoreProductEntity } from './store-product.entity';
+
+/**
+ * Scoped listing set behind the grouped lifecycle query, keyed by the series
+ * grouping. The store key is the slug; the country key climbs to the
+ * bottling's country, with `unknown` for countryless products.
+ */
+const LIFECYCLE_SCOPED_SQL: Record<DashboardSeriesGrouping, string> = {
+  store: `
+    SELECT st.slug AS key,
+           sp."firstSeen", sp."lastSeen", sp."inStock"
+    FROM store_product sp
+    JOIN store st ON st.id = sp."storeId"
+    WHERE ($3::text[] IS NULL OR st.slug = ANY($3))`,
+  country: `
+    SELECT COALESCE(c.code, 'unknown') AS key,
+           sp."firstSeen", sp."lastSeen", sp."inStock"
+    FROM store_product sp
+    JOIN store st ON st.id = sp."storeId"
+    JOIN product p ON p.id = sp."productId"
+    LEFT JOIN country c ON c.id = p."countryId"
+    WHERE ($3::text[] IS NULL OR st.slug = ANY($3))`,
+};
 
 // Latest snapshot per store offer (+ the immediately previous price), joined to
 // the bottling it is an offer of and to the lookup tables. `rn = 1` keeps only
@@ -406,5 +431,115 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
     ) as { id: ID }[];
 
     return rows[0]?.id ?? null;
+  }
+
+  /**
+   * Listing lifecycle per calendar day over a range, from `firstSeen` /
+   * `lastSeen`: how many listings are known by each day (cumulative
+   * arrivals), how many first appeared that day, and how many out-of-stock
+   * listings were last seen that day. The days come from `generate_series`,
+   * so the result is dense — one row per calendar day, data or not. The
+   * correlated subqueries stay cheap because the arrival/departure CTEs
+   * collapse to at most one row per distinct date.
+   *
+   * @param from - Inclusive range start (`YYYY-MM-DD`).
+   * @param to - Inclusive range end (`YYYY-MM-DD`).
+   * @param stores - Store slugs to scope to, or null for all stores.
+   * @returns One row per calendar day, ascending by date.
+   */
+  public async lifecycleByDay(
+    from: string,
+    to: string,
+    stores: string[] | null,
+  ): Promise<DashboardLifecycleRow[]> {
+    return this.query(
+      `WITH days AS (
+         SELECT generate_series($1::date, $2::date, '1 day')::date AS day
+       ),
+       scoped AS (
+         SELECT sp."firstSeen", sp."lastSeen", sp."inStock"
+         FROM store_product sp
+         JOIN store st ON st.id = sp."storeId"
+         WHERE ($3::text[] IS NULL OR st.slug = ANY($3))
+       ),
+       arrivals AS (
+         SELECT "firstSeen" AS day, COUNT(*)::int AS n
+         FROM scoped
+         GROUP BY 1
+       ),
+       departures AS (
+         SELECT "lastSeen" AS day, COUNT(*)::int AS n
+         FROM scoped
+         WHERE NOT "inStock"
+         GROUP BY 1
+       )
+       SELECT d.day::text AS date,
+              (SELECT COALESCE(SUM(a.n), 0)
+               FROM arrivals a
+               WHERE a.day <= d.day)::int AS "trackedListings",
+              COALESCE((SELECT n FROM arrivals a WHERE a.day = d.day), 0)
+                AS "newListings",
+              COALESCE((SELECT n FROM departures x WHERE x.day = d.day), 0)
+                AS "departedListings"
+       FROM days d
+       ORDER BY d.day`,
+      [from, to, stores],
+    ) as Promise<DashboardLifecycleRow[]>;
+  }
+
+  /**
+   * The lifecycle-per-day query partitioned by store or country: the same
+   * three measures, computed per partition key over a dense day axis (every
+   * key gets every day via a cross join, so downstream merging never has to
+   * invent missing days).
+   *
+   * @param from - Inclusive range start (`YYYY-MM-DD`).
+   * @param to - Inclusive range end (`YYYY-MM-DD`).
+   * @param stores - Store slugs to scope to, or null for all stores.
+   * @param grouping - Partition dimension: store slug or country code.
+   * @returns One row per (key, calendar day), ascending by key then date.
+   */
+  public async lifecycleByDayGrouped(
+    from: string,
+    to: string,
+    stores: string[] | null,
+    grouping: DashboardSeriesGrouping,
+  ): Promise<DashboardLifecycleGroupRow[]> {
+    return this.query(
+      `WITH days AS (
+         SELECT generate_series($1::date, $2::date, '1 day')::date AS day
+       ),
+       scoped AS (${LIFECYCLE_SCOPED_SQL[grouping]}
+       ),
+       keys AS (
+         SELECT DISTINCT key FROM scoped
+       ),
+       arrivals AS (
+         SELECT key, "firstSeen" AS day, COUNT(*)::int AS n
+         FROM scoped
+         GROUP BY 1, 2
+       ),
+       departures AS (
+         SELECT key, "lastSeen" AS day, COUNT(*)::int AS n
+         FROM scoped
+         WHERE NOT "inStock"
+         GROUP BY 1, 2
+       )
+       SELECT k.key, d.day::text AS date,
+              (SELECT COALESCE(SUM(a.n), 0)
+               FROM arrivals a
+               WHERE a.key = k.key AND a.day <= d.day)::int
+                AS "trackedListings",
+              COALESCE((SELECT n FROM arrivals a
+                        WHERE a.key = k.key AND a.day = d.day), 0)
+                AS "newListings",
+              COALESCE((SELECT n FROM departures x
+                        WHERE x.key = k.key AND x.day = d.day), 0)
+                AS "departedListings"
+       FROM days d
+       CROSS JOIN keys k
+       ORDER BY k.key, d.day`,
+      [from, to, stores],
+    ) as Promise<DashboardLifecycleGroupRow[]>;
   }
 }

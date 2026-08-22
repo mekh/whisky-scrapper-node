@@ -2,6 +2,7 @@ export * from './app.interface';
 export * from './auth.interfaces';
 export * from './crud.interfaces';
 export * from './ctx.interfaces';
+export * from './dashboard.interfaces';
 export * from './entity.interfaces';
 export * from './jwt.interfaces';
 export * from './meta.interfaces';

@@ -15,6 +15,7 @@ import type { EntityPriceSnapshot, EntityStoreProduct, ID } from '~types';
 import { BaseRichEntity } from '../_common';
 
 @Entity('price_snapshot')
+@Index('price_snapshot_captured_idx', ['capturedOn'])
 @Index(
   'price_snapshot_store_product_created_idx',
   ['storeProductId', 'createdAt'],

@@ -2,6 +2,9 @@ import { Injectable } from '@nestjs/common';
 
 import { CoreBaseService } from '~core/_common';
 import {
+  DashboardLifecycleGroupRow,
+  DashboardLifecycleRow,
+  DashboardSeriesGrouping,
   ID,
   MetaCountry,
   ReportCurrentRow,
@@ -144,5 +147,41 @@ export class CoreStoreProductService extends CoreBaseService<
    */
   public async resolveIdByTerm(term: string): Promise<ID | null> {
     return this.repo.resolveIdByTerm(term);
+  }
+
+  /**
+   * Listing lifecycle per calendar day (tracked / new / departed counts from
+   * `firstSeen` / `lastSeen`), dense over the range.
+   *
+   * @param from - Inclusive range start (`YYYY-MM-DD`).
+   * @param to - Inclusive range end (`YYYY-MM-DD`).
+   * @param stores - Store slugs to scope to, or null for all stores.
+   * @returns One row per calendar day, ascending by date.
+   */
+  public async lifecycleByDay(
+    from: string,
+    to: string,
+    stores: string[] | null,
+  ): Promise<DashboardLifecycleRow[]> {
+    return this.repo.lifecycleByDay(from, to, stores);
+  }
+
+  /**
+   * The lifecycle-per-day measures partitioned by store or country, dense
+   * over the range for every partition key.
+   *
+   * @param from - Inclusive range start (`YYYY-MM-DD`).
+   * @param to - Inclusive range end (`YYYY-MM-DD`).
+   * @param stores - Store slugs to scope to, or null for all stores.
+   * @param grouping - Partition dimension: store slug or country code.
+   * @returns One row per (key, calendar day), ascending by key then date.
+   */
+  public async lifecycleByDayGrouped(
+    from: string,
+    to: string,
+    stores: string[] | null,
+    grouping: DashboardSeriesGrouping,
+  ): Promise<DashboardLifecycleGroupRow[]> {
+    return this.repo.lifecycleByDayGrouped(from, to, stores, grouping);
   }
 }

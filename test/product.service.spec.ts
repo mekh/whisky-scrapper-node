@@ -70,7 +70,7 @@ async function update(
 }
 
 describe('ProductService.update flavors', () => {
-  it('stores the resolved ids as the bottling\'s curated set', async () => {
+  it("stores the resolved ids as the bottling's curated set", async () => {
     const { service, products, flavors } = makeService(
       new Map([['peated', 'flavor-1' as ID], ['sherry', 'flavor-2' as ID]]),
     );

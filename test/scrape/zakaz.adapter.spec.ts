@@ -1,5 +1,7 @@
 import 'reflect-metadata';
 
+import { ListingStop } from '~enums';
+
 import { ZakazAdapter } from '../../src/scrape/adapters/zakaz';
 import { NormalizeService } from '../../src/scrape/normalize/normalize.service';
 import { FakeHttpClient } from './fake-http-client';
@@ -104,7 +106,7 @@ async function snapshotOf(
   raw: ZakazProduct,
 ): Promise<ProductSnapshot | undefined> {
   const { adapter } = makeAdapter({ 1: [raw] });
-  const snaps = await adapter.fetchListing();
+  const { items: snaps } = await adapter.fetchListing();
 
   return snaps[0];
 }
@@ -176,7 +178,9 @@ describe('ZakazAdapter', () => {
       1: [product('1', 'Віскі Y 0,7л', { price: null })],
     });
 
-    await expect(adapter.fetchListing()).resolves.toEqual([]);
+    const { items } = await adapter.fetchListing();
+
+    expect(items).toEqual([]);
   });
 
   it('paginates and deduplicates across pages', async () => {
@@ -186,7 +190,7 @@ describe('ZakazAdapter', () => {
       3: [],
     });
 
-    const snaps = await adapter.fetchListing();
+    const { items: snaps } = await adapter.fetchListing();
 
     expect(snaps.map((snap) => snap.storeSku).sort()).toEqual(['a', 'b', 'c']);
     expect(http.pages()).toEqual([1, 2, 3]);
@@ -206,9 +210,11 @@ describe('ZakazAdapter', () => {
     });
     const adapter = new ZakazAdapter(SPEC, 1, http, new NormalizeService());
 
-    const snaps = await adapter.fetchListing();
+    const listing = await adapter.fetchListing();
 
-    expect(snaps.map((snap) => snap.storeSku)).toEqual(['a']);
+    expect(listing.items.map((snap) => snap.storeSku)).toEqual(['a']);
+    expect(listing.complete).toBe(false);
+    expect(listing.stop).toBe(ListingStop.PAGE_FAILED);
   });
 
   it('fails when the very first page fails', async () => {

@@ -9,6 +9,7 @@ import { CoreStoreProductService } from '~core/store-product';
 import { NotFoundError, ServerError } from '~errors';
 import type {
   CollectOptions,
+  ListingResult,
   ProductMatchRow,
   ProductSnapshot,
   ScrapeAdapter,
@@ -213,7 +214,7 @@ export class ScrapeService {
      */
     const known = await this.storeProducts.existingSkus(store.id);
 
-    const snaps = await this.scrape(
+    const listing = await this.scrape(
       spec,
       known,
       backfill,
@@ -221,6 +222,8 @@ export class ScrapeService {
       options.reporter,
       deadline,
     );
+
+    const snaps = listing.items;
 
     snaps.forEach((snap) => this.normalizer.normalize(snap, brandIndex));
 
@@ -268,6 +271,12 @@ export class ScrapeService {
       deadline,
     );
 
+    const listingFacts = {
+      listingComplete: listing.complete,
+      listingStop: listing.stop,
+      statedItems: listing.statedItems,
+    };
+
     if (options.dryRun) {
       return {
         slug,
@@ -275,6 +284,7 @@ export class ScrapeService {
         stored: inStock.length,
         added: 0,
         removed: 0,
+        ...listingFacts,
         items: inStock,
       };
     }
@@ -285,10 +295,11 @@ export class ScrapeService {
       inStock,
       outOfStock.map((snap) => snap.storeSku),
       capturedOn,
+      listing,
       options.reporter,
     );
 
-    return { slug, found, ...counts };
+    return { slug, found, ...counts, ...listingFacts };
   }
 
   /**
@@ -368,11 +379,12 @@ export class ScrapeService {
     brandIndex: BrandMatchEntry[],
     reporter?: ScrapeProgressReporter,
     deadline?: AbortSignal,
-  ): Promise<ProductSnapshot[]> {
+  ): Promise<ListingResult> {
     const adapter = this.adapters.create(spec, reporter);
 
     try {
-      const snaps = await adapter.fetchListing();
+      const listing = await adapter.fetchListing();
+      const snaps = listing.items;
 
       if (adapter.supportsDetail && snaps.length > 0) {
         const canon = await this.loadCanonical(snaps, brandIndex);
@@ -388,7 +400,7 @@ export class ScrapeService {
         );
       }
 
-      return snaps;
+      return listing;
     } finally {
       await adapter.close();
     }

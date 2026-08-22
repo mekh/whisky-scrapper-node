@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 
-import { SyncTrigger } from '~enums';
+import { ListingStop, SyncTrigger } from '~enums';
 import { BadRequestError, DuplicateError, NotFoundError } from '~errors';
 
 import { SyncOrchestratorService } from '../../src/domain/store/sync-orchestrator.service';
@@ -71,6 +71,19 @@ const RESULT: SiteResult = {
   stored: 8,
   added: 3,
   removed: 2,
+  listingComplete: true,
+  listingStop: ListingStop.COUNTED,
+  statedItems: 10,
+};
+
+/**
+ * The same run, except its walk never reached the end of the store's listing —
+ * so persist skipped the sweep and the row must not read as a success.
+ */
+const PARTIAL_RESULT: SiteResult = {
+  ...RESULT,
+  listingComplete: false,
+  listingStop: ListingStop.PAGE_FAILED,
 };
 
 /**
@@ -318,6 +331,51 @@ describe('SyncOrchestratorService.startStoreSync', () => {
     });
   });
 
+  /**
+   * A run whose walk never reached the end of the store's listing did write —
+   * the prices it saw are real — but it learned nothing about what is no
+   * longer offered, so persist skipped the sweep and the store's availability
+   * is now as stale as the last complete run left it. Recording that as a
+   * success is what let the condition sit unnoticed.
+   */
+  it('records an incomplete listing as a failed run', async () => {
+    const { orchestrator, syncLogs, scrape } = makeOrchestrator(makeStore());
+
+    scrape.collectStore.mockResolvedValue(PARTIAL_RESULT);
+
+    await orchestrator.startStoreSync('maudau', SyncTrigger.CRON);
+
+    expect(syncLogs.finish).toHaveBeenCalledWith('log-1', {
+      success: false,
+      error: 'Listing incomplete (page-failed): collected 10 of 10 item(s); '
+        + "the out-of-stock sweep was skipped, so this store's availability "
+        + 'is unchanged',
+      added: 3,
+      removed: 2,
+      updated: 5,
+      total: 10,
+    });
+  });
+
+  it('still records what an incomplete run managed to write', async () => {
+    const { orchestrator, syncLogs, scrape } = makeOrchestrator(makeStore());
+
+    scrape.collectStore.mockResolvedValue({
+      ...PARTIAL_RESULT,
+      statedItems: null,
+    });
+
+    await orchestrator.startStoreSync('maudau', SyncTrigger.CRON);
+
+    const [, outcome] = syncLogs.finish.mock.calls[0] as [string, {
+      error: string;
+      updated: number;
+    }];
+
+    expect(outcome.error).toContain('an unstated number of item(s)');
+    expect(outcome.updated).toBe(5);
+  });
+
   it('a cron run waits for the collection to finish', async () => {
     const { orchestrator, syncLogs } = makeOrchestrator(makeStore());
 
@@ -477,7 +535,13 @@ describe('SyncOrchestratorService log files', () => {
           error: 'timeout',
         });
         options.reporter?.({ kind: 'detail-deadline', done: 4, pending: 6 });
-        options.reporter?.({ kind: 'sweep-guarded', inStock: 3, baseline: 30 });
+        options.reporter?.({
+          kind: 'listing-incomplete',
+          stop: ListingStop.PAGE_FAILED,
+          inStock: 3,
+          baseline: 30,
+        });
+        options.reporter?.({ kind: 'stock-drop', inStock: 3, baseline: 30 });
         options.reporter?.({
           kind: 'persisted',
           stored: 8,
@@ -507,8 +571,14 @@ describe('SyncOrchestratorService log files', () => {
         + '2 of 6 item(s) skipped (a backfill run fills their fields)',
     );
     expect(lines).toContain(
-      'WARNING Listing looks truncated (3 in stock vs 30 stored); '
-        + 'out-of-stock sweep skipped',
+      'WARNING Listing incomplete (page-failed): the walk did not reach the '
+        + "end of the store's listing, so the out-of-stock sweep was skipped "
+        + '(3 in stock vs 30 stored)',
+    );
+    expect(lines).toContain(
+      'WARNING Stock dropped sharply: 3 in stock vs 30 stored. The listing '
+        + 'reached its end, so the sweep ran — check the store if this was '
+        + 'unexpected',
     );
     expect(lines).toContain(
       'INFO Persisted: 8 stored, 3 added, 1 new bottling(s), '

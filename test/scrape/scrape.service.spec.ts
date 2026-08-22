@@ -8,7 +8,9 @@ import type { CoreProductService } from '~core/product';
 import type { CoreStoreService } from '~core/store';
 import type { CoreStoreConfigService } from '~core/store-config';
 import type { CoreStoreProductService } from '~core/store-product';
+import { ListingStop } from '~enums';
 import type {
+  ListingResult,
   ProductMatchRow,
   ProductSnapshot,
   ScrapeAdapter,
@@ -75,6 +77,30 @@ function stored(over: Partial<ProductMatchRow> = {}): ProductMatchRow {
     lastLlmFlavorAt: new Date('2026-08-01T00:00:00Z'),
     ...over,
   };
+}
+
+/**
+ * A `fetchListing` stub for a walk that reached the end of the store's
+ * listing. That is the normal case and what every test not specifically about
+ * completeness wants, since it is what lets persist sweep.
+ *
+ * @param items - The snapshots the walk collected.
+ * @param over - Completeness fields to override, for the tests that care.
+ * @returns The stubbed adapter method.
+ */
+function listingMock(
+  items: ProductSnapshot[],
+  over: Partial<ListingResult> = {},
+): jest.Mock {
+  const listing: ListingResult = {
+    items,
+    complete: true,
+    stop: ListingStop.EXHAUSTED,
+    statedItems: null,
+    ...over,
+  };
+
+  return jest.fn().mockResolvedValue(listing);
 }
 
 function rawSnap(over: Partial<ProductSnapshot>): ProductSnapshot {
@@ -173,7 +199,7 @@ describe('ScrapeService.collectStore', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: false,
-      fetchListing: jest.fn().mockResolvedValue([
+      fetchListing: listingMock([
         rawSnap({ storeSku: 'a', inStock: true }),
         rawSnap({ storeSku: 'b', inStock: false }),
       ]),
@@ -202,7 +228,7 @@ describe('ScrapeService.collectStore', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: false,
-      fetchListing: jest.fn().mockResolvedValue([
+      fetchListing: listingMock([
         rawSnap({ storeSku: 'a', inStock: true }),
         rawSnap({ storeSku: 'gone', inStock: false }),
       ]),
@@ -242,7 +268,58 @@ describe('ScrapeService.collectStore', () => {
       added: 1,
       addedProducts: 1,
       removed: 1,
+      listingComplete: true,
+      listingStop: ListingStop.EXHAUSTED,
+      statedItems: null,
     });
+  });
+
+  /**
+   * Persist decides the sweep on this flag, and the orchestrator decides the
+   * run's outcome on it, so it has to survive the trip out of the adapter
+   * rather than being re-derived from the item count anywhere downstream.
+   */
+  it('carries an incomplete listing through to the result', async () => {
+    const adapter: ScrapeAdapter = {
+      slug: 'faux',
+      supportsDetail: false,
+      fetchListing: listingMock(
+        [rawSnap({ storeSku: 'a', inStock: true })],
+        {
+          complete: false,
+          stop: ListingStop.PAGE_FAILED,
+          statedItems: 300,
+        },
+      ),
+      enrichDetail: jest.fn(),
+      sleep: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    const persist = {
+      persist: jest.fn().mockResolvedValue({
+        stored: 1,
+        added: 0,
+        addedProducts: 0,
+        removed: 0,
+      }),
+    };
+    const service = makeService(adapter, { persist });
+
+    const result = await service.collectStore('faux');
+
+    expect(result.listingComplete).toBe(false);
+    expect(result.listingStop).toBe(ListingStop.PAGE_FAILED);
+    expect(result.statedItems).toBe(300);
+
+    const [, , , , listing] = persist.persist.mock.calls[0] as [
+      string,
+      ProductSnapshot[],
+      string[],
+      string,
+      ListingResult,
+    ];
+
+    expect(listing.complete).toBe(false);
   });
 
   it(
@@ -253,7 +330,7 @@ describe('ScrapeService.collectStore', () => {
       const adapter: ScrapeAdapter = {
         slug: 'faux',
         supportsDetail: true,
-        fetchListing: jest.fn().mockResolvedValue([
+        fetchListing: listingMock([
           rawSnap({ storeSku: 'known' }),
           rawSnap({ storeSku: 'fresh' }),
         ]),
@@ -285,7 +362,7 @@ describe('ScrapeService.collectStore', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: true,
-      fetchListing: jest.fn().mockResolvedValue([
+      fetchListing: listingMock([
         rawSnap({ storeSku: 'listed', inStock: true }),
         rawSnap({ storeSku: 'ghost', inStock: false }),
       ]),
@@ -311,7 +388,7 @@ describe('ScrapeService.collectStore', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: true,
-      fetchListing: jest.fn().mockResolvedValue([
+      fetchListing: listingMock([
         rawSnap({ storeSku: 'a' }),
         rawSnap({ storeSku: 'b' }),
       ]),
@@ -351,7 +428,7 @@ describe('ScrapeService.collectStore', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: true,
-      fetchListing: jest.fn().mockResolvedValue([
+      fetchListing: listingMock([
         rawSnap({ storeSku: 'a' }),
         rawSnap({ storeSku: 'b' }),
       ]),
@@ -371,7 +448,7 @@ describe('ScrapeService.collectStore', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: false,
-      fetchListing: jest.fn().mockResolvedValue([
+      fetchListing: listingMock([
         // No specs in either name, so both items lack ABV and volume.
         rawSnap({ storeSku: 'known', name: 'Віскі Aberlour' }),
         rawSnap({ storeSku: 'fresh', name: 'Віскі Ardbeg Ten' }),
@@ -404,7 +481,7 @@ describe('ScrapeService.collectStore', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: false,
-      fetchListing: jest.fn().mockResolvedValue([
+      fetchListing: listingMock([
         rawSnap({ storeSku: 'known' }),
         rawSnap({ storeSku: 'fresh' }),
       ]),
@@ -434,7 +511,7 @@ describe('ScrapeService.collectStore', () => {
       const adapter: ScrapeAdapter = {
         slug: 'faux',
         supportsDetail: false,
-        fetchListing: jest.fn().mockResolvedValue([
+        fetchListing: listingMock([
           rawSnap({ storeSku: 'known' }),
           rawSnap({ storeSku: 'fresh' }),
         ]),
@@ -470,7 +547,7 @@ describe('ScrapeService.collectStore', () => {
       const adapter: ScrapeAdapter = {
         slug: 'faux',
         supportsDetail: false,
-        fetchListing: jest.fn().mockResolvedValue([
+        fetchListing: listingMock([
           rawSnap({ storeSku: 'a', name: 'Віскі Aberlour 12 років 40% 0.7л' }),
           rawSnap({ storeSku: 'b', name: 'Віскі Ardbeg Ten 46% 0.7л' }),
         ]),
@@ -516,7 +593,7 @@ describe('ScrapeService.collectStore', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: false,
-      fetchListing: jest.fn().mockResolvedValue([
+      fetchListing: listingMock([
         rawSnap({ storeSku: 'a', name: 'Віскі Aberlour 12 років 40% 0.7л' }),
         rawSnap({
           storeSku: 'b',
@@ -564,7 +641,7 @@ describe('ScrapeService.collectStore', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: false,
-      fetchListing: jest.fn().mockResolvedValue([
+      fetchListing: listingMock([
         rawSnap({ storeSku: 'a', name: 'Віскі Aberlour 12 років 40% 0.7л' }),
         rawSnap({
           storeSku: 'b',
@@ -592,7 +669,7 @@ describe('ScrapeService.collectStore', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: false,
-      fetchListing: jest.fn().mockResolvedValue([rawSnap({})]),
+      fetchListing: listingMock([rawSnap({})]),
       enrichDetail: jest.fn(),
       sleep: jest.fn().mockResolvedValue(undefined),
       close: jest.fn().mockResolvedValue(undefined),
@@ -638,7 +715,7 @@ describe('ScrapeService.collectStore', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: false,
-      fetchListing: jest.fn().mockResolvedValue([rawSnap({ storeSku: 'a' })]),
+      fetchListing: listingMock([rawSnap({ storeSku: 'a' })]),
       enrichDetail: jest.fn(),
       sleep: jest.fn().mockResolvedValue(undefined),
       close: jest.fn().mockResolvedValue(undefined),
@@ -659,7 +736,7 @@ describe('ScrapeService.collectStore', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: false,
-      fetchListing: jest.fn().mockResolvedValue([rawSnap({})]),
+      fetchListing: listingMock([rawSnap({})]),
       enrichDetail: jest.fn(),
       sleep: jest.fn().mockResolvedValue(undefined),
       close: jest.fn().mockResolvedValue(undefined),
@@ -677,7 +754,7 @@ describe('ScrapeService.collectStore', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: false,
-      fetchListing: jest.fn().mockResolvedValue([rawSnap({ storeSku: 'a' })]),
+      fetchListing: listingMock([rawSnap({ storeSku: 'a' })]),
       enrichDetail: jest.fn(),
       sleep: jest.fn().mockResolvedValue(undefined),
       close: jest.fn().mockResolvedValue(undefined),
@@ -695,7 +772,7 @@ describe('ScrapeService.collectStore', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: false,
-      fetchListing: jest.fn().mockResolvedValue([rawSnap({ storeSku: 'a' })]),
+      fetchListing: listingMock([rawSnap({ storeSku: 'a' })]),
       enrichDetail: jest.fn(),
       sleep: jest.fn().mockResolvedValue(undefined),
       close: jest.fn().mockResolvedValue(undefined),
@@ -717,7 +794,7 @@ describe('ScrapeService.collectStore in backfill mode', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: true,
-      fetchListing: jest.fn().mockResolvedValue([
+      fetchListing: listingMock([
         rawSnap({
           storeSku: 'complete',
           name: 'Віскі Aberlour 12 років 40% 0.7л',
@@ -758,7 +835,7 @@ describe('ScrapeService.collectStore in backfill mode', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: true,
-      fetchListing: jest.fn().mockResolvedValue([rawSnap({ storeSku: 'new' })]),
+      fetchListing: listingMock([rawSnap({ storeSku: 'new' })]),
       enrichDetail,
       sleep: jest.fn().mockResolvedValue(undefined),
       close: jest.fn().mockResolvedValue(undefined),
@@ -782,7 +859,7 @@ describe('ScrapeService.collectStore in backfill mode', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: false,
-      fetchListing: jest.fn().mockResolvedValue([
+      fetchListing: listingMock([
         // No specs in the name, so ABV and volume stay missing.
         rawSnap({ storeSku: 'known', name: 'Віскі Aberlour' }),
       ]),
@@ -814,7 +891,7 @@ describe('ScrapeService.collectStore in backfill mode', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: false,
-      fetchListing: jest.fn().mockResolvedValue([
+      fetchListing: listingMock([
         // ABV and volume are in the name, so only type/country stay missing.
         rawSnap({ storeSku: 'a', name: 'Nomad Outland 40% 0.7л' }),
       ]),
@@ -844,7 +921,7 @@ describe('ScrapeService.collectStore in backfill mode', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: false,
-      fetchListing: jest.fn().mockResolvedValue([
+      fetchListing: listingMock([
         rawSnap({ storeSku: 'unanswered', name: 'Віскі Aberlour' }),
         rawSnap({ storeSku: 'answered', name: 'Віскі Bowmore' }),
       ]),
@@ -878,7 +955,7 @@ describe('ScrapeService.collectStore in backfill mode', () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: false,
-      fetchListing: jest.fn().mockResolvedValue([
+      fetchListing: listingMock([
         rawSnap({ storeSku: 'unanswered', name: 'Віскі Aberlour' }),
       ]),
       enrichDetail: jest.fn(),

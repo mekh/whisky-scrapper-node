@@ -1,9 +1,12 @@
+import { ListingStop } from '~enums';
 import type {
+  ListingResult,
   ProductSnapshot,
   ScrapeProgressReporter,
   StoreScrapeSpec,
 } from '~types';
 
+import { isEndOfCatalog } from '../../http/http.util';
 import { NormalizeService } from '../../normalize/normalize.service';
 import { HttpAdapterBase } from '../scrape-adapter.base';
 
@@ -67,28 +70,43 @@ export class ZakazAdapter extends HttpAdapterBase {
    * Walks the chain's whisky category page by page until a page brings
    * nothing new.
    *
-   * @returns The chain's whisky listing.
-   * @throws {Error} When the very first page cannot be fetched.
+   * @returns The chain's whisky listing and whether the walk reached its end.
+   * @throws {ScrapeHttpError} When the very first page cannot be fetched.
    */
-  public async fetchListing(): Promise<ProductSnapshot[]> {
+  public async fetchListing(): Promise<ListingResult> {
     const storeId = await this.resolveStoreId();
     const url = `${API}/stores/${storeId}/categories/${this.category}`
       + '/products/';
     const snaps: ProductSnapshot[] = [];
     const seen = new Set<string>();
+    let statedItems: number | null = null;
+    let received = 0;
 
     for (let page = 1; page <= MAX_PAGES; page += 1) {
-      let products: ZakazProduct[];
+      let listing: ZakazListing;
 
       try {
-        products = await this.fetchPage(url, page);
+        listing = await this.fetchPage(url, page);
       } catch (error) {
         if (snaps.length === 0) {
           throw error;
         }
 
-        break;
+        return this.listing(
+          snaps,
+          isEndOfCatalog(error)
+            ? ListingStop.EXHAUSTED
+            : ListingStop.PAGE_FAILED,
+          statedItems,
+          received,
+        );
       }
+
+      statedItems ??= this.readCount(listing);
+
+      const products = listing.results ?? [];
+
+      received += products.length;
 
       const fresh = this.freshSnapshots(
         products,
@@ -106,13 +124,23 @@ export class ZakazAdapter extends HttpAdapterBase {
       });
 
       if (fresh.length === 0) {
-        break;
+        return this.listing(
+          snaps,
+          ListingStop.EXHAUSTED,
+          statedItems,
+          received,
+        );
       }
 
       await this.sleep();
     }
 
-    return snaps;
+    return this.listing(
+      snaps,
+      ListingStop.PAGE_CAP,
+      statedItems,
+      received,
+    );
   }
 
   /**
@@ -145,18 +173,30 @@ export class ZakazAdapter extends HttpAdapterBase {
    *
    * @param url - The category listing URL.
    * @param page - 1-based page number.
-   * @returns The page's raw products.
+   * @returns The page's listing block.
    */
   private async fetchPage(
     url: string,
     page: number,
-  ): Promise<ZakazProduct[]> {
+  ): Promise<ZakazListing> {
     const response = await this.http.get(url, {
       params: { page },
       headers: JSON_HEADERS,
     });
 
-    return response.json<ZakazListing>().results ?? [];
+    return response.json<ZakazListing>();
+  }
+
+  /**
+   * Reads the item count the API states for the category.
+   *
+   * @param listing - Any listing page.
+   * @returns The item count, or null when it is missing or unusable.
+   */
+  private readCount(listing: ZakazListing): number | null {
+    const count = listing.count;
+
+    return typeof count === 'number' && count > 0 ? count : null;
   }
 
   /**

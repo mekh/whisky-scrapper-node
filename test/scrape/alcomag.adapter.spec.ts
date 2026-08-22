@@ -226,7 +226,7 @@ describe('AlcomagAdapter.fetchListing', () => {
   it('reads the card out of the Bitrix blocks', async () => {
     const { adapter } = adapterOver({ 1: page(card()), 2: page() });
 
-    const [snap] = await adapter.fetchListing();
+    const { items: [snap] } = await adapter.fetchListing();
 
     expect(snap.storeSku).toBe('16568');
     expect(snap.name).toBe('Віскі Jack Daniels Single Barrel 0.7 л');
@@ -245,7 +245,7 @@ describe('AlcomagAdapter.fetchListing', () => {
       2: page(),
     });
 
-    const [snap] = await adapter.fetchListing();
+    const { items: [snap] } = await adapter.fetchListing();
 
     expect(snap.storeSku).toBe('МТ10');
   });
@@ -256,7 +256,7 @@ describe('AlcomagAdapter.fetchListing', () => {
       2: page(),
     });
 
-    const [snap] = await adapter.fetchListing();
+    const { items: [snap] } = await adapter.fetchListing();
 
     expect(snap.price).toBe(1989);
     expect(snap.oldPrice).toBe(2179);
@@ -269,7 +269,7 @@ describe('AlcomagAdapter.fetchListing', () => {
       2: page(),
     });
 
-    const [snap] = await adapter.fetchListing();
+    const { items: [snap] } = await adapter.fetchListing();
 
     expect(snap.oldPrice).toBeNull();
     expect(snap.promo).toBe(false);
@@ -283,7 +283,7 @@ describe('AlcomagAdapter.fetchListing', () => {
         2: page(),
       });
 
-      const [snap] = await adapter.fetchListing();
+      const { items: [snap] } = await adapter.fetchListing();
 
       expect(snap.inStock).toBe(false);
       expect(snap.storeSku).toBe('16568');
@@ -296,7 +296,7 @@ describe('AlcomagAdapter.fetchListing', () => {
       2: page(),
     });
 
-    const [snap] = await adapter.fetchListing();
+    const { items: [snap] } = await adapter.fetchListing();
 
     expect(snap.inStock).toBe(false);
   });
@@ -306,7 +306,9 @@ describe('AlcomagAdapter.fetchListing', () => {
       1: page(card({ price: '1' })),
     });
 
-    await expect(adapter.fetchListing()).resolves.toEqual([]);
+    const { items } = await adapter.fetchListing();
+
+    expect(items).toEqual([]);
   });
 
   it('drops a card with an unknown availability label', async () => {
@@ -314,7 +316,9 @@ describe('AlcomagAdapter.fetchListing', () => {
       1: page(card({ stock: 'Закінчується' })),
     });
 
-    await expect(adapter.fetchListing()).resolves.toEqual([]);
+    const { items } = await adapter.fetchListing();
+
+    expect(items).toEqual([]);
   });
 
   it('drops a card without an article, stock or price block', async () => {
@@ -326,7 +330,9 @@ describe('AlcomagAdapter.fetchListing', () => {
       ),
     });
 
-    await expect(adapter.fetchListing()).resolves.toEqual([]);
+    const { items } = await adapter.fetchListing();
+
+    expect(items).toEqual([]);
   });
 
   it(
@@ -338,7 +344,7 @@ describe('AlcomagAdapter.fetchListing', () => {
         3: page(card(), card({ sku: '2' })),
       });
 
-      const snaps = await adapter.fetchListing();
+      const { items: snaps } = await adapter.fetchListing();
 
       expect(snaps.map((snap) => snap.storeSku)).toEqual([
         '16568',

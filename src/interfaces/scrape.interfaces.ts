@@ -1,3 +1,5 @@
+import { ListingStop } from '../enums';
+
 import { ID } from './entity.interfaces';
 
 /**
@@ -410,10 +412,35 @@ export type ScrapeProgressEvent =
   }
   | {
     /**
-     * The out-of-stock sweep was skipped: this run's in-stock count is low
-     * enough against the stored one that the listing looks truncated.
+     * The out-of-stock sweep was skipped: the walk could not prove it reached
+     * the end of the source's listing, so what it did not see may simply be
+     * what it never fetched. Only the explicitly out-of-stock SKUs were
+     * flagged.
      */
-    kind: 'sweep-guarded';
+    kind: 'listing-incomplete';
+
+    /**
+     * Why the listing walk stopped.
+     */
+    stop: ListingStop;
+
+    /**
+     * How many items this run saw in stock.
+     */
+    inStock: number;
+
+    /**
+     * How many the store had in stock before the run.
+     */
+    baseline: number;
+  }
+  | {
+    /**
+     * The sweep ran on a complete listing that nonetheless lost a large share
+     * of the store's stock. Not an error — the listing proved itself, so the
+     * drop is real — but large enough to be worth an operator's eye.
+     */
+    kind: 'stock-drop';
 
     /**
      * How many items this run saw in stock.
@@ -430,6 +457,42 @@ export type ScrapeProgressEvent =
  * Sink for scrape progress events.
  */
 export type ScrapeProgressReporter = (event: ScrapeProgressEvent) => void;
+
+/**
+ * What one adapter's listing walk produced, and how much the run may conclude
+ * from it.
+ *
+ * The `complete` flag is the whole point of the type. Persist may only sweep —
+ * flag every stored offer the run did not see as out of stock — when the walk
+ * can prove it consumed the source's entire listing; a walk that gave up on a
+ * failed page has collected a fragment, and sweeping against a fragment would
+ * mark most of a store unavailable on a transient 503.
+ */
+export interface ListingResult {
+  /**
+   * The scraped items, out-of-stock ones included where the source lists them.
+   */
+  items: ProductSnapshot[];
+
+  /**
+   * True when the walk consumed the source's whole listing, so anything stored
+   * but absent from {@link items} is genuinely no longer offered. Derived from
+   * {@link stop} and the item count — never asserted by an adapter directly.
+   */
+  complete: boolean;
+
+  /**
+   * Why the walk stopped. Named in the run's log file, and in the
+   * `sync_log.error` text when the listing came back incomplete.
+   */
+  stop: ListingStop;
+
+  /**
+   * How many items the source said the category holds, when it states a count
+   * at all; null for the sources that only paginate until they run out.
+   */
+  statedItems: number | null;
+}
 
 /**
  * One store's scrape session.
@@ -449,9 +512,10 @@ export interface ScrapeAdapter {
   /**
    * Fetches the store's whole whisky listing as raw snapshots.
    *
-   * @returns The scraped items.
+   * @returns The scraped items, and whether the walk reached the end of the
+   * source's listing.
    */
-  fetchListing(): Promise<ProductSnapshot[]>;
+  fetchListing(): Promise<ListingResult>;
 
   /**
    * Fills a snapshot's empty fields from its product detail page.
@@ -563,6 +627,24 @@ export interface SiteResult {
    * deleted).
    */
   removed: number;
+
+  /**
+   * True when the adapter consumed the source's whole listing. False means the
+   * run saw a fragment, so persist skipped the sweep and the orchestrator
+   * records the run as failed.
+   */
+  listingComplete: boolean;
+
+  /**
+   * Why the listing walk stopped, for the failure text of an incomplete run.
+   */
+  listingStop: ListingStop;
+
+  /**
+   * How many items the source said the category holds, or null when it states
+   * no count.
+   */
+  statedItems: number | null;
 
   /**
    * The normalized in-stock snapshots. Populated in a dry run for comparison;

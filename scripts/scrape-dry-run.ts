@@ -80,7 +80,9 @@ async function main(): Promise<number> {
     }
 
     process.stdout.write(
-      `${slug}: found=${result.found} inStock=${result.stored}\n`,
+      `${slug}: found=${result.found} inStock=${result.stored} `
+        + `listing=${result.listingComplete ? 'complete' : 'INCOMPLETE'} `
+        + `stop=${result.listingStop} stated=${result.statedItems ?? '-'}\n`,
     );
 
     (result.items ?? []).slice(0, 3).forEach((item) => {

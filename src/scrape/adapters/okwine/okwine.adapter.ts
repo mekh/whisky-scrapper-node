@@ -1,9 +1,12 @@
+import { ListingStop } from '~enums';
 import type {
+  ListingResult,
   ProductSnapshot,
   ScrapeProgressReporter,
   StoreScrapeSpec,
 } from '~types';
 
+import { isEndOfCatalog } from '../../http/http.util';
 import { NormalizeService } from '../../normalize/normalize.service';
 import { HttpAdapterBase } from '../scrape-adapter.base';
 
@@ -64,12 +67,14 @@ export class OkwineAdapter extends HttpAdapterBase {
    * Walks the whisky category page by page, up to the page count the API
    * reports.
    *
-   * @returns The store's whisky listing.
-   * @throws {Error} When the very first page cannot be fetched.
+   * @returns The store's whisky listing and whether it is the whole listing.
+   * @throws {ScrapeHttpError} When the very first page cannot be fetched.
    */
-  public async fetchListing(): Promise<ProductSnapshot[]> {
+  public async fetchListing(): Promise<ListingResult> {
     const snaps: ProductSnapshot[] = [];
     const seen = new Set<string>();
+    let statedItems: number | null = null;
+    let received = 0;
     let maxPage: number | null = null;
     let page = 1;
 
@@ -83,13 +88,25 @@ export class OkwineAdapter extends HttpAdapterBase {
           throw error;
         }
 
-        break;
+        return this.listing(
+          snaps,
+          isEndOfCatalog(error)
+            ? ListingStop.EXHAUSTED
+            : ListingStop.PAGE_FAILED,
+          statedItems,
+          received,
+        );
       }
 
+      statedItems ??= this.readCount(block);
       maxPage ??= block.maxPage ?? null;
 
+      const products = block.data ?? [];
+
+      received += products.length;
+
       const fresh = this.freshSnapshots(
-        block.data ?? [],
+        products,
         seen,
         (product) => this.toSnapshot(product),
       );
@@ -104,14 +121,43 @@ export class OkwineAdapter extends HttpAdapterBase {
       });
 
       if (fresh.length === 0) {
-        break;
+        return this.listing(
+          snaps,
+          ListingStop.EXHAUSTED,
+          statedItems,
+          received,
+        );
       }
 
       page += 1;
       await this.sleep();
     }
 
-    return snaps;
+    /**
+     * The loop bound is the lower of the declared page count and the backstop,
+     * so falling out of it means either that every declared page was consumed
+     * or that the backstop cut the walk short.
+     */
+    const hitPageCap = maxPage === null || page <= maxPage;
+
+    return this.listing(
+      snaps,
+      hitPageCap ? ListingStop.PAGE_CAP : ListingStop.EXHAUSTED,
+      statedItems,
+      received,
+    );
+  }
+
+  /**
+   * Reads the item count the API states for the filtered category.
+   *
+   * @param block - Any listing page's product block.
+   * @returns The item count, or null when it is missing or unusable.
+   */
+  private readCount(block: OkwineProductsData): number | null {
+    const count = block.count;
+
+    return typeof count === 'number' && count > 0 ? count : null;
   }
 
   /**

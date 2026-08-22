@@ -1,5 +1,9 @@
 import 'reflect-metadata';
 
+import { ListingStop } from '~enums';
+
+import { ScrapeHttpError } from '../../src/scrape/http/scrape-http.error';
+
 import { FozzyAdapter } from '../../src/scrape/adapters/fozzy';
 import { NormalizeService } from '../../src/scrape/normalize/normalize.service';
 import { FakeHttpClient } from './fake-http-client';
@@ -197,8 +201,13 @@ function adapterOver(
 
     const html = pages[Number(options?.params?.page ?? 1)];
 
+    /**
+     * What the real client throws for a page past the end of the catalogue:
+     * a typed error carrying the status, which is the only thing that tells
+     * this walk's terminator apart from the store having a bad minute.
+     */
     if (html === undefined) {
-      throw new Error('HTTP 404');
+      throw new ScrapeHttpError(url, 404, 'HTTP 404');
     }
 
     return { text: html };
@@ -214,7 +223,7 @@ describe('FozzyAdapter.fetchListing', () => {
   it('reads a promotion card out of its data attributes', async () => {
     const { adapter } = adapterOver({ 1: page(card()), 2: page() });
 
-    const [snap] = await adapter.fetchListing();
+    const { items: [snap] } = await adapter.fetchListing();
 
     expect(snap.storeSku).toBe('969304');
     expect(snap.name).toBe('Віскі High Commissioner Blended Scotch');
@@ -238,7 +247,7 @@ describe('FozzyAdapter.fetchListing', () => {
         2: page(),
       });
 
-      const [snap] = await adapter.fetchListing();
+      const { items: [snap] } = await adapter.fetchListing();
 
       expect(snap.price).toBe(799);
       expect(snap.oldPrice).toBeNull();
@@ -252,7 +261,7 @@ describe('FozzyAdapter.fetchListing', () => {
       2: page(),
     });
 
-    const [snap] = await adapter.fetchListing();
+    const { items: [snap] } = await adapter.fetchListing();
 
     expect(snap.price).toBe(499);
     expect(snap.oldPrice).toBeNull();
@@ -267,7 +276,7 @@ describe('FozzyAdapter.fetchListing', () => {
         2: page(),
       });
 
-      const [snap] = await adapter.fetchListing();
+      const { items: [snap] } = await adapter.fetchListing();
 
       expect(snap.price).toBe(499);
       expect(snap.oldPrice).toBeNull();
@@ -281,7 +290,7 @@ describe('FozzyAdapter.fetchListing', () => {
       2: page(),
     });
 
-    const [snap] = await adapter.fetchListing();
+    const { items: [snap] } = await adapter.fetchListing();
 
     expect(snap.volumeMl).toBe(700);
   });
@@ -294,7 +303,9 @@ describe('FozzyAdapter.fetchListing', () => {
       ),
     });
 
-    await expect(adapter.fetchListing()).resolves.toEqual([]);
+    const { items } = await adapter.fetchListing();
+
+    expect(items).toEqual([]);
   });
 
   it(
@@ -306,7 +317,7 @@ describe('FozzyAdapter.fetchListing', () => {
         3: page(),
       });
 
-      const snaps = await adapter.fetchListing();
+      const { items: snaps } = await adapter.fetchListing();
 
       expect(snaps.map((snap) => snap.storeSku)).toEqual(['969304', '2', '3']);
       expect(http.calls.map((call) => call.params.page)).toEqual([
@@ -323,9 +334,38 @@ describe('FozzyAdapter.fetchListing', () => {
       2: page(card({ id: '3' })),
     });
 
-    const snaps = await adapter.fetchListing();
+    const listing = await adapter.fetchListing();
 
-    expect(snaps.map((snap) => snap.storeSku)).toEqual(['969304', '2', '3']);
+    expect(listing.items.map((snap) => snap.storeSku))
+      .toEqual(['969304', '2', '3']);
+    /**
+     * The store publishes no total and no last-page marker, so the 404 is the
+     * whole of its end-of-catalogue signal — a walk that ends on one has seen
+     * everything and must be allowed to sweep.
+     */
+    expect(listing.complete).toBe(true);
+    expect(listing.stop).toBe(ListingStop.EXHAUSTED);
+  });
+
+  /**
+   * The same shape of failure, but a status that means the store is
+   * struggling rather than out of pages.
+   */
+  it('reports an incomplete listing when a later page 503s', async () => {
+    const http = new FakeHttpClient((url, options) => {
+      if (Number(options?.params?.page ?? 1) === 1) {
+        return { text: page(card()) };
+      }
+
+      throw new ScrapeHttpError(url, 503, 'HTTP 503');
+    });
+    const adapter = new FozzyAdapter(SPEC, 1, http, new NormalizeService());
+
+    const listing = await adapter.fetchListing();
+
+    expect(listing.items).toHaveLength(1);
+    expect(listing.complete).toBe(false);
+    expect(listing.stop).toBe(ListingStop.PAGE_FAILED);
   });
 });
 

@@ -1,5 +1,7 @@
 import 'reflect-metadata';
 
+import { ListingStop } from '~enums';
+
 import { MaudauAdapter } from '../../src/scrape/adapters/maudau';
 import { FakeHttpClient } from './fake-http-client';
 
@@ -88,7 +90,7 @@ async function snapshotOf(
   const { adapter } = makeAdapter({
     1: { body: [raw], headers: { 'x-last-page': 'true' } },
   });
-  const snaps = await adapter.fetchListing();
+  const { items: snaps } = await adapter.fetchListing();
 
   return snaps[0];
 }
@@ -134,7 +136,7 @@ describe('MaudauAdapter', () => {
       },
     });
 
-    const snaps = await adapter.fetchListing();
+    const { items: snaps } = await adapter.fetchListing();
 
     expect(snaps.map((snap) => snap.storeSku).sort()).toEqual(['1', '3', '4']);
     expect(http.pages()).toEqual([1, 2]);
@@ -164,23 +166,53 @@ describe('MaudauAdapter', () => {
     });
     const adapter = new MaudauAdapter(SPEC, 1, http);
 
-    const snaps = await adapter.fetchListing();
+    const listing = await adapter.fetchListing();
 
-    expect(snaps.map((snap) => snap.storeSku).sort()).toEqual(['1', '2']);
+    expect(listing.items.map((snap) => snap.storeSku).sort())
+      .toEqual(['1', '2']);
     // One productive page plus the two empty ones that trip the early stop.
     expect(http.pages()).toEqual([1, 2, 3]);
+    /**
+     * The store's own `x-total` counts the unavailable tail this walk never
+     * reaches, so completeness cannot be a count here. Pages that carried
+     * products of which none were available *are* the tail — the end of the
+     * available listing, and the evidence the sweep needs.
+     */
+    expect(listing.complete).toBe(true);
+    expect(listing.stop).toBe(ListingStop.EXHAUSTED);
   });
 
-  it('stops on an empty page', async () => {
+  /**
+   * A page carrying nothing at all is a different animal from a page carrying
+   * only sold-out items: the API declined to answer, mid-catalog, and the walk
+   * cannot tell that from the catalogue ending.
+   */
+  it('treats a page with no products at all as inconclusive', async () => {
     const { adapter, http } = makeAdapter({
       1: { body: [product(1, 'a')], headers: { 'x-total-pages': '5' } },
       2: { body: [], headers: { 'x-total-pages': '5' } },
     });
 
-    const snaps = await adapter.fetchListing();
+    const listing = await adapter.fetchListing();
 
-    expect(snaps).toHaveLength(1);
+    expect(listing.items).toHaveLength(1);
     expect(http.pages()).toEqual([1, 2]);
+    expect(listing.complete).toBe(false);
+    expect(listing.stop).toBe(ListingStop.AMBIGUOUS);
+  });
+
+  it('is complete when the API flags the last page', async () => {
+    const { adapter } = makeAdapter({
+      1: {
+        body: [product(1, 'a')],
+        headers: { 'x-total-pages': '5', 'x-last-page': 'true' },
+      },
+    });
+
+    const listing = await adapter.fetchListing();
+
+    expect(listing.complete).toBe(true);
+    expect(listing.stop).toBe(ListingStop.EXHAUSTED);
   });
 
   it('fails when the API is unreachable', async () => {

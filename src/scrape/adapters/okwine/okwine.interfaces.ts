@@ -85,6 +85,13 @@ export interface OkwineProduct {
  */
 export interface OkwineProductsData {
   /**
+   * How many products the filtered category holds in total, across every
+   * page. Used to tell a walk that consumed the whole listing from one that
+   * stopped early.
+   */
+  count?: number | null;
+
+  /**
    * Last available page number.
    */
   maxPage?: number | null;

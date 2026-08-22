@@ -9,7 +9,8 @@ import type { CorePriceSnapshotService } from '~core/price-snapshot';
 import type { CoreProductService } from '~core/product';
 import type { CoreStoreProductService } from '~core/store-product';
 import type { CoreTypeService } from '~core/type';
-import type { ProductSnapshot } from '~types';
+import { ListingStop } from '~enums';
+import type { ListingResult, ProductSnapshot } from '~types';
 
 /**
  * The persist path is exercised without a database: the transaction wrapper is
@@ -24,6 +25,28 @@ jest.mock('typeorm-transactional', () => ({
 
 const STORE_ID = 'store-1';
 const DAY = '2026-08-08';
+
+/**
+ * A walk that reached the end of the store's listing, which is what earns a
+ * run the sweep. `items` is unused by persist — it takes the snapshots
+ * separately — so it stays empty here.
+ */
+const COMPLETE: ListingResult = {
+  items: [],
+  complete: true,
+  stop: ListingStop.COUNTED,
+  statedItems: null,
+};
+
+/**
+ * A walk that gave up on a failed page, holding a fragment of the listing.
+ */
+const INCOMPLETE: ListingResult = {
+  items: [],
+  complete: false,
+  stop: ListingStop.PAGE_FAILED,
+  statedItems: null,
+};
 
 function snap(
   sku: string,
@@ -129,7 +152,7 @@ function makeService(
 }
 
 describe('ScrapePersistService — the out-of-stock sweep', () => {
-  it('sweeps everything not seen in stock on a healthy run', async () => {
+  it('sweeps everything not seen in stock on a complete listing', async () => {
     const { service, offers } = makeService(4);
 
     const counts = await service.persist(
@@ -137,6 +160,7 @@ describe('ScrapePersistService — the out-of-stock sweep', () => {
       [snap('a'), snap('b')],
       ['gone'],
       DAY,
+      COMPLETE,
     );
 
     expect(offers.markOutOfStockExcept).toHaveBeenCalledWith(
@@ -147,14 +171,79 @@ describe('ScrapePersistService — the out-of-stock sweep', () => {
     expect(counts.removed).toBe(3);
   });
 
-  it('skips the sweep when the listing looks truncated', async () => {
-    const { service, offers } = makeService(10);
+  /**
+   * The case that used to freeze a store. Silpo's whisky category really did
+   * fall from 1070 offers to 249 in a day; the old count guard read that as a
+   * truncated listing and skipped the sweep, and because its baseline was the
+   * live in-stock count that skipping the sweep is what kept from falling,
+   * every later run made the same comparison and skipped again.
+   */
+  it('sweeps a complete listing however far the stock fell', async () => {
+    const { service, offers } = makeService(100);
 
     const counts = await service.persist(
       STORE_ID,
       [snap('a'), snap('b')],
       ['gone'],
       DAY,
+      COMPLETE,
+    );
+
+    expect(offers.markOutOfStockExcept).toHaveBeenCalledWith(
+      STORE_ID,
+      ['a', 'b'],
+    );
+    expect(offers.markOutOfStockBySkus).not.toHaveBeenCalled();
+    expect(counts.removed).toBe(3);
+  });
+
+  it('still reports a sharp drop, so an operator can look', async () => {
+    const { service } = makeService(100);
+    const reporter = jest.fn();
+
+    await service.persist(
+      STORE_ID,
+      [snap('a'), snap('b')],
+      ['gone'],
+      DAY,
+      COMPLETE,
+      reporter,
+    );
+
+    expect(reporter).toHaveBeenCalledWith({
+      kind: 'stock-drop',
+      inStock: 2,
+      baseline: 100,
+    });
+  });
+
+  it('leaves a modest drop on a complete listing unremarked', async () => {
+    const { service } = makeService(3);
+    const reporter = jest.fn();
+
+    await service.persist(
+      STORE_ID,
+      [snap('a'), snap('b')],
+      ['gone'],
+      DAY,
+      COMPLETE,
+      reporter,
+    );
+
+    expect(reporter).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'stock-drop' }),
+    );
+  });
+
+  it('skips the sweep when the walk never reached the end', async () => {
+    const { service, offers } = makeService(4);
+
+    const counts = await service.persist(
+      STORE_ID,
+      [snap('a'), snap('b')],
+      ['gone'],
+      DAY,
+      INCOMPLETE,
     );
 
     expect(offers.markOutOfStockExcept).not.toHaveBeenCalled();
@@ -163,6 +252,25 @@ describe('ScrapePersistService — the out-of-stock sweep', () => {
       ['gone'],
     );
     expect(counts.removed).toBe(1);
+  });
+
+  /**
+   * The other direction the count guard got wrong: a listing that broke after
+   * collecting most of itself cleared the ratio, and the rest of the store was
+   * flagged unavailable on what was really a transient failure.
+   */
+  it('skips the sweep on a fragment that would clear any ratio', async () => {
+    const { service, offers } = makeService(2);
+
+    await service.persist(
+      STORE_ID,
+      [snap('a'), snap('b')],
+      ['gone'],
+      DAY,
+      INCOMPLETE,
+    );
+
+    expect(offers.markOutOfStockExcept).not.toHaveBeenCalled();
   });
 
   it('reports a skipped sweep, which the run log has to show', async () => {
@@ -174,20 +282,22 @@ describe('ScrapePersistService — the out-of-stock sweep', () => {
       [snap('a'), snap('b')],
       ['gone'],
       DAY,
+      INCOMPLETE,
       reporter,
     );
 
     expect(reporter).toHaveBeenCalledWith({
-      kind: 'sweep-guarded',
+      kind: 'listing-incomplete',
+      stop: ListingStop.PAGE_FAILED,
       inStock: 2,
       baseline: 10,
     });
   });
 
-  it('sweeps an empty store without tripping the guard', async () => {
+  it('sweeps a store that emptied out entirely', async () => {
     const { service, offers } = makeService(0);
 
-    await service.persist(STORE_ID, [], [], DAY);
+    await service.persist(STORE_ID, [], [], DAY, COMPLETE);
 
     expect(offers.markOutOfStockExcept).toHaveBeenCalledWith(STORE_ID, []);
     expect(offers.markOutOfStockBySkus).not.toHaveBeenCalled();
@@ -204,7 +314,7 @@ describe('ScrapePersistService — resolving a bottling', () => {
     item.ageYears = 12;
     item.volumeMl = 700;
 
-    await service.persist(STORE_ID, [item], [], DAY);
+    await service.persist(STORE_ID, [item], [], DAY, COMPLETE);
 
     expect(products.findOrCreateByMatchKeys).toHaveBeenCalledWith([
       expect.objectContaining({
@@ -226,7 +336,7 @@ describe('ScrapePersistService — resolving a bottling', () => {
   it('leaves a stored SKU pointing where it already links', async () => {
     const { service, products, offers } = makeService(1, new Map(), ['a']);
 
-    await service.persist(STORE_ID, [snap('a')], [], DAY);
+    await service.persist(STORE_ID, [snap('a')], [], DAY, COMPLETE);
 
     expect(products.findOrCreateByMatchKeys).toHaveBeenCalledWith([]);
     expect(offers.upsertFromScrape).toHaveBeenCalledWith(
@@ -242,6 +352,7 @@ describe('ScrapePersistService — resolving a bottling', () => {
       [snap('a', { matchKey: 'settled|v700|a0' })],
       [],
       DAY,
+      COMPLETE,
     );
 
     expect(products.findOrCreateByMatchKeys).toHaveBeenCalledWith([
@@ -261,6 +372,7 @@ describe('ScrapePersistService — resolving a bottling', () => {
       ],
       [],
       DAY,
+      COMPLETE,
     );
 
     expect(products.findOrCreateByMatchKeys).toHaveBeenCalledWith([
@@ -277,6 +389,7 @@ describe('ScrapePersistService — resolving a bottling', () => {
       [snap('a', { matchKey: null, name: 'Віскі' })],
       [],
       DAY,
+      COMPLETE,
     );
 
     expect(products.createUnmatched).toHaveBeenCalledTimes(1);
@@ -297,6 +410,7 @@ describe('ScrapePersistService — resolving a bottling', () => {
       ],
       [],
       DAY,
+      COMPLETE,
       reporter,
     );
 
@@ -325,6 +439,7 @@ describe('ScrapePersistService — what may be written to a bottling', () => {
       ],
       [],
       DAY,
+      COMPLETE,
     );
 
     expect(products.fillMissing).toHaveBeenCalledWith([{
@@ -347,6 +462,7 @@ describe('ScrapePersistService — what may be written to a bottling', () => {
       [snap('a', { flavorTags: ['sherry', 'smoky'] })],
       [],
       DAY,
+      COMPLETE,
     );
 
     expect(products.addScrapeFlavors).toHaveBeenCalledWith([
@@ -373,6 +489,7 @@ describe('ScrapePersistService — what may be written to a bottling', () => {
       [snap('a', answered), snap('b', answered)],
       [],
       DAY,
+      COMPLETE,
     );
 
     expect(products.setLlmFlavors).toHaveBeenCalledTimes(1);
@@ -392,6 +509,7 @@ describe('ScrapePersistService — what may be written to a bottling', () => {
       })],
       [],
       DAY,
+      COMPLETE,
     );
 
     expect(products.setLlmFlavors).toHaveBeenCalledWith('product-1', []);
@@ -400,7 +518,7 @@ describe('ScrapePersistService — what may be written to a bottling', () => {
   it('leaves the classification alone when unanswered', async () => {
     const { service, products } = makeService(1);
 
-    await service.persist(STORE_ID, [snap('a')], [], DAY);
+    await service.persist(STORE_ID, [snap('a')], [], DAY, COMPLETE);
 
     expect(products.setLlmFlavors).not.toHaveBeenCalled();
   });
@@ -408,7 +526,13 @@ describe('ScrapePersistService — what may be written to a bottling', () => {
   it("writes today's price against the offer, not the bottling", async () => {
     const { service, snapshots } = makeService(1);
 
-    await service.persist(STORE_ID, [snap('a', { price: 999 })], [], DAY);
+    await service.persist(
+      STORE_ID,
+      [snap('a', { price: 999 })],
+      [],
+      DAY,
+      COMPLETE,
+    );
 
     expect(snapshots.upsertForDate).toHaveBeenCalledWith(
       'offer-a',

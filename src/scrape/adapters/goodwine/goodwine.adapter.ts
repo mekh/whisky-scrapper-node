@@ -32,14 +32,22 @@ const CATEGORY = 'viski';
 const COUNTRY_RUBRIC = 'Країни';
 
 /**
- * KNOWN DEFECT, kept at the legacy scraper's value on purpose: the catalog is
- * ~32 pages, so this is not a backstop but a truncation — the walk ends on the
- * limit instead of at the end of the catalog and ~48 SKUs are never seen.
- * Raising it here alone would make this engine disagree with the Python one and
- * fail the parity gate, so the fix waits until the migration is complete. See
- * `FOLLOWUPS.md`, item 1.
+ * Backstop against a runaway walk. The catalogue is **61 pages of 24** (the
+ * listing's own toolbar states 1444 items; page 61 carries 4 and page 62 is
+ * empty), measured 2026-08-22.
+ *
+ * The legacy scraper's cap of 30 was therefore not a backstop but a truncation
+ * that hid *half the store*: every run stopped at 720 items and the other ~724
+ * were never seen, so they were never inserted either. `FOLLOWUPS.md` item 1
+ * recorded this as "~48 SKUs" against an assumed ~32-page catalogue; the
+ * assumption was wrong by a factor of two.
+ *
+ * Raising it is not optional any more. The sweep now gates on where a walk
+ * stopped, and a walk that ends on its cap cannot claim to have seen the whole
+ * listing — at 30 this store would have been refused the sweep on every run,
+ * for good. A cap has to be unreachable in normal operation to mean anything.
  */
-const MAX_PAGES = 30;
+const MAX_PAGES = 80;
 
 /**
  * Specification-label prefixes mapped to the snapshot field they fill, in the

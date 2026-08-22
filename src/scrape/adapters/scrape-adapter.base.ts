@@ -1,5 +1,7 @@
 import { DEFAULT_CURRENCY } from '~constants';
+import { ListingStop } from '~enums';
 import type {
+  ListingResult,
   ProductSnapshot,
   ScrapeAdapter,
   ScrapeItemInput,
@@ -42,9 +44,11 @@ export abstract class ScrapeAdapterBase implements ScrapeAdapter {
   /**
    * Fetches the store's whole whisky listing.
    *
-   * @returns The scraped items.
+   * @returns The scraped items and how far through the source's listing the
+   * walk actually got. Build the result with {@link listing} rather than by
+   * hand — the completeness verdict is not the adapter's to assert.
    */
-  public abstract fetchListing(): Promise<ProductSnapshot[]>;
+  public abstract fetchListing(): Promise<ListingResult>;
 
   /**
    * Fills a snapshot's empty fields from its detail page. Default no-op for
@@ -86,6 +90,62 @@ export abstract class ScrapeAdapterBase implements ScrapeAdapter {
    */
   protected emit(event: ScrapeProgressEvent): void {
     this.reporter?.(event);
+  }
+
+  /**
+   * Closes a listing walk, deciding from its stop reason whether the run may
+   * conclude that everything it did not see is gone.
+   *
+   * A walk only ever reports *why* it stopped; the verdict is derived here so
+   * one rule covers every store. Running out of pages is completeness on its
+   * own for a source that states no count, and is checked against the count
+   * for a source that states one.
+   *
+   * The count is checked against the items the source *handed over*, not the
+   * snapshots the adapter kept. Those differ routinely and harmlessly — a
+   * listing repeats a SKU across pages, or carries one with no price that
+   * `toSnapshot` drops — and reconciling on the kept ones would read every such
+   * store as permanently truncated, which is the exact failure this replaces.
+   *
+   * @param items - The snapshots the walk collected.
+   * @param stop - Why the walk stopped, as the walk itself knows it.
+   * @param statedItems - How many items the source said the category holds, or
+   *   null when it states no count.
+   * @param receivedItems - How many raw items the source handed over, before
+   *   mapping and deduplication. Defaults to the snapshot count, which is what
+   *   the sources that state no count want anyway.
+   * @returns The listing result, with `stop` refined to `counted` or `short`
+   *   where a stated count settles it.
+   */
+  protected listing(
+    items: ProductSnapshot[],
+    stop: ListingStop,
+    statedItems: number | null = null,
+    receivedItems: number = items.length,
+  ): ListingResult {
+    if (stop !== ListingStop.EXHAUSTED) {
+      return { items, complete: false, stop, statedItems };
+    }
+
+    if (statedItems === null) {
+      return { items, complete: true, stop, statedItems };
+    }
+
+    if (receivedItems < statedItems) {
+      return {
+        items,
+        complete: false,
+        stop: ListingStop.SHORT,
+        statedItems,
+      };
+    }
+
+    return {
+      items,
+      complete: true,
+      stop: ListingStop.COUNTED,
+      statedItems,
+    };
   }
 
   /**

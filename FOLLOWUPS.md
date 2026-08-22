@@ -12,25 +12,43 @@ preference.
 
 ## 1. `goodwine`'s page cap truncates the catalog — wrong by design
 
-**Status**: open. **Blocked by**: parity with the Python engine.
+**Status**: cap FIXED (2026-08-22, 30 -> 80), together with the
+listing-completeness sweep gate. The parity blocker was already stale — the
+cutover finished 2026-08-08. **A follow-on capacity question is now open, see
+item 6.**
 
-`GoodwineAdapter`'s `MAX_PAGES = 30` (`src/scrape/adapters/goodwine/`) is not a
-runaway backstop — it is **below the real catalog length** (~32 pages of 24
-items), so the walk stops on the limit rather than at the end of the catalog and
-roughly 48 SKUs are never seen. The legacy Python adapter has the same 30-page
-cap, so raising it in TypeScript alone would make the two engines disagree and
-fail the parity gate; that is the only reason the wrong value is still there.
+`GoodwineAdapter`'s `MAX_PAGES = 30` (`src/scrape/adapters/goodwine/`) was not a
+runaway backstop — it was **below the real catalog length**, so the walk stopped
+on the limit rather than at the end of the catalog.
 
-**Why this is the wrong approach in general**: a page limit must never be the
+**This item badly understated the damage.** It assumed a ~32-page catalogue and
+"roughly 48 SKUs" never seen. Measured against the live site on 2026-08-22, the
+category is **61 pages of 24 — 1444 items**, stated by the listing's own
+toolbar, with page 61 carrying 4 and page 62 empty; sampled pages 1, 31 and 60
+share no product id, so the depth is real and not a wrap-around. The cap was
+therefore hiding **half the store**: every run collected 720 items and the other
+~724 were never seen — and, since persist only ever inserts what a run saw,
+never inserted either. Both engines had the same cap, so `goodwine` has never
+been fully scraped.
+
+**Why this was the wrong approach in general**: a page limit must never be the
 end-of-catalog signal. The end-of-catalog signal is "this page brought no new
-SKU", which `PagedHtmlAdapterBase` already implements; `MAX_PAGES` exists purely
-to stop an infinite walk if a store starts serving the same page forever, and
-must therefore be set far above any plausible catalog size.
+SKU", which `PagedHtmlAdapterBase` implements; `MAX_PAGES` exists purely to stop
+an infinite walk if a store starts serving the same page forever, and must
+therefore be set far above any plausible catalog size.
 
-**Fix**: raise `goodwine`'s cap to a real backstop (well above the catalog, e.g.
-80) and audit the cap of every other adapter the same way — each must be a
-backstop, not a limit that can be reached in normal operation. Then confirm the
-extra pages really do parse (the run gets ~48 SKUs longer).
+Making the sweep depend on where a walk stopped turned this from a silent data
+gap into a blocking one: a walk that ends on its cap cannot claim to have seen
+the whole listing, so `goodwine` would have been refused the sweep on every run
+and every run recorded as failed.
+
+**What was done**: `goodwine`'s cap raised 30 -> 80, and every other adapter's
+cap audited against a live dry run. Only one other was reachable — `rozetka`
+sat at 45 against a ~39-page catalogue (six pages of headroom), raised to 80.
+The rest have multiples of headroom and all report `stop=exhausted` or
+`stop=counted`: `bayadera` 124 items, `fozzy` 299, `winewine` 320, `wine-point`
+340, `alcomag` 603, `novus` 345, `metro` 146, `okwine` 560, `maudau` 497,
+`silpo` 249.
 
 ## 2. The browser tier's Docker build was never verified
 
@@ -100,7 +118,7 @@ The report-era queries (`latestDate`, `priceExtremes`, `currentPriceSince`,
 while the dashboard queries (2026-08-22) key on `capturedOn` — the column
 that carries the one-row-per-offer-per-day unique index and the semantic
 guarantee. Verified on a production dump: the two agree on 100% of 422,565
-rows today, so there is no live bug — but nothing *enforces* that agreement
+rows today, so there is no live bug — but nothing _enforces_ that agreement
 (a backdated upsert or a midnight-straddling run could split them), and the
 legacy form cannot use the `price_snapshot_captured_idx` index.
 
@@ -120,3 +138,35 @@ win once dashboard use grows, but `@CacheControl` compiles to a static Nest
 
 **Fix**: an interceptor that inspects the resolved `to` and lengthens
 `max-age` for closed ranges; keep 600s for anything touching today.
+
+## 6. `goodwine`'s full catalog does not fit its sync budget
+
+**Status**: open, introduced by fixing item 1. **Needs a decision.**
+
+With the cap raised, `goodwine`'s listing walk is 61 pages at its tier-2
+politeness delay of 8-15 s, i.e. **roughly 8-15 minutes for the listing alone**
+against a `SYNC_STORE_TIMEOUT_MS` of 15 minutes. An average run fits (~11.7 min)
+and the soft LLM/detail deadline (`SYNC_LLM_DEADLINE_MARGIN_MS`, 2 min) stops
+detail enrichment in time for the run to persist what it scraped — but a run
+whose jitter lands high does not fit at all, and a timed-out run persists
+nothing.
+
+There is also a one-off cost: the first successful run discovers ~724 SKUs the
+store has never had on file. `goodwine` is `supportsDetail`, so each of those
+wants a detail page at the same 8-15 s delay (~2.4 h of fetching). The soft
+deadline will cut that short and the fields stay null until a backfill — the
+same pattern `fozzy`, `alcomag` and `silpo` needed.
+
+**Options** (pick one; not decided here because each trades something
+different):
+
+1. Seed once with `pnpm backfill --store goodwine` (no lock, hours, fills the
+   fields properly), then let normal syncs keep it current.
+2. Lower `goodwine`'s `store_config` delay from 8-15 s to something closer to
+   the tier-1 stores' 4-8 s, which halves the listing walk. Needs a judgement
+   call about how hard the store may be hit.
+3. Raise `SYNC_STORE_TIMEOUT_MS` — but it is global, so this loosens the budget
+   for every store.
+
+Until one of these is done, expect `goodwine` runs to be slow and occasionally
+to fail on the store timeout.

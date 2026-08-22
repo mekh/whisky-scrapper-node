@@ -1,4 +1,5 @@
-import type { ProductSnapshot } from '~types';
+import { ListingStop } from '~enums';
+import type { ListingResult, ProductSnapshot } from '~types';
 
 import { HttpAdapterBase } from '../scrape-adapter.base';
 
@@ -49,12 +50,21 @@ export class MaudauAdapter extends HttpAdapterBase {
    * Walks the whisky category through the catalog API, keeping the available
    * items only.
    *
-   * @returns The store's live whisky listing.
-   * @throws {Error} When the API cannot be reached. The Python adapter falls
-   * back to parsing the first listing page out of the Next.js RSC payload;
-   * that fallback is deliberately not ported yet.
+   * The store's `x-total` (~2500) counts the unavailable tail this walk
+   * deliberately never reaches, so it is **not** the yardstick for
+   * completeness here — measuring against it would read every run as
+   * truncated. What proves the walk is done is reaching the end of the
+   * available prefix, and the two ways that can look are worth telling apart:
+   * a page that carried products of which none were available is the tail
+   * itself, while a page that carried nothing at all is the API declining to
+   * answer, mid-catalog, for reasons of its own.
+   *
+   * @returns The store's live whisky listing and whether it is all of it.
+   * @throws {ScrapeHttpError} When the API cannot be reached. The Python
+   * adapter falls back to parsing the first listing page out of the Next.js
+   * RSC payload; that fallback is deliberately not ported yet.
    */
-  public async fetchListing(): Promise<ProductSnapshot[]> {
+  public async fetchListing(): Promise<ListingResult> {
     const snaps: ProductSnapshot[] = [];
     const seen = new Set<string>();
     let totalPages: number | null = null;
@@ -78,7 +88,7 @@ export class MaudauAdapter extends HttpAdapterBase {
       const products = response.json<MaudauProduct[]>();
 
       if (!Array.isArray(products) || products.length === 0) {
-        break;
+        return this.listing(snaps, ListingStop.AMBIGUOUS);
       }
 
       const fresh = this.freshSnapshots(
@@ -97,20 +107,30 @@ export class MaudauAdapter extends HttpAdapterBase {
       });
 
       if (response.headers[LAST_PAGE_HEADER]?.toLowerCase() === 'true') {
-        break;
+        return this.listing(snaps, ListingStop.EXHAUSTED);
       }
 
       emptyStreak = fresh.length === 0 ? emptyStreak + 1 : 0;
 
       if (emptyStreak >= EARLY_STOP_EMPTY_PAGES) {
-        break;
+        return this.listing(snaps, ListingStop.EXHAUSTED);
       }
 
       page += 1;
       await this.sleep();
     }
 
-    return snaps;
+    /**
+     * The loop bound is the lower of the declared page count and the backstop,
+     * so falling out of it means either that every declared page was consumed
+     * or that the backstop cut the walk short.
+     */
+    const hitPageCap = totalPages === null || page <= totalPages;
+
+    return this.listing(
+      snaps,
+      hitPageCap ? ListingStop.PAGE_CAP : ListingStop.EXHAUSTED,
+    );
   }
 
   /**

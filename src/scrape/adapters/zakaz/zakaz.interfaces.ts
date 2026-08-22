@@ -111,6 +111,13 @@ export interface ZakazProduct {
  */
 export interface ZakazListing {
   /**
+   * How many products the category holds in total, across every page. Used to
+   * tell a walk that reached the end of the listing from one that stopped
+   * early — without it the walk can only guess from an empty page.
+   */
+  count?: number;
+
+  /**
    * Products on the requested page.
    */
   results?: ZakazProduct[];

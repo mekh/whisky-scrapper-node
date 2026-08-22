@@ -1,6 +1,7 @@
+import { ListingStop } from '~enums';
 import { ServerError } from '~errors';
 
-import type { ProductSnapshot } from '~types';
+import type { ListingResult, ProductSnapshot } from '~types';
 
 import { BrowserAdapterBase } from '../../browser/browser-adapter.base';
 
@@ -11,9 +12,13 @@ const LISTING = 'https://rozetka.com.ua/ua/viski/c4649130/';
 const TILE_SELECTOR = 'rz-catalog-tile';
 
 /**
- * Backstop against a runaway walk: the category has ~38 pages, 60 items each.
+ * Backstop against a runaway walk: the category has ~39 pages of 60. The old
+ * value of 45 left barely six pages of headroom, which stopped being merely
+ * tight once the sweep started gating on where a walk ended — a catalogue 15 %
+ * larger would have reached the cap, and a cap the walk can reach in normal
+ * operation reads as a truncated listing every run.
  */
-const MAX_PAGES = 45;
+const MAX_PAGES = 80;
 
 /**
  * One extra attempt per page, in case the Cloudflare challenge flakes once.
@@ -88,15 +93,30 @@ export class RozetkaAdapter extends BrowserAdapterBase {
   /**
    * Walks the category page by page until one yields no new tile.
    *
-   * @returns The store's whisky listing.
+   * The store states no total anywhere, so the end of the catalogue is only
+   * ever inferred — but the two ways this walk can stop mean opposite things.
+   * A page number past the end **redirects back to page 1** (verified against
+   * the live site: `page=60/` answers with 60 tiles at the bare listing URL,
+   * headed by the same top-of-catalogue product), so the real terminator is a
+   * page that rendered tiles of which none were new. A page that rendered
+   * nothing is never that: `render` swallows the wait-for-selector timeout, so
+   * a context still sitting on the Cloudflare challenge reads exactly like an
+   * empty catalogue, and the run must not let persist sweep on it.
+   *
+   * @returns The store's whisky listing and whether it is the whole listing.
    */
-  public async fetchListing(): Promise<ProductSnapshot[]> {
+  public async fetchListing(): Promise<ListingResult> {
     const snaps: ProductSnapshot[] = [];
     const seen = new Set<string>();
 
     for (let page = 1; page <= MAX_PAGES; page += 1) {
       const url = page === 1 ? LISTING : `${LISTING}page=${page}/`;
       const rows = await this.fetchPage(url);
+
+      if (rows.length === 0) {
+        return this.listing(snaps, ListingStop.AMBIGUOUS);
+      }
+
       const fresh = this.freshSnapshots(
         rows,
         seen,
@@ -114,11 +134,11 @@ export class RozetkaAdapter extends BrowserAdapterBase {
       });
 
       if (fresh.length === 0) {
-        break;
+        return this.listing(snaps, ListingStop.EXHAUSTED);
       }
     }
 
-    return snaps;
+    return this.listing(snaps, ListingStop.PAGE_CAP);
   }
 
   /**

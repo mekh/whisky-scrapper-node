@@ -1,11 +1,14 @@
 import { load } from 'cheerio';
 
+import { ListingStop } from '~enums';
 import type {
+  ListingResult,
   ProductSnapshot,
   ScrapeProgressReporter,
   StoreScrapeSpec,
 } from '~types';
 
+import { isEndOfCatalog } from '../../http/http.util';
 import { NormalizeService } from '../../normalize/normalize.service';
 import { HttpAdapterBase } from '../scrape-adapter.base';
 
@@ -143,12 +146,21 @@ export class SilpoAdapter extends HttpAdapterBase {
    * Walks the whisky category page by page, up to the page count derived
    * from the total the API reports.
    *
-   * @returns The store's whisky listing, out-of-stock items included.
-   * @throws {Error} When the very first page cannot be fetched.
+   * The API states an exact item count on every page, so this walk is one of
+   * the few that can prove completeness outright rather than infer it from
+   * running out of pages — which matters, because the category legitimately
+   * collapsed from 1070 items to 249 in a day and the run has to be trusted
+   * enough to act on that.
+   *
+   * @returns The store's whisky listing, out-of-stock items included, and
+   * whether it is the whole listing.
+   * @throws {ScrapeHttpError} When the very first page cannot be fetched.
    */
-  public async fetchListing(): Promise<ProductSnapshot[]> {
+  public async fetchListing(): Promise<ListingResult> {
     const snaps: ProductSnapshot[] = [];
     const seen = new Set<string>();
+    let statedItems: number | null = null;
+    let received = 0;
     let totalPages: number | null = null;
     let page = 1;
 
@@ -162,13 +174,25 @@ export class SilpoAdapter extends HttpAdapterBase {
           throw error;
         }
 
-        break;
+        return this.listing(
+          snaps,
+          isEndOfCatalog(error)
+            ? ListingStop.EXHAUSTED
+            : ListingStop.PAGE_FAILED,
+          statedItems,
+          received,
+        );
       }
 
+      statedItems ??= this.readTotalItems(listing);
       totalPages ??= this.readTotalPages(listing);
 
+      const items = listing.items ?? [];
+
+      received += items.length;
+
       const fresh = this.freshSnapshots(
-        listing.items ?? [],
+        items,
         seen,
         (product) => this.toSnapshot(product),
       );
@@ -183,14 +207,31 @@ export class SilpoAdapter extends HttpAdapterBase {
       });
 
       if (fresh.length === 0) {
-        break;
+        return this.listing(
+          snaps,
+          ListingStop.EXHAUSTED,
+          statedItems,
+          received,
+        );
       }
 
       page += 1;
       await this.sleep();
     }
 
-    return snaps;
+    /**
+     * The loop bound is the lower of the declared page count and the backstop,
+     * so falling out of it means one of two very different things: every
+     * declared page was consumed, or the backstop cut the walk short.
+     */
+    const hitPageCap = totalPages === null || page <= totalPages;
+
+    return this.listing(
+      snaps,
+      hitPageCap ? ListingStop.PAGE_CAP : ListingStop.EXHAUSTED,
+      statedItems,
+      received,
+    );
   }
 
   /**
@@ -398,17 +439,27 @@ export class SilpoAdapter extends HttpAdapterBase {
   }
 
   /**
+   * Reads the item count the API states for the category.
+   *
+   * @param listing - Any listing page.
+   * @returns The item count, or null when it is missing or unusable.
+   */
+  private readTotalItems(listing: SilpoListing): number | null {
+    const total = listing.total;
+
+    return typeof total === 'number' && total > 0 ? total : null;
+  }
+
+  /**
    * Derives the page count from the total item count the API reports.
    *
    * @param listing - Any listing page.
    * @returns The page count, or null when the total is missing or unusable.
    */
   private readTotalPages(listing: SilpoListing): number | null {
-    const total = listing.total;
+    const total = this.readTotalItems(listing);
 
-    return typeof total === 'number' && total > 0
-      ? Math.ceil(total / PAGE_SIZE)
-      : null;
+    return total === null ? null : Math.ceil(total / PAGE_SIZE);
   }
 
   /**

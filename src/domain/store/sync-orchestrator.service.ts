@@ -280,14 +280,7 @@ export class SyncOrchestratorService implements OnModuleInit {
     try {
       const result = await this.collect(store, logId, writer);
 
-      outcome = {
-        success: true,
-        error: null,
-        added: result.added,
-        removed: result.removed,
-        updated: result.stored - result.added,
-        total: result.found,
-      };
+      outcome = this.outcomeOf(result);
 
       this.logger.log(
         'Sync finished for %s: %d found, %d added, %d removed',
@@ -301,6 +294,7 @@ export class SyncOrchestratorService implements OnModuleInit {
           + `${DurationUtils.format(Date.now() - startedAt)}: `
           + `${result.found} found, ${result.added} added, `
           + `${result.removed} removed`,
+        outcome.success ? 'INFO' : 'WARNING',
       );
     } catch (error) {
       this.logger.error('Sync failed for %s: %o', store.slug, error);
@@ -321,6 +315,47 @@ export class SyncOrchestratorService implements OnModuleInit {
     }
 
     return outcome;
+  }
+
+  /**
+   * Turns a finished collection into the outcome its `sync_log` row is closed
+   * with.
+   *
+   * A run whose listing walk never reached the end of the store's listing is
+   * recorded as **failed**, counters and all. It did write — persist upserts
+   * whatever the walk saw, and today's prices are worth keeping — but it did
+   * not learn what is no longer offered, so the sweep was skipped and the
+   * store's availability is now as stale as the last complete run left it.
+   * Reporting that as a success is what let a store drift for days with nobody
+   * looking; the counters stay on the row so the partial write is still
+   * visible.
+   *
+   * @param result - What the collection returned.
+   * @returns The outcome to finalize the run's row with.
+   */
+  private outcomeOf(result: SiteResult): SyncOutcome {
+    const counters = {
+      added: result.added,
+      removed: result.removed,
+      updated: result.stored - result.added,
+      total: result.found,
+    };
+
+    if (result.listingComplete) {
+      return { success: true, error: null, ...counters };
+    }
+
+    const stated = result.statedItems === null
+      ? 'an unstated number of'
+      : String(result.statedItems);
+
+    return {
+      success: false,
+      error: `Listing incomplete (${result.listingStop}): collected `
+        + `${result.found} of ${stated} item(s); the out-of-stock sweep was `
+        + "skipped, so this store's availability is unchanged",
+      ...counters,
+    };
   }
 
   /**
@@ -481,10 +516,18 @@ export class SyncOrchestratorService implements OnModuleInit {
             + `${event.removed} flagged out of stock`,
         );
         break;
-      case 'sweep-guarded':
+      case 'listing-incomplete':
         writer.warn(
-          `Listing looks truncated (${event.inStock} in stock vs `
-            + `${event.baseline} stored); out-of-stock sweep skipped`,
+          `Listing incomplete (${event.stop}): the walk did not reach the end `
+            + "of the store's listing, so the out-of-stock sweep was skipped "
+            + `(${event.inStock} in stock vs ${event.baseline} stored)`,
+        );
+        break;
+      case 'stock-drop':
+        writer.warn(
+          `Stock dropped sharply: ${event.inStock} in stock vs `
+            + `${event.baseline} stored. The listing reached its end, so the `
+            + 'sweep ran — check the store if this was unexpected',
         );
         break;
     }

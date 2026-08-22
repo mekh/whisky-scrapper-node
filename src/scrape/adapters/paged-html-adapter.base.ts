@@ -1,6 +1,9 @@
 import { load } from 'cheerio';
 
-import type { ProductSnapshot } from '~types';
+import { ListingStop } from '~enums';
+import type { ListingResult, ProductSnapshot } from '~types';
+
+import { isEndOfCatalog } from '../http/http.util';
 
 import { HttpAdapterBase } from './scrape-adapter.base';
 
@@ -14,6 +17,12 @@ import type { HtmlNode } from '../html/html.interfaces';
  * their failure rule — a page that cannot be fetched ends the walk if anything
  * was collected already, and propagates otherwise (a first-page block must be
  * a loud failure, not a silently empty catalog).
+ *
+ * What the port did not have is the distinction between the two ways a page
+ * can fail. None of these stores states a total, so asking for the page past
+ * the end is the only way to learn where the catalogue ends — and several
+ * answer it with a 404, which is an answer. A 5xx or a dropped connection is
+ * not: the walk holds a fragment, and says so, so persist declines to sweep.
  */
 export abstract class PagedHtmlAdapterBase extends HttpAdapterBase {
   /**
@@ -29,18 +38,29 @@ export abstract class PagedHtmlAdapterBase extends HttpAdapterBase {
   /**
    * Walks the listing until a page yields no new SKU.
    *
-   * @returns The store's whisky listing.
-   * @throws {Error} When the first page cannot be fetched.
+   * @returns The store's whisky listing and whether the walk reached its end.
+   * @throws {ScrapeHttpError} When the first page cannot be fetched.
    */
-  public async fetchListing(): Promise<ProductSnapshot[]> {
+  public async fetchListing(): Promise<ListingResult> {
     const snaps: ProductSnapshot[] = [];
     const seen = new Set<string>();
 
     for (let page = 1; page <= this.maxPages; page += 1) {
-      const html = await this.loadPage(page, snaps.length === 0);
+      let html: string;
 
-      if (html === null) {
-        break;
+      try {
+        html = await this.fetchPage(page);
+      } catch (error) {
+        if (snaps.length === 0) {
+          throw error;
+        }
+
+        return this.listing(
+          snaps,
+          isEndOfCatalog(error)
+            ? ListingStop.EXHAUSTED
+            : ListingStop.PAGE_FAILED,
+        );
       }
 
       const fresh = this.parsePage(html, seen);
@@ -56,13 +76,13 @@ export abstract class PagedHtmlAdapterBase extends HttpAdapterBase {
       });
 
       if (fresh.length === 0) {
-        break;
+        return this.listing(snaps, ListingStop.EXHAUSTED);
       }
 
       await this.sleep();
     }
 
-    return snaps;
+    return this.listing(snaps, ListingStop.PAGE_CAP);
   }
 
   /**
@@ -84,30 +104,6 @@ export abstract class PagedHtmlAdapterBase extends HttpAdapterBase {
     $: CheerioAPI,
     card: HtmlNode,
   ): ProductSnapshot | null;
-
-  /**
-   * Fetches one page, turning a tolerable failure into an end-of-walk signal.
-   *
-   * @param page - 1-based page number.
-   * @param required - True while nothing has been collected yet, in which case
-   *   the failure is rethrown instead of ending the walk.
-   * @returns The page's HTML, or null when the walk should stop.
-   * @throws {Error} When a required page cannot be fetched.
-   */
-  private async loadPage(
-    page: number,
-    required: boolean,
-  ): Promise<string | null> {
-    try {
-      return await this.fetchPage(page);
-    } catch (error) {
-      if (required) {
-        throw error;
-      }
-
-      return null;
-    }
-  }
 
   /**
    * Parses one page's cards, keeping only SKUs not seen on earlier pages.

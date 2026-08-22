@@ -649,7 +649,11 @@ wrappers): `scrape/` has its own internal layering.
 - Layout: `normalize/` (regex/keyword port of `normalize.py`; reuses
   `BrandUtils.canonical` + `ProductNameUtils.clean`, no `match_key`/exclude-
   flavors), `http/` (plain fetch / `impit` impersonation / retrying wrapper +
-  `HTTP_STRATEGY_BY_SLUG`), `html/` (cheerio helpers for the SSR stores),
+  `HTTP_STRATEGY_BY_SLUG`; the wrapper throws a typed `ScrapeHttpError`
+  carrying the last status, which is what lets a walk tell a 404 past the end
+  of a catalogue from a store having a bad minute — an end-of-catalogue status
+  is also not retried, since it is an answer), `html/` (cheerio helpers for the
+  SSR stores),
   `browser/` (Playwright stealth context, fresh context per page), `llm/`
   (an **OpenAI-compatible** chat-completions call via the `openai` SDK,
   pointed at any endpoint by `LLM_BASE_URL` — production uses OpenRouter, so
@@ -799,17 +803,55 @@ wrappers): `scrape/` has its own internal layering.
   (base classes + `AdapterRegistryService` - one folder per store platform),
   `persist/` (one-store, one transaction write pipeline over the core
   services: upserts the in-stock items, then **flags** everything the run did
-  not see in stock as `product."inStock" = false` — explicit out-of-stock SKUs
-  and items missing from the listing alike; nothing is deleted. A run whose
-  in-stock count falls below `PERSIST_SWEEP_GUARD_RATIO` of the store's
-  current in-stock count is treated as a truncated listing: the sweep is
-  skipped with a warning and only the explicit out-of-stock SKUs are flagged),
-  and `ScrapeService` (`collectStore(slug, { dryRun })`).
+  not see in stock as `store_product."inStock" = false` — explicit out-of-stock
+  SKUs and items missing from the listing alike; nothing is deleted.
+  **The sweep is gated on the listing walk, not on a count** — see "Listing
+  completeness" below), and `ScrapeService` (`collectStore(slug, { dryRun })`).
+- **Listing completeness gates the sweep** (`ListingStop`, `~enums`;
+  `ListingResult`, `~types`). Every walk reports _why_ it stopped, and
+  `ScrapeAdapterBase.listing()` turns that into a verdict: running out of pages
+  is completeness on its own for a source that states no count, and is
+  reconciled against the count for one that does. Only a complete listing earns
+  the sweep; an incomplete one flags the explicit out-of-stock SKUs alone and
+  the orchestrator closes the run as **failed** with a `Listing incomplete
+  (<stop>)` message (no new column — `success = false` carries it, counters
+  intact so the partial write stays visible).
+  This replaced a count heuristic (`PERSIST_SWEEP_GUARD_RATIO`, in-stock now vs
+  in-stock before) that could not tell a store whose stock really collapsed
+  from a scrape that broke, and got both cases wrong in opposite directions.
+  **A store that legitimately shrank past the ratio froze**: the baseline is the
+  _live_ in-stock count, which skipping the sweep is precisely what stops from
+  falling, so every later run made the same comparison and skipped again.
+  Silpo's whisky category fell from 1070 offers to 249 on 2026-08-22 — verified
+  against the source, its API states `total: 249` and the vanished SKUs answer
+  `stock: 0` — and 578 sold-out bottles would have been served as available
+  indefinitely. In the other direction, a listing that broke after collecting
+  60 % of itself cleared the ratio and flagged the other 40 % unavailable.
+  The ratio survives as an **alert only** (`stock-drop`, logged, sweep still
+  runs): the failure modes are not symmetric, since an offer wrongly flagged
+  out of stock returns on the next run while one wrongly left in stock stays
+  until someone notices.
+  What each walk treats as reaching the end: silpo/zakaz/okwine reconcile
+  against the item count their API states (`total` / `count` / `count`, the
+  last two newly modelled); maudau uses `x-last-page` or the available prefix
+  running out, and deliberately **not** its `x-total` (~2500), which counts the
+  unavailable tail the walk never reaches; rozetka uses a page whose tiles are
+  all already collected, because a page past the end **redirects to page 1**
+  (verified live), while a page that rendered nothing is the Cloudflare
+  challenge winning and reads as incomplete; the six `PagedHtmlAdapterBase`
+  stores use a 404/410 or a page with no new SKU. `MAX_PAGES` is incomplete
+  everywhere.
+  **The count is reconciled against what the source handed over, not against
+  the snapshots that survived mapping** — a listing routinely repeats a SKU or
+  carries one with no price, and reconciling on the kept ones would read such a
+  store as permanently truncated, which is the exact failure being replaced.
 - **Adapter base classes** (`adapters/`): `ScrapeAdapterBase` (spec, pacing,
   progress, snapshot defaults) → `HttpAdapterBase` (owns the HTTP client) →
   `PagedHtmlAdapterBase` (walk `cardSelector` pages until one yields no new
   SKU; a page that fails ends the walk unless nothing was collected yet, in
-  which case it throws) → `WooCommerceAdapterBase` (shared card markup,
+  which case it throws — and whether that ending counts as reaching the end of
+  the listing depends on the status, see "Listing completeness")
+  → `WooCommerceAdapterBase` (shared card markup,
   `/whiskey/page/N/` pagination and specification table of the two WooCommerce
   stores). `BrowserAdapterBase` is the parallel branch for the browser tier.
 - **Adapters** — every store the project scrapes now has one: `zakaz/` (one
@@ -1046,7 +1088,8 @@ wrappers): `scrape/` has its own internal layering.
     but the file is opened only **after** the lock is won, so a run that loses
     the race leaves nothing on disk.
   - Lines come from the existing `ScrapeProgressEvent` stream, which grew
-    `detail-failed`/`llm`/`persisted`/`sweep-guarded` members; `buildReporter`
+    `detail-failed`/`llm`/`persisted`/`listing-incomplete`/`stock-drop`
+    members; `buildReporter`
     fans each event out to the file **and** the existing `sync_log` progress
     touch. `ScrapePersistService.persist` therefore takes an optional trailing
     `reporter`.

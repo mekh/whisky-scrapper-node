@@ -214,9 +214,12 @@ function progressLine(event: ScrapeProgressEvent): string | null {
       return `persisted: ${event.stored} stored, ${event.added} added, `
         + `${event.addedProducts} new bottling(s), `
         + `${event.removed} flagged out of stock`;
-    case 'sweep-guarded':
-      return `listing looks truncated (${event.inStock} in stock vs `
-        + `${event.baseline} stored); out-of-stock sweep skipped`;
+    case 'listing-incomplete':
+      return `listing incomplete (${event.stop}): out-of-stock sweep skipped `
+        + `(${event.inStock} in stock vs ${event.baseline} stored)`;
+    case 'stock-drop':
+      return `stock dropped sharply (${event.inStock} in stock vs `
+        + `${event.baseline} stored); listing reached its end, sweeping anyway`;
     default:
       return null;
   }

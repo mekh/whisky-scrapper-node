@@ -127,7 +127,7 @@ describe('GoodwineAdapter.fetchListing', () => {
   it('reads the card out of its data attributes', async () => {
     const { adapter } = adapterOver({ 1: page(card()), 2: page() });
 
-    const [snap] = await adapter.fetchListing();
+    const { items: [snap] } = await adapter.fetchListing();
 
     expect(snap.storeSku).toBe('60531');
     expect(snap.name).toBe('Віскі Jameson, 0.7 л');
@@ -142,7 +142,7 @@ describe('GoodwineAdapter.fetchListing', () => {
   it('skips the cart link and the copy with a leading space', async () => {
     const { adapter } = adapterOver({ 1: page(card()), 2: page() });
 
-    const [snap] = await adapter.fetchListing();
+    const { items: [snap] } = await adapter.fetchListing();
 
     expect(snap.url).toBe('https://goodwine.com.ua/ua/product-60531/');
   });
@@ -159,7 +159,7 @@ describe('GoodwineAdapter.fetchListing', () => {
         2: page(),
       });
 
-      const [snap] = await adapter.fetchListing();
+      const { items: [snap] } = await adapter.fetchListing();
 
       expect(snap.price).toBe(2149);
       expect(snap.oldPrice).toBe(2445.65);
@@ -173,7 +173,7 @@ describe('GoodwineAdapter.fetchListing', () => {
       2: page(),
     });
 
-    const [snap] = await adapter.fetchListing();
+    const { items: [snap] } = await adapter.fetchListing();
 
     expect(snap.price).toBe(814.13);
     expect(snap.oldPrice).toBeNull();
@@ -185,7 +185,7 @@ describe('GoodwineAdapter.fetchListing', () => {
       2: page(),
     });
 
-    const [snap] = await adapter.fetchListing();
+    const { items: [snap] } = await adapter.fetchListing();
 
     expect(snap.country).toBeNull();
   });
@@ -198,7 +198,9 @@ describe('GoodwineAdapter.fetchListing', () => {
       ),
     });
 
-    await expect(adapter.fetchListing()).resolves.toEqual([]);
+    const { items } = await adapter.fetchListing();
+
+    expect(items).toEqual([]);
   });
 
   it(
@@ -210,7 +212,7 @@ describe('GoodwineAdapter.fetchListing', () => {
         3: page(),
       });
 
-      const snaps = await adapter.fetchListing();
+      const { items: snaps } = await adapter.fetchListing();
 
       expect(snaps.map((snap) => snap.storeSku)).toEqual(['60531', '2', '3']);
       expect(http.calls.map((call) => call.params.p)).toEqual([

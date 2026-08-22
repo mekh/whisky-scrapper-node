@@ -13,6 +13,7 @@ import { ProductMatchUtils, ProductNameUtils } from '~utils';
 
 import type {
   ID,
+  ListingResult,
   ProductCanonicalInput,
   ProductFillInput,
   ProductScrapeFlavorLink,
@@ -38,6 +39,11 @@ import type {
  * missing. The store half upserts the offer itself — SKU, page, availability,
  * dates — and today's price. Nothing is ever deleted: availability is the
  * `store_product.inStock` flag, so price history survives out-of-stock periods.
+ *
+ * **The sweep is gated on the listing walk, not on a count.** Flagging every
+ * unseen offer out of stock is only sound if the run actually reached the end
+ * of the store's listing; see {@link flagOutOfStock} for what that buys and
+ * what the count heuristic it replaced got wrong.
  *
  * **Lock ordering is load-bearing.** The whole persist runs in one transaction
  * that can last minutes, and up to `SYNC_MAX_PARALLEL_TRACKS` stores persist
@@ -93,8 +99,10 @@ export class ScrapePersistService {
    * @param inStock - Normalized in-stock snapshots to upsert.
    * @param oosSkus - SKUs the listing explicitly returned as out of stock.
    * @param capturedOn - The capture day (`YYYY-MM-DD`) for the snapshots.
+   * @param listing - How the run's listing walk ended. Only a walk that
+   * reached the end of the source's listing earns the sweep.
    * @param reporter - Optional progress reporter, told what the transaction
-   * wrote and whether the sweep was guarded.
+   * wrote and whether the sweep ran.
    * @returns How many offers were stored, added and flagged out of stock, and
    * how many bottlings were new to the catalogue.
    */
@@ -104,6 +112,7 @@ export class ScrapePersistService {
     inStock: ProductSnapshot[],
     oosSkus: string[],
     capturedOn: string,
+    listing: ListingResult,
     reporter?: ScrapeProgressReporter,
   ): Promise<PersistCounts> {
     const inStockBefore = await this.storeProducts.countByStore(storeId);
@@ -195,6 +204,7 @@ export class ScrapePersistService {
       inStock.map((snap) => snap.storeSku),
       oosSkus,
       inStockBefore,
+      listing,
       reporter,
     );
 
@@ -317,7 +327,7 @@ export class ScrapePersistService {
     snap: ProductSnapshot,
     matchKey: string | null,
   ): string {
-    return matchKey ?? ` ${snap.storeSku}`;
+    return matchKey ?? `\0${snap.storeSku}`;
   }
 
   /**
@@ -487,21 +497,35 @@ export class ScrapePersistService {
   }
 
   /**
-   * Flags this run's unavailable offers. Normally a sweep: every offer of the
-   * store not seen in stock this run (explicitly out of stock or missing from
-   * the listing) is flagged. When the run's in-stock count is suspiciously low
-   * against the pre-run baseline — a likely truncated listing — the sweep is
-   * skipped and only the explicit out-of-stock SKUs are flagged. A store that
-   * legitimately shrank past the guard keeps warning on every run until its
-   * stock recovers or the rows are fixed manually; a wrongly flagged offer
-   * self-heals on the next run.
+   * Flags this run's unavailable offers.
+   *
+   * Normally a sweep: every offer of the store not seen in stock this run —
+   * explicitly out of stock or missing from the listing — is flagged. What
+   * gates it is the listing walk's own verdict: a walk that reached the end of
+   * the source's listing proves that an offer it did not see is genuinely
+   * gone, while a walk that gave up on a failed page holds a fragment and
+   * proves nothing, so only the explicit out-of-stock SKUs are flagged.
+   *
+   * This used to be gated on a count ratio instead, and that could not tell a
+   * store whose stock really collapsed from a scrape that broke. It got both
+   * cases wrong in opposite directions. A store that legitimately shrank past
+   * the ratio was frozen: the baseline is the *live* in-stock count, which
+   * skipping the sweep is precisely what stops from falling, so every later
+   * run compared against the same stale number and skipped again — silpo went
+   * from 1070 offers to 249 on 2026-08-22 and would have served 578 sold-out
+   * bottles indefinitely. And a listing that broke after collecting 60 % of
+   * itself sailed past the ratio and flagged the other 40 % as unavailable.
+   *
+   * The ratio survives as an alert, not a veto, because the two failure modes
+   * are not symmetric: an offer wrongly flagged out of stock comes back on the
+   * next run, while one wrongly left in stock stays until someone notices.
    *
    * @param storeId - The store being written.
    * @param inStockSkus - SKUs seen in stock this run.
    * @param oosSkus - SKUs the listing explicitly returned as out of stock.
    * @param baseline - The store's in-stock offer count before this run.
-   * @param reporter - Optional progress reporter, told when the sweep was
-   * skipped.
+   * @param listing - How the run's listing walk ended.
+   * @param reporter - Optional progress reporter, told whether the sweep ran.
    * @returns How many offers were flagged out of stock.
    */
   private async flagOutOfStock(
@@ -509,28 +533,40 @@ export class ScrapePersistService {
     inStockSkus: string[],
     oosSkus: string[],
     baseline: number,
+    listing: ListingResult,
     reporter?: ScrapeProgressReporter,
   ): Promise<number> {
-    const sweepIsSafe =
-      inStockSkus.length >= baseline * PERSIST_SWEEP_GUARD_RATIO;
+    if (!listing.complete) {
+      this.logger.warn(
+        'Listing incomplete (%s): flagging only the explicit '
+          + 'out-of-stock SKUs',
+        listing.stop,
+      );
+      reporter?.({
+        kind: 'listing-incomplete',
+        stop: listing.stop,
+        inStock: inStockSkus.length,
+        baseline,
+      });
 
-    if (sweepIsSafe) {
-      return this.storeProducts.markOutOfStockExcept(storeId, inStockSkus);
+      return this.storeProducts.markOutOfStockBySkus(storeId, oosSkus);
     }
 
-    this.logger.warn(
-      'Listing looks truncated (%d in stock vs %d stored); '
-        + 'flagging only the explicit out-of-stock SKUs',
-      inStockSkus.length,
-      baseline,
-    );
-    reporter?.({
-      kind: 'sweep-guarded',
-      inStock: inStockSkus.length,
-      baseline,
-    });
+    if (inStockSkus.length < baseline * PERSIST_SWEEP_GUARD_RATIO) {
+      this.logger.warn(
+        'Stock dropped sharply (%d in stock vs %d stored) on a listing that '
+          + 'reached its end; sweeping anyway',
+        inStockSkus.length,
+        baseline,
+      );
+      reporter?.({
+        kind: 'stock-drop',
+        inStock: inStockSkus.length,
+        baseline,
+      });
+    }
 
-    return this.storeProducts.markOutOfStockBySkus(storeId, oosSkus);
+    return this.storeProducts.markOutOfStockExcept(storeId, inStockSkus);
   }
 
   /**

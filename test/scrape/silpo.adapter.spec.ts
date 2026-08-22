@@ -1,5 +1,7 @@
 import 'reflect-metadata';
 
+import { ListingStop } from '~enums';
+
 import { SilpoAdapter } from '../../src/scrape/adapters/silpo';
 import { NormalizeService } from '../../src/scrape/normalize/normalize.service';
 import { FakeHttpClient } from './fake-http-client';
@@ -88,7 +90,7 @@ async function snapshotOf(
   raw: SilpoProduct,
 ): Promise<ProductSnapshot | undefined> {
   const { adapter } = makeAdapter({ 1: [raw] }, 1);
-  const snaps = await adapter.fetchListing();
+  const { items: snaps } = await adapter.fetchListing();
 
   return snaps[0];
 }
@@ -141,7 +143,7 @@ async function prepare(
       : { body }
   );
   const adapter = new SilpoAdapter(SPEC, 1, http, new NormalizeService());
-  const snaps = await adapter.fetchListing();
+  const { items: snaps } = await adapter.fetchListing();
 
   return { adapter, snap: snaps[0], http };
 }
@@ -235,7 +237,7 @@ describe('SilpoAdapter', () => {
       4,
     );
 
-    const snaps = await adapter.fetchListing();
+    const { items: snaps } = await adapter.fetchListing();
 
     expect(snaps.map((snap) => snap.storeSku)).toEqual(['4']);
   });
@@ -251,7 +253,7 @@ describe('SilpoAdapter', () => {
       PAGE_SIZE + 2,
     );
 
-    const snaps = await adapter.fetchListing();
+    const { items: snaps } = await adapter.fetchListing();
 
     expect(snaps).toHaveLength(PAGE_SIZE + 1);
     expect(http.calls.map((call) => call.params.offset)).toEqual([
@@ -270,9 +272,86 @@ describe('SilpoAdapter', () => {
     });
     const adapter = new SilpoAdapter(SPEC, 1, http, new NormalizeService());
 
-    const snaps = await adapter.fetchListing();
+    const listing = await adapter.fetchListing();
 
-    expect(snaps.map((snap) => snap.storeSku)).toEqual(['1']);
+    expect(listing.items.map((snap) => snap.storeSku)).toEqual(['1']);
+    expect(listing.complete).toBe(false);
+    expect(listing.stop).toBe(ListingStop.PAGE_FAILED);
+  });
+
+  /**
+   * The case behind the 2026-08-22 incident: the category really did fall from
+   * 1070 items to 249 overnight, and the API said so on every page. A walk
+   * that consumed exactly what the source declared has to come back complete,
+   * or persist will not flag the 578 offers that are actually sold out.
+   */
+  it('is complete when it collected the total the API states', async () => {
+    const http = new FakeHttpClient((_url, options) => {
+      const offset = Number(options?.params?.offset);
+
+      return {
+        body: {
+          total: 2,
+          items: offset === 0 ? [product(1, 'A'), product(2, 'B')] : [],
+        },
+      };
+    });
+    const adapter = new SilpoAdapter(SPEC, 1, http, new NormalizeService());
+
+    const listing = await adapter.fetchListing();
+
+    expect(listing.items).toHaveLength(2);
+    expect(listing.complete).toBe(true);
+    expect(listing.stop).toBe(ListingStop.COUNTED);
+    expect(listing.statedItems).toBe(2);
+  });
+
+  /**
+   * A page that answers 200 with fewer items than it promised is a source
+   * having a bad minute, not a catalogue that shrank.
+   */
+  it(
+    'is incomplete when the pages hold less than the stated total',
+    async () => {
+      const http = new FakeHttpClient(() => ({
+        body: { total: 250, items: [product(1, 'A')] },
+      }));
+      const adapter = new SilpoAdapter(SPEC, 1, http, new NormalizeService());
+
+      const listing = await adapter.fetchListing();
+
+      expect(listing.complete).toBe(false);
+      expect(listing.stop).toBe(ListingStop.SHORT);
+      expect(listing.statedItems).toBe(250);
+    },
+  );
+
+  /**
+   * Dropping an unusable card is routine and says nothing about truncation, so
+   * the count is reconciled against what the source handed over rather than
+   * what survived mapping — otherwise one price-less bottle would freeze the
+   * store's sweep exactly as the old ratio guard did.
+   */
+  it('stays complete when a card the source sent was unusable', async () => {
+    const http = new FakeHttpClient((_url, options) => {
+      const offset = Number(options?.params?.offset);
+
+      return {
+        body: {
+          total: 2,
+          items: offset === 0
+            ? [product(1, 'A'), { ...product(2, 'B'), price: 0 }]
+            : [],
+        },
+      };
+    });
+    const adapter = new SilpoAdapter(SPEC, 1, http, new NormalizeService());
+
+    const listing = await adapter.fetchListing();
+
+    expect(listing.items).toHaveLength(1);
+    expect(listing.complete).toBe(true);
+    expect(listing.stop).toBe(ListingStop.COUNTED);
   });
 
   it('fails when the very first page fails', async () => {
@@ -317,7 +396,7 @@ describe('SilpoAdapter.enrichDetail', () => {
 
     expect(call.url).toBe(
       'https://sf-ecom-api.silpo.ua/v1/uk/branches/'
-        + '00000000-0000-0000-0000-000000000000/products/58113',
+        + '1f0bae35-69aa-6bd2-82b6-9554c10c3d4a/products/58113',
     );
   });
 

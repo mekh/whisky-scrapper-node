@@ -1,5 +1,7 @@
 import 'reflect-metadata';
 
+import { ListingStop } from '~enums';
+
 import { WinePointAdapter } from '../../src/scrape/adapters/wine-point';
 import { NormalizeService } from '../../src/scrape/normalize/normalize.service';
 import { FakeHttpClient } from './fake-http-client';
@@ -136,7 +138,7 @@ function adapterOver(pages: Record<string, string>): {
  */
 async function parseOne(html: string): Promise<ProductSnapshot> {
   const { adapter } = adapterOver({ [LISTING]: page(html) });
-  const snaps = await adapter.fetchListing();
+  const { items: snaps } = await adapter.fetchListing();
 
   return snaps[0];
 }
@@ -187,7 +189,7 @@ describe('WinePointAdapter.fetchListing', () => {
       [`${LISTING}page/3/`]: page(),
     });
 
-    const snaps = await adapter.fetchListing();
+    const { items: snaps } = await adapter.fetchListing();
 
     expect(snaps.map((snap) => snap.storeSku).sort()).toEqual(['1', '2', '3']);
     expect(http.calls).toHaveLength(3);
@@ -198,9 +200,16 @@ describe('WinePointAdapter.fetchListing', () => {
       [LISTING]: page(card('1', 'A', REGULAR)),
     });
 
-    const snaps = await adapter.fetchListing();
+    const listing = await adapter.fetchListing();
 
-    expect(snaps.map((snap) => snap.storeSku)).toEqual(['1']);
+    expect(listing.items.map((snap) => snap.storeSku)).toEqual(['1']);
+    /**
+     * The pages are worth keeping — their prices are real — but the walk
+     * never saw the rest of the catalogue, so persist must not read the
+     * absentees as sold out.
+     */
+    expect(listing.complete).toBe(false);
+    expect(listing.stop).toBe(ListingStop.PAGE_FAILED);
   });
 
   it('propagates a first-page failure', async () => {

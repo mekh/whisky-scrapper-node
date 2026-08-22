@@ -1,5 +1,8 @@
 import { randomBetween, sleep } from '../scrape-timing.util';
 
+import { isEndOfCatalogStatus } from './http.util';
+import { ScrapeHttpError } from './scrape-http.error';
+
 import type {
   ScrapeHttpClient,
   ScrapeHttpRequestOptions,
@@ -17,6 +20,14 @@ const CLIENT_ERROR_MIN = 400;
  * 429 / 5xx or a network error is retried with a longer backoff; other 4xx
  * responses are retried with a shorter one; the last failure is thrown once
  * attempts are exhausted.
+ *
+ * Two departures from the port. The failure is a {@link ScrapeHttpError}
+ * carrying the last status, because a listing walk has to tell a 404 past the
+ * end of a catalogue from a source that is merely struggling — the difference
+ * between "the listing ends here" and "this run saw a fragment". And an
+ * end-of-catalogue status is not retried at all: it is an answer, not a
+ * failure, and retrying it spent three attempts plus two backoffs on every
+ * walk that ends the only way its store can end one.
  */
 export class RetryingHttpClient implements ScrapeHttpClient {
   private readonly inner: ScrapeHttpClient;
@@ -34,13 +45,15 @@ export class RetryingHttpClient implements ScrapeHttpClient {
    * @param url - Absolute URL.
    * @param options - Optional query parameters and headers.
    * @returns The successful response.
-   * @throws {Error} When every attempt fails.
+   * @throws {ScrapeHttpError} When every attempt fails, or on the first
+   * end-of-catalogue status.
    */
   public async get(
     url: string,
     options?: ScrapeHttpRequestOptions,
   ): Promise<ScrapeHttpResponse> {
     let lastError = '';
+    let lastStatus: number | null = null;
 
     for (let attempt = 0; attempt < RETRIES; attempt += 1) {
       try {
@@ -50,15 +63,22 @@ export class RetryingHttpClient implements ScrapeHttpClient {
           return response;
         }
 
+        lastStatus = response.status;
         lastError = `HTTP ${response.status}`;
+
+        if (isEndOfCatalogStatus(response.status)) {
+          break;
+        }
+
         await this.backoff(attempt, this.isHardStatus(response.status));
       } catch (error) {
+        lastStatus = null;
         lastError = error instanceof Error ? error.message : String(error);
         await this.backoff(attempt, false);
       }
     }
 
-    throw new Error(`Failed to fetch ${url}: ${lastError}`);
+    throw new ScrapeHttpError(url, lastStatus, lastError);
   }
 
   /**

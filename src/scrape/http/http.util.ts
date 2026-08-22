@@ -1,4 +1,13 @@
 import { ScrapeHttpResponse } from './http-client.interfaces';
+import { ScrapeHttpError } from './scrape-http.error';
+
+/**
+ * Statuses a store uses to say "there is no such page" rather than "come
+ * back later". A listing walk that asks for one page past the end gets one
+ * of these, and for several stores it is the only end-of-listing signal
+ * there is.
+ */
+const END_OF_CATALOG_STATUSES = new Set([404, 410]);
 
 /**
  * Appends query parameters to a URL, stringifying numbers.
@@ -59,4 +68,29 @@ export function bufferedResponse(
     text: (): string => body,
     json: <T = unknown>(): T => JSON.parse(body) as T,
   };
+}
+
+/**
+ * Whether a status means the requested page does not exist, as opposed to the
+ * source being temporarily unable to serve it.
+ *
+ * @param status - HTTP status code.
+ * @returns True for the end-of-catalogue statuses.
+ */
+export function isEndOfCatalogStatus(status: number): boolean {
+  return END_OF_CATALOG_STATUSES.has(status);
+}
+
+/**
+ * Whether a thrown value is a fetch failure that means the walk ran off the end
+ * of the listing. Anything else — a 5xx, a 429, a network error, a parse error
+ * — means the walk was interrupted and has collected only a fragment.
+ *
+ * @param error - The value a page fetch threw.
+ * @returns True when the failure is an end-of-catalogue answer.
+ */
+export function isEndOfCatalog(error: unknown): boolean {
+  return error instanceof ScrapeHttpError
+    && error.status !== null
+    && isEndOfCatalogStatus(error.status);
 }

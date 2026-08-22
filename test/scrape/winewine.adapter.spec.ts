@@ -1,5 +1,7 @@
 import 'reflect-metadata';
 
+import { ListingStop } from '~enums';
+
 import { WinewineAdapter } from '../../src/scrape/adapters/winewine';
 import { NormalizeService } from '../../src/scrape/normalize/normalize.service';
 import { FakeHttpClient } from './fake-http-client';
@@ -139,7 +141,7 @@ function adapterOver(pages: Record<string, string>): {
  */
 async function parseOne(html: string): Promise<ProductSnapshot> {
   const { adapter } = adapterOver({ [LISTING]: page(html) });
-  const snaps = await adapter.fetchListing();
+  const { items: snaps } = await adapter.fetchListing();
 
   return snaps[0];
 }
@@ -185,7 +187,9 @@ describe('WinewineAdapter.fetchListing', () => {
       [LISTING]: page(card('1', 'Віскі D', '<span class="price">—</span>')),
     });
 
-    await expect(adapter.fetchListing()).resolves.toEqual([]);
+    const { items } = await adapter.fetchListing();
+
+    expect(items).toEqual([]);
   });
 
   it('deduplicates across pages and stops on an empty one', async () => {
@@ -198,7 +202,7 @@ describe('WinewineAdapter.fetchListing', () => {
       [`${LISTING}page/3/`]: page(),
     });
 
-    const snaps = await adapter.fetchListing();
+    const { items: snaps } = await adapter.fetchListing();
 
     expect(snaps.map((snap) => snap.storeSku)).toEqual(['1', '2', '3']);
     expect(http.calls).toHaveLength(3);
@@ -209,9 +213,16 @@ describe('WinewineAdapter.fetchListing', () => {
       [LISTING]: page(card('1', 'A', PLAIN_PRICE)),
     });
 
-    const snaps = await adapter.fetchListing();
+    const listing = await adapter.fetchListing();
 
-    expect(snaps.map((snap) => snap.storeSku)).toEqual(['1']);
+    expect(listing.items.map((snap) => snap.storeSku)).toEqual(['1']);
+    /**
+     * The pages are worth keeping — their prices are real — but the walk
+     * never saw the rest of the catalogue, so persist must not read the
+     * absentees as sold out.
+     */
+    expect(listing.complete).toBe(false);
+    expect(listing.stop).toBe(ListingStop.PAGE_FAILED);
   });
 
   it('propagates a first-page failure', async () => {

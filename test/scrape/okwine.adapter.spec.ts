@@ -1,5 +1,7 @@
 import 'reflect-metadata';
 
+import { ListingStop } from '~enums';
+
 import { OkwineAdapter } from '../../src/scrape/adapters/okwine';
 import { NormalizeService } from '../../src/scrape/normalize/normalize.service';
 import { FakeHttpClient } from './fake-http-client';
@@ -108,7 +110,7 @@ async function snapshotOf(
   raw: OkwineProduct,
 ): Promise<ProductSnapshot | undefined> {
   const { adapter } = makeAdapter({ 1: [raw] });
-  const snaps = await adapter.fetchListing();
+  const { items: snaps } = await adapter.fetchListing();
 
   return snaps[0];
 }
@@ -175,7 +177,7 @@ describe('OkwineAdapter', () => {
       2,
     );
 
-    const snaps = await adapter.fetchListing();
+    const { items: snaps } = await adapter.fetchListing();
 
     expect(snaps.map((snap) => snap.storeSku).sort()).toEqual(['a', 'b', 'c']);
     expect(http.pages()).toEqual([1, 2]);
@@ -191,9 +193,11 @@ describe('OkwineAdapter', () => {
     });
     const adapter = new OkwineAdapter(SPEC, 1, http, new NormalizeService());
 
-    const snaps = await adapter.fetchListing();
+    const listing = await adapter.fetchListing();
 
-    expect(snaps.map((snap) => snap.storeSku)).toEqual(['a']);
+    expect(listing.items.map((snap) => snap.storeSku)).toEqual(['a']);
+    expect(listing.complete).toBe(false);
+    expect(listing.stop).toBe(ListingStop.PAGE_FAILED);
   });
 
   it('fails when the very first page fails', async () => {

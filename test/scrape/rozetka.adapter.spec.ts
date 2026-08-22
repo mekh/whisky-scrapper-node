@@ -1,5 +1,7 @@
 import 'reflect-metadata';
 
+import { ListingStop } from '~enums';
+
 import { RozetkaAdapter } from '../../src/scrape/adapters/rozetka';
 
 import type { StoreScrapeSpec } from '~types';
@@ -88,7 +90,7 @@ describe('RozetkaAdapter.fetchListing', () => {
         row('123', { href: 'https://rozetka.com.ua/ua/x/p123/#comments' }),
       ]]);
 
-      const [snap] = await adapter.fetchListing();
+      const { items: [snap] } = await adapter.fetchListing();
 
       expect(snap.storeSku).toBe('123');
       expect(snap.url).toBe('https://rozetka.com.ua/ua/x/p123/');
@@ -106,7 +108,7 @@ describe('RozetkaAdapter.fetchListing', () => {
       row('3', { price: 500, old: 400 }),
     ]]);
 
-    const snaps = await adapter.fetchListing();
+    const { items: snaps } = await adapter.fetchListing();
 
     expect(snaps[0].oldPrice).toBe(999);
     expect(snaps[0].promo).toBe(true);
@@ -122,7 +124,9 @@ describe('RozetkaAdapter.fetchListing', () => {
       row('2', { price: null }),
     ]]);
 
-    await expect(adapter.fetchListing()).resolves.toEqual([]);
+    const { items } = await adapter.fetchListing();
+
+    expect(items).toEqual([]);
   });
 
   it('paginates with page=N and deduplicates promoted tiles', async () => {
@@ -132,7 +136,7 @@ describe('RozetkaAdapter.fetchListing', () => {
       [],
     ]);
 
-    const snaps = await adapter.fetchListing();
+    const { items: snaps } = await adapter.fetchListing();
 
     expect(snaps.map((snap) => snap.storeSku)).toEqual(['1', '2', '3']);
     expect(adapter.urls).toEqual([
@@ -169,7 +173,7 @@ describe('RozetkaAdapter.fetchListing', () => {
       [],
     ]);
 
-    const snaps = await adapter.fetchListing();
+    const { items: snaps } = await adapter.fetchListing();
 
     expect(snaps.map((snap) => snap.storeSku)).toEqual(['1', '2', '3']);
     expect(snaps[2].inStock).toBe(false);
@@ -182,10 +186,10 @@ describe('RozetkaAdapter.fetchListing', () => {
       [row('2')],
     ]);
 
-    const snaps = await adapter.fetchListing();
+    const listing = await adapter.fetchListing();
 
     // Page 2 came back empty, the retry succeeded, page 3 ended the walk.
-    expect(snaps.map((snap) => snap.storeSku)).toEqual(['1', '2']);
+    expect(listing.items.map((snap) => snap.storeSku)).toEqual(['1', '2']);
     expect(adapter.urls).toEqual([
       LISTING,
       `${LISTING}page=2/`,
@@ -193,5 +197,37 @@ describe('RozetkaAdapter.fetchListing', () => {
       `${LISTING}page=3/`,
       `${LISTING}page=3/`,
     ]);
+  });
+
+  /**
+   * How the walk really ends: a page number past the end redirects back to
+   * page 1, so the last page the walk sees is full of tiles it already has.
+   */
+  it('is complete when a page repeats tiles it already collected', async () => {
+    const adapter = new FakeRozetkaAdapter([
+      [row('1'), row('2')],
+      [row('1'), row('2')],
+    ]);
+
+    const listing = await adapter.fetchListing();
+
+    expect(listing.items.map((snap) => snap.storeSku)).toEqual(['1', '2']);
+    expect(listing.complete).toBe(true);
+    expect(listing.stop).toBe(ListingStop.EXHAUSTED);
+  });
+
+  /**
+   * A page that rendered nothing at all is the challenge winning, not the
+   * catalogue ending — `render` swallows the selector timeout, so the two are
+   * indistinguishable here and the safe reading is the pessimistic one.
+   */
+  it('is incomplete when a page renders nothing twice over', async () => {
+    const adapter = new FakeRozetkaAdapter([[row('1')]]);
+
+    const listing = await adapter.fetchListing();
+
+    expect(listing.items).toHaveLength(1);
+    expect(listing.complete).toBe(false);
+    expect(listing.stop).toBe(ListingStop.AMBIGUOUS);
   });
 });

@@ -185,7 +185,7 @@ describe('BayaderaAdapter.fetchListing', () => {
   it('reads the card out of its data-product-info JSON', async () => {
     const { adapter } = adapterOver({ 1: page(card()), 2: page() });
 
-    const [snap] = await adapter.fetchListing();
+    const { items: [snap] } = await adapter.fetchListing();
 
     expect(snap.storeSku).toBe('1WS-WGM070-050');
     expect(snap.name).toBe(
@@ -215,7 +215,7 @@ describe('BayaderaAdapter.fetchListing', () => {
       2: page(),
     });
 
-    const snaps = await adapter.fetchListing();
+    const { items: snaps } = await adapter.fetchListing();
 
     expect(snaps.map((snap) => snap.brand)).toEqual([
       'Glenmorangie',
@@ -234,7 +234,7 @@ describe('BayaderaAdapter.fetchListing', () => {
       2: page(),
     });
 
-    const [snap] = await adapter.fetchListing();
+    const { items: [snap] } = await adapter.fetchListing();
 
     expect(snap.name).toBe("Віскі Jack Daniel's Tennessee Old No.7 3л 40%");
     expect(snap.brand).toBe("Jack Daniel's");
@@ -252,7 +252,7 @@ describe('BayaderaAdapter.fetchListing', () => {
         2: page(),
       });
 
-      const [snap] = await adapter.fetchListing();
+      const { items: [snap] } = await adapter.fetchListing();
 
       expect(snap.price).toBe(759);
       expect(snap.oldPrice).toBe(1239);
@@ -266,7 +266,7 @@ describe('BayaderaAdapter.fetchListing', () => {
       2: page(),
     });
 
-    const [snap] = await adapter.fetchListing();
+    const { items: [snap] } = await adapter.fetchListing();
 
     expect(snap.inStock).toBe(false);
   });
@@ -280,7 +280,7 @@ describe('BayaderaAdapter.fetchListing', () => {
       2: page(),
     });
 
-    const snaps = await adapter.fetchListing();
+    const { items: snaps } = await adapter.fetchListing();
 
     expect(snaps.map((snap) => snap.storeSku)).toEqual(['1WS-WGM070-050']);
   });
@@ -291,7 +291,7 @@ describe('BayaderaAdapter.fetchListing', () => {
       2: page(),
     });
 
-    const [snap] = await adapter.fetchListing();
+    const { items: [snap] } = await adapter.fetchListing();
 
     expect(snap.storeSku).toBe('4592');
   });
@@ -304,7 +304,9 @@ describe('BayaderaAdapter.fetchListing', () => {
       ),
     });
 
-    await expect(adapter.fetchListing()).resolves.toEqual([]);
+    const { items } = await adapter.fetchListing();
+
+    expect(items).toEqual([]);
   });
 
   it(
@@ -316,7 +318,7 @@ describe('BayaderaAdapter.fetchListing', () => {
         3: page(card(), card({ article: '3' })),
       });
 
-      const snaps = await adapter.fetchListing();
+      const { items: snaps } = await adapter.fetchListing();
 
       expect(snaps.map((snap) => snap.storeSku)).toEqual([
         '1WS-WGM070-050',

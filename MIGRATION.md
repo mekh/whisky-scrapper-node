@@ -61,6 +61,12 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 | — (new)                                                                               | `POST /preference/blacklist` `{productIds?, brands?}` — hide bottlings and/or brands; also drops those bottlings from the favorites                                                                                                                                                                          | any logged-in user |
 | — (new)                                                                               | `DELETE /preference/blacklist` `{productIds?, brands?}` — un-hide; restores no favorite                                                                                                                                                                                                                     | any logged-in user |
 | — (new)                                                                               | `GET /preference/details` — the caller's own lists resolved to renderable entries, newest first (see "Preferences")                                                                                                                                                                                          | any logged-in user |
+| — (new)                                                                               | `GET /push/config` — whether web push is on plus the VAPID public key to subscribe with (see "Push notifications")                                                                                                                                                                                          | any logged-in user |
+| — (new)                                                                               | `GET /push/subscription` — the caller's subscribed devices (no key material)                                                                                                                                                                                                                                | any logged-in user |
+| — (new)                                                                               | `POST /push/subscription` `{endpoint, p256dh, auth}` — register/refresh this browser's subscription, `200` + the fresh device list                                                                                                                                                                          | any logged-in user |
+| — (new)                                                                               | `DELETE /push/subscription` `{endpoint}` — drop this browser's subscription (body on DELETE)                                                                                                                                                                                                                | any logged-in user |
+| — (new)                                                                               | `POST /push/test` — send a test notification to every device of the caller                                                                                                                                                                                                                                  | any logged-in user |
+| — (new)                                                                               | `POST /push/digest` `{capturedOn?}` — manually run the price-drop digest dispatch (idempotent per day)                                                                                                                                                                                                      | `store:sync`       |
 | — (new)                                                                               | `GET /product/search?q=&limit=` — lightweight autocomplete over the whole catalogue, one item per bottling; **ignores the caller's blacklist** (see "Catalogue search")                                                                                                                                      | any logged-in user |
 | — (new)                                                                               | `GET /brand/search?q=&limit=` — lightweight autocomplete over brand names (see "Catalogue search")                                                                                                                                                                                                          | any logged-in user |
 | `GET /` + static                                                                      | unchanged — the frontend is hosted separately (point it at this API's base URL)                                                                                                                                                                                                                             | —                  |
@@ -347,6 +353,48 @@ too (a bottling no store lists — still shown, still removable), `inStock`
 means "some offer of the bottling is in stock", and `addedOn` is the UTC
 calendar day while the ordering keys on the full timestamp. Same
 `private, no-cache` headers as the other preference reads.
+
+### Push notifications (2026-08-23)
+
+Web-push digests of price drops on favorited whiskies, sent right after a sync
+run. The contract the pieces rely on:
+
+- **A "drop" is observed history, never marketing.** Today's
+  `price_snapshot.price` must be lower than the offer's previous *existing*
+  snapshot (out-of-stock gaps are looked across, up to
+  `PUSH_MAX_PREVIOUS_GAP_DAYS = 30`; beyond that a returning listing is a new
+  price, not a discount). The store's advertised `oldPrice` is never read —
+  the same rule as `/report/drops`. Note the deliberate difference from that
+  page: the digest compares against the *previous* price ("cheaper than
+  yesterday?"), the page against the *window maximum* ("how good is this
+  price?"), so their percentages may legitimately differ.
+- **One digest per user per dispatch**, covering all their favorites that
+  dropped: best percentage per bottling across stores, at most 5 named plus
+  «та ще N». A single-drop digest links to `/product/{id}`, a multi-drop one
+  to `/drops?favoritesOnly=true`. Blacklisted bottlings/brands are excluded
+  with the same predicates the reports use.
+- **Dedup is a claimed log**, `push_digest_log (userId, storeProductId,
+  capturedOn)`: a dispatch atomically claims drops it is about to announce
+  (`INSERT … ON CONFLICT DO NOTHING RETURNING`), so a second dispatch the same
+  day sends only *newly found* drops and concurrent dispatches split the work
+  instead of duplicating it. Rows are pruned after
+  `PUSH_LOG_RETENTION_DAYS = 30`.
+- **Dispatch triggers**: the end of `runFullSync()` (once per run, not per
+  store) and the completion of a *manual* single-store sync. `POST
+  /push/digest` runs the same pass by hand — being idempotent per day, it is
+  safe to call any time.
+- **Subscriptions are per browser, unique on `endpoint`**; a re-subscribe (or
+  the same browser signing into another account) upserts and reassigns the
+  owner. Dead endpoints (404/410 from the push service) are deleted during
+  each dispatch. The payload carries fully rendered Ukrainian text
+  (`{title, body, url, count}`) because the service worker has no API access.
+- **Configuration**: `PUSH_ENABLED` + `PUSH_VAPID_PUBLIC_KEY` /
+  `PUSH_VAPID_PRIVATE_KEY` / `PUSH_VAPID_SUBJECT` (generate with
+  `node -e "console.log(require('web-push').generateVAPIDKeys())"`), optional
+  `PUSH_CONCURRENCY` (8), `PUSH_TTL_SEC` (86400), `PUSH_LOG_RETENTION_DAYS`
+  (30). Missing keys degrade to "push off" — `GET /push/config` answers
+  `{enabled: false}` and the client renders its switch disabled. Rotating the
+  public key invalidates every stored subscription.
 
 ### Catalogue search (2026-08-22)
 

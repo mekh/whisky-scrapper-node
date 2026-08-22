@@ -3,6 +3,7 @@ export { AuthConfig } from './parts/auth.config';
 export { DbConfig } from './parts/db.config';
 export { JwtAccessConfig } from './parts/jwt-access.config';
 export { LoggerConfig } from './parts/logger.config';
+export { PushConfig } from './parts/push.config';
 export { ScrapeConfig } from './parts/scrape.config';
 export { SyncConfig } from './parts/sync.config';
 export { ValidationConfig } from './parts/validation.config';

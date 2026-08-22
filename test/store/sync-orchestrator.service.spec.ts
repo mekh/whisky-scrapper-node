@@ -10,6 +10,7 @@ import type { CoreStoreService } from '~core/store';
 import type { CoreSyncLogService } from '~core/sync-log';
 import type { SyncFileLogService, SyncFileLogWriter } from '~lib/sync-file-log';
 import type { RunningSync, SiteResult, StoreListItem } from '~types';
+import type { PushDigestService } from '../../src/domain/push/push-digest.service';
 import type { ScrapeService } from '../../src/scrape/scrape.service';
 
 /**
@@ -58,6 +59,11 @@ interface Fakes {
    * The file-log service stub.
    */
   fileLog: { [key: string]: jest.Mock };
+
+  /**
+   * The post-sync push dispatch stub.
+   */
+  pushDigest: { dispatchAfterSync: jest.Mock };
 
   /**
    * The writer stubs `fileLog.open` handed out, in call order.
@@ -194,15 +200,28 @@ function makeOrchestrator(
     sweepRetention: jest.fn().mockResolvedValue(0),
   };
 
+  const pushDigest = {
+    dispatchAfterSync: jest.fn().mockResolvedValue(undefined),
+  };
+
   const orchestrator = new SyncOrchestratorService(
     stores as unknown as CoreStoreService,
     syncLogs as unknown as CoreSyncLogService,
     scrape as unknown as ScrapeService,
     config,
     fileLog as unknown as SyncFileLogService,
+    pushDigest as unknown as PushDigestService,
   );
 
-  return { orchestrator, stores, syncLogs, scrape, fileLog, writers };
+  return {
+    orchestrator,
+    stores,
+    syncLogs,
+    scrape,
+    fileLog,
+    pushDigest,
+    writers,
+  };
 }
 
 /**
@@ -784,4 +803,55 @@ describe('SyncOrchestratorService.onModuleInit', () => {
       expect(fileLog.sweepRetention).toHaveBeenCalledTimes(1);
     },
   );
+});
+
+describe('SyncOrchestratorService push dispatch hook', () => {
+  it('dispatches once after a manual store sync completes', async () => {
+    const { orchestrator, pushDigest } = makeOrchestrator(makeStore());
+
+    await orchestrator.startStoreSync('maudau', SyncTrigger.MANUAL);
+
+    /**
+     * The manual run is fire-and-forget, so the dispatch lands only after
+     * the background promise settles.
+     */
+    expect(pushDigest.dispatchAfterSync).not.toHaveBeenCalled();
+
+    await flush();
+
+    expect(pushDigest.dispatchAfterSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not dispatch for a cron-triggered single store', async () => {
+    const { orchestrator, pushDigest } = makeOrchestrator(makeStore());
+
+    await orchestrator.startStoreSync('maudau', SyncTrigger.CRON);
+    await flush();
+
+    /**
+     * A full sync reaches its stores through the cron trigger; dispatching
+     * here would fire once per store instead of once per run.
+     */
+    expect(pushDigest.dispatchAfterSync).not.toHaveBeenCalled();
+  });
+
+  it('dispatches exactly once at the end of a full sync', async () => {
+    const stores = [
+      makeStore({ id: 's1', slug: 'metro', group: 'zakaz' }),
+      makeStore({ id: 's2', slug: 'maudau' }),
+    ];
+    const { orchestrator, stores: storeFakes, pushDigest } =
+      makeOrchestrator(stores[0]);
+
+    storeFakes.findAllWithConfig.mockResolvedValue(stores);
+    storeFakes.findWithConfigBySlug.mockImplementation(
+      async (slug: string) =>
+        stores.find((item) => item.slug === slug) ?? null,
+    );
+
+    await orchestrator.runFullSync();
+    await flush();
+
+    expect(pushDigest.dispatchAfterSync).toHaveBeenCalledTimes(1);
+  });
 });

@@ -21,6 +21,7 @@ import { DomainDashboardModule } from '~domain/dashboard';
 import { DomainMetaModule } from '~domain/meta';
 import { DomainPreferenceModule } from '~domain/preference';
 import { DomainProductModule } from '~domain/product';
+import { DomainPushModule } from '~domain/push';
 import { DomainReportModule } from '~domain/report';
 import { DomainStoreModule } from '~domain/store';
 import { DomainUserModule } from '~domain/user';
@@ -71,6 +72,7 @@ import { LogInterceptor, ValidationInterceptor } from './interceptors';
     DomainStoreModule,
     DomainProductModule,
     DomainPreferenceModule,
+    DomainPushModule,
     ScrapeModule,
   ],
   providers: [

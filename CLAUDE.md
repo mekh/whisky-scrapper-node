@@ -127,7 +127,8 @@ be/
     ├── interfaces/          # ALL shared interfaces/types (~types): *.interfaces.ts
     ├── lib/                 # thin wrappers around external infra packages
     │   ├── logger/          # wraps @toxicoder/nestjs-pino (redaction, msg formatting)
-    │   └── valkey/          # wraps @toxicoder/nestjs-valkey
+    │   ├── valkey/          # wraps @toxicoder/nestjs-valkey
+    │   └── web-push/        # wraps the web-push package (VAPID, outcome mapping)
     └── utils/               # pure stateless helpers (*.util.ts), e.g. Hash (argon2)
 ```
 
@@ -1265,8 +1266,14 @@ orchestration").
 `SYNC_CRON_ENABLED`/`SYNC_CRON_EXPRESSION`/`SYNC_TIMEZONE` are read by
 `SyncCronService` at bootstrap (see "Sync orchestration"): with the flag unset
 no job is registered at all, and changing any of the three needs a restart.
-In production every `SYNC_*` var is forwarded from the host `.env` by the
-`environment` block of `docker-compose.yaml` — compose reads `.env` only to
+Push vars in `PushConfig` — `PUSH_ENABLED` (default false),
+`PUSH_VAPID_PUBLIC_KEY` / `PUSH_VAPID_PRIVATE_KEY` / `PUSH_VAPID_SUBJECT`
+(generate with `node -e "console.log(require('web-push').generateVAPIDKeys())"`;
+missing keys degrade to "push off" rather than failing the boot),
+`PUSH_CONCURRENCY` (8), `PUSH_TTL_SEC` (86400) and `PUSH_LOG_RETENTION_DAYS`
+(30) — see "Push notifications" in `MIGRATION.md`.
+In production every `SYNC_*`/`PUSH_*` var is forwarded from the host `.env` by
+the `environment` block of `docker-compose.yaml` — compose reads `.env` only to
 interpolate `${...}` in that file, and the image carries no `.env` of its own
 (`.dockerignore` excludes it), so a var that is not listed there never reaches
 the process. Add any new config var to that block, or it will silently keep
@@ -1493,6 +1500,36 @@ Pre-existing bugs fixed while wiring auth (context for future changes):
     here (the access token rotates on refresh, defeating caching entirely), so
     the client owes a cache bypass after any preference mutation and on
     login/logout — see `MIGRATION.md`.
+
+- **Web-push price-drop digests are built** (`config/parts/push.config.ts`,
+  `lib/web-push`, `core/push`, `domain/push`, 2026-08-23): after a sync, each
+  user with subscribed devices gets one digest push naming their favorited
+  bottlings whose price dropped that capture day. The full contract (drop
+  definition, dedup claim, endpoints, env) lives in `MIGRATION.md` under
+  "Push notifications". The load-bearing decisions:
+  - **The claim is one CTE statement** (`PushRepository.claimDrops`): detect
+    drops against the previous *existing* snapshot, join favorites minus
+    blacklists, and atomically claim per `(userId, storeProductId,
+    capturedOn)` into `push_digest_log` with `ON CONFLICT DO NOTHING
+    RETURNING` — which is what makes a dispatch idempotent per day and lets
+    concurrent dispatches split rather than duplicate the work.
+  - **Hooks live in the orchestrator**: awaited at the end of `runFullSync()`
+    (once per run), fire-and-forget after a *manual* `startStoreSync` — never
+    inside `runStoreSync`, or a full sync would push once per store. Nothing
+    in the dispatch is `@Transactional()` (the background-run ALS caveat), and
+    `dispatchAfterSync()` swallows every failure — a sync never pays for
+    notifications. This required the repo's first domain→domain import
+    (`domain/store` → `domain/push`); it is one-directional, so
+    `import-x/no-cycle` holds.
+  - **The payload arrives fully rendered (Ukrainian)** — the service worker
+    has no bearer token and can call nothing, so `push.constants.ts` is the
+    single place backend user-facing copy exists. Digest arithmetic is pure
+    (`PushDigestUtils` in `~utils`): best pct per bottling, 5 named + «та ще
+    N», a byte-budget trim under the 4 KB push limit.
+  - **`GET /push/config` only hands out the VAPID public key while sends can
+    actually happen** (`WebPushService.enabled`), so the client switch and the
+    key can never disagree; a missing/rejected key degrades to "push off" at
+    boot instead of failing it.
 
 **`MIGRATION.md`** is the endpoint + field map (legacy → node) for the future
 React frontend — update it alongside any API contract change.

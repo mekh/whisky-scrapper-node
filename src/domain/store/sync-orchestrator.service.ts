@@ -3,6 +3,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { SyncConfig } from '~config';
 import { CoreStoreService } from '~core/store';
 import { CoreSyncLogService } from '~core/sync-log';
+import { PushDigestService } from '~domain/push';
 import { SyncEngine, SyncTrigger } from '~enums';
 import { BadRequestError, DuplicateError, NotFoundError } from '~errors';
 import { SyncFileLogService, SyncFileLogWriter } from '~lib/sync-file-log';
@@ -77,6 +78,7 @@ export class SyncOrchestratorService implements OnModuleInit {
     private readonly scrape: ScrapeService,
     private readonly config: SyncConfig,
     private readonly fileLog: SyncFileLogService,
+    private readonly pushDigest: PushDigestService,
   ) {}
 
   /**
@@ -124,6 +126,18 @@ export class SyncOrchestratorService implements OnModuleInit {
         this.logger.error('Sync run crashed for %s: %o', store.slug, error);
 
         return UNKNOWN_FAILURE;
+      })
+      .finally(() => {
+        /**
+         * The push pass runs after a *manual* store sync only — a full sync
+         * reaches stores through `runScheduledStore` and dispatches once at
+         * the end of `runFullSync`, not once per store. Nothing awaits it:
+         * the manual caller already has its 202, and the dispatch itself
+         * never throws.
+         */
+        if (trigger === SyncTrigger.MANUAL) {
+          void this.pushDigest.dispatchAfterSync();
+        }
       });
 
     if (trigger === SyncTrigger.CRON) {
@@ -173,6 +187,13 @@ export class SyncOrchestratorService implements OnModuleInit {
 
     await this.writeRunSummary(report, owned.length, tracks.length);
     await this.sweepLogFiles();
+
+    /**
+     * After every store's transaction has committed: one digest push per
+     * affected user for the whole run. Awaited so the cron's summary line
+     * lands after the dispatch's own; it swallows every failure.
+     */
+    await this.pushDigest.dispatchAfterSync();
 
     return report;
   }

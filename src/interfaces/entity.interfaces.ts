@@ -242,6 +242,85 @@ export interface EntityBlacklistBrand {
   createdAt: Date;
 }
 
+/**
+ * One browser's push subscription, owned by one user. A browser profile holds
+ * at most one subscription per origin, so `endpoint` is globally unique and a
+ * re-subscribe from the same profile is an upsert, not a second row.
+ */
+export interface EntityPushSubscription extends EntityBaseRich {
+  /**
+   * The user notified through this subscription. Reassigned on upsert when
+   * the same browser profile signs into another account.
+   */
+  userId: ID;
+
+  /**
+   * The push service URL the payload is POSTed to. Unique — it identifies the
+   * browser installation, not the user.
+   */
+  endpoint: string;
+
+  /**
+   * Client public key (base64url), used by the `web-push` library to encrypt
+   * the payload for this subscription.
+   */
+  p256dh: string;
+
+  /**
+   * Client auth secret (base64url), the second half of the encryption input.
+   */
+  auth: string;
+
+  /**
+   * The subscribing browser's User-Agent, kept only so a device list is
+   * tellable apart by a human.
+   */
+  userAgent?: string;
+
+  /**
+   * When a push was last accepted by the push service for this subscription.
+   */
+  lastSuccessAt?: Date;
+}
+
+/**
+ * One offer's price drop already claimed by a digest dispatch. Composite-keyed
+ * on `(userId, storeProductId, capturedOn)` like the preference memberships:
+ * the row either exists or it does not, and its presence is what makes a
+ * second dispatch of the same day skip the drop.
+ */
+export interface EntityPushDigestLog {
+  /**
+   * The user the drop was included in a digest for.
+   */
+  userId: ID;
+
+  /**
+   * The store offer whose price dropped.
+   */
+  storeProductId: ID;
+
+  /**
+   * The capture day (`YYYY-MM-DD`) the drop was observed on.
+   */
+  capturedOn: string;
+
+  /**
+   * The dropped price, kept for auditing what was actually announced.
+   */
+  price: number;
+
+  /**
+   * The previous recorded price the drop was measured against.
+   */
+  previousPrice: number;
+
+  /**
+   * When the digest claimed the drop.
+   */
+  createdAt: Date;
+}
+
 export interface EntitySyncLog extends EntityBaseRich {
   storeId: ID;
   added: number;

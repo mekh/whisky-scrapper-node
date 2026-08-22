@@ -114,7 +114,9 @@ export interface ReportQuery {
   /**
    * Case-insensitive substring matched against both the cleaned name and the
    * raw scraped one, so descriptors that only survive in `nameOrig` (type,
-   * region, packaging) stay searchable.
+   * region, packaging) stay searchable. A trailing number is additionally
+   * read as an age statement (`Glenfiddich 12`), which is what reaches the
+   * bottlings whose name carries no age.
    */
   name?: string;
 
@@ -200,7 +202,9 @@ export interface ReportFilter {
 
   /**
    * Case-insensitive substring the cleaned or the raw product name must
-   * contain.
+   * contain, or — when the term ends in a number — a name part plus the age
+   * that number states (`Glenfiddich 12` also matches every 12-year-old
+   * Glenfiddich). Both readings match; see `findCurrentRows`.
    */
   name?: string;
 }

@@ -25,7 +25,7 @@ const SITE = 'https://silpo.ua';
  * UUID once a city is chosen; the zero UUID answers with the default
  * assortment and stock, which is what a first-time visitor sees.
  */
-const DEFAULT_BRANCH = '00000000-0000-0000-0000-000000000000';
+const DEFAULT_BRANCH = '1f0bae35-69aa-6bd2-82b6-9554c10c3d4a';
 
 const API =
   `https://sf-ecom-api.silpo.ua/v1/uk/branches/${DEFAULT_BRANCH}/products`;

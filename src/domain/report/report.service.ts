@@ -174,13 +174,12 @@ export class ReportService {
    * @returns Catalog groups, one per bottling, holding every in-stock offer.
    */
   private catalog(current: ReportCurrentRow[]): ReportGroup[] {
-    const rows = current.map((row) => {
-      const reference = row.previousPrice && row.previousPrice > row.price
-        ? row.previousPrice
-        : null;
-
-      return this.enrich(row, { referencePrice: reference, isNew: false });
-    });
+    const rows = current.map((row) =>
+      this.enrich(row, {
+        referencePrice: this.previousDrop(row),
+        isNew: false,
+      })
+    );
 
     return this.groupOffers(rows).sort((a, b) =>
       (a.name ?? a.nameOrig).toLowerCase()
@@ -352,6 +351,14 @@ export class ReportService {
    * Best offers: products sold in several stores, keeping the cheapest and
    * marking the saving against the runner-up. Ordered by saving desc.
    *
+   * The group carries every in-stock offer of the bottling, exactly as the
+   * catalog's groups do. It used to carry the winner alone, on the grounds
+   * that `referencePrice` already states the comparison — but a price is not
+   * an offer: it names neither the store that asks it nor the page to open,
+   * and the client renders a group's other offers anyway. Only the winner is
+   * enriched against the runner-up; every other offer reads as it would in the
+   * catalog, against its own previous price.
+   *
    * The price bounds are applied here rather than in SQL, because the rows
    * this report is handed deliberately still hold the offers that fall outside
    * them — they are what the winner is compared against (see
@@ -361,28 +368,24 @@ export class ReportService {
    * @param current - All matching current rows, price bounds not yet applied.
    * @param filter - The report filter, for its price bounds.
    * @param options - Report options (min-discount).
-   * @returns One single-offer group per multi-store bottling: this report has
-   *   already chosen the offer that matters, and its `referencePrice` names the
-   *   runner-up, so listing the runner-up again as an offer would state the
-   *   same comparison twice.
+   * @returns One group per multi-store bottling, led by its winning offer.
    */
   private best(
     current: ReportCurrentRow[],
     filter: ReportFilter,
     options: ReportOptions,
   ): ReportGroup[] {
-    const groups = this.groupByProduct(current);
-    const rows: ReportRow[] = [];
+    const groups: ReportGroup[] = [];
 
-    groups.forEach((group) => {
-      const row = this.bestOfGroup(group);
+    this.groupByProduct(current).forEach((group) => {
+      const winner = this.bestOfGroup(group);
 
-      if (row && this.withinPriceBounds(row.price, filter)) {
-        rows.push(row);
+      if (winner && this.withinPriceBounds(winner.price, filter)) {
+        groups.push(this.toGroup(winner, this.bestOffers(group, winner)));
       }
     });
 
-    return this.wrapOffers(this.applyMinDiscount(rows, options))
+    return this.applyMinDiscount(groups, options)
       .sort((a, b) =>
         (b.discountPct ?? 0) - (a.discountPct ?? 0) || a.id.localeCompare(b.id)
       );
@@ -399,6 +402,10 @@ export class ReportService {
    * is wrong — no longer a name key merging two whiskies, but a mislinked
    * offer, which is the failure mode manual curation exists to fix.
    *
+   * The candidates are ordered by the same comparator the group's offers are,
+   * so the winner is also `offers[0]` — the invariant every group keeps — and
+   * two offers at one price can no longer swap the winner between requests.
+   *
    * @param group - Current rows sharing a canonical product.
    * @returns The best-offer row, or null when the group is not a valid deal.
    */
@@ -409,7 +416,7 @@ export class ReportService {
       return null;
     }
 
-    const ordered = [...group].sort((a, b) => a.price - b.price);
+    const ordered = [...group].sort((a, b) => this.byOfferPrice(a, b));
     const [best, runnerUp] = ordered;
 
     if (best.price < runnerUp.price * BEST_MERGE_GUARD) {
@@ -420,6 +427,37 @@ export class ReportService {
       referencePrice: runnerUp.price,
       isNew: false,
     });
+  }
+
+  /**
+   * The offers of one bottling as `best` states them: the winner exactly as
+   * the group header reads it — its saving against the runner-up — and every
+   * other offer as the catalog would state it, against its own previous price.
+   * The two discounts answer different questions (what this bottling costs
+   * elsewhere; whether this store has moved its price), and only the winner's
+   * is the report's own claim.
+   *
+   * Offers outside the price bounds are deliberately kept: a runner-up above
+   * the user's ceiling is the whole reason the winner is a deal, and the group
+   * already quotes its price.
+   *
+   * @param group - Current rows sharing a canonical product.
+   * @param winner - The enriched winning row, already picked from the group.
+   * @returns The group's offers, cheapest first, led by the winner.
+   */
+  private bestOffers(
+    group: ReportCurrentRow[],
+    winner: ReportRow,
+  ): ReportOffer[] {
+    return group
+      .map((row) =>
+        row.id === winner.id ? winner : this.enrich(row, {
+          referencePrice: this.previousDrop(row),
+          isNew: false,
+        })
+      )
+      .sort((a, b) => this.byOfferPrice(a, b))
+      .map((row) => this.toOffer(row));
   }
 
   /**
@@ -491,8 +529,10 @@ export class ReportService {
   }
 
   /**
-   * Wraps each row as its own single-offer group, for the reports that select
-   * one offer per item and must keep doing so (`low`, `best`).
+   * Wraps each row as its own single-offer group, for `low` — the one report
+   * that selects per offer and must keep doing so, since two stores can both
+   * be at their own window low and collapsing them would hide one of the two
+   * lows the report exists to show.
    *
    * @param rows - The rows the report selected.
    * @returns One single-offer group per row, in the input order.
@@ -559,11 +599,18 @@ export class ReportService {
    * between requests, and with them the group's primary offer — the store, URL
    * and history the collapsed row points at.
    *
+   * It takes the offer-level fields alone rather than a whole `ReportRow`,
+   * because `best` orders its candidates with it before any of them is
+   * enriched.
+   *
    * @param a - First offer.
    * @param b - Second offer.
    * @returns Negative, zero, or positive per standard comparator semantics.
    */
-  private byOfferPrice(a: ReportRow, b: ReportRow): number {
+  private byOfferPrice(
+    a: Pick<ReportCurrentRow, 'id' | 'price' | 'storeName'>,
+    b: Pick<ReportCurrentRow, 'id' | 'price' | 'storeName'>,
+  ): number {
     return a.price - b.price
       || a.storeName.localeCompare(b.storeName)
       || a.id.localeCompare(b.id);
@@ -572,14 +619,17 @@ export class ReportService {
   /**
    * Removes rows whose discount is below the requested minimum.
    *
+   * Generic over the row type so `best` can filter the groups it has already
+   * built — its offers are chosen per group, not per surviving row.
+   *
    * @param rows - Candidate rows.
    * @param options - Report options carrying `minDiscount`.
    * @returns The filtered rows (unchanged when no minimum is set).
    */
-  private applyMinDiscount(
-    rows: ReportRow[],
+  private applyMinDiscount<T extends ReportRow>(
+    rows: T[],
     options: ReportOptions,
-  ): ReportRow[] {
+  ): T[] {
     const min = options.minDiscount;
 
     if (!min) {
@@ -686,6 +736,23 @@ export class ReportService {
     }
 
     return null;
+  }
+
+  /**
+   * The row's own previous price when the price has fallen since, else null.
+   *
+   * This is what an offer-level discount means on every report that states one
+   * — measured against a price we actually recorded, never the store's
+   * advertised strike price — so the catalog's offers and the offers `best`
+   * lists beside its winner read identically.
+   *
+   * @param row - The current row.
+   * @returns The previous price when it beats the current one, else null.
+   */
+  private previousDrop(row: ReportCurrentRow): number | null {
+    return row.previousPrice && row.previousPrice > row.price
+      ? row.previousPrice
+      : null;
   }
 
   /**

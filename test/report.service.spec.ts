@@ -433,7 +433,7 @@ describe('ReportService — best offers group by the stored bottling', () => {
     expect(await run(ReportKind.BEST, rows)).toHaveLength(1);
   });
 
-  it('carries the winning offer alone', async () => {
+  it('carries every offer, winner first', async () => {
     const rows = [
       makeRow({ id: 'a' as ID, storeSlug: 'one', price: 1200 }),
       makeRow({ id: 'b' as ID, storeSlug: 'two', price: 1000 }),
@@ -441,8 +441,70 @@ describe('ReportService — best offers group by the stored bottling', () => {
 
     const [group] = await run(ReportKind.BEST, rows);
 
-    expect(group.offers).toHaveLength(1);
-    expect(group.offers[0].id).toBe('b');
+    expect(group.offers.map((offer) => offer.id)).toEqual(['b', 'a']);
+    expect(group.offers.map((offer) => offer.price)).toEqual([1000, 1200]);
+  });
+
+  it('states the saving on the winner only', async () => {
+    /**
+     * Two discounts that answer different questions: the winner's is this
+     * report's own claim (what the bottling costs elsewhere), the runner-up's
+     * is the catalog's (its own price moved), and 1400 never dropped at all.
+     */
+    const rows = [
+      makeRow({
+        id: 'a' as ID,
+        storeSlug: 'one',
+        price: 1200,
+        previousPrice: 1500,
+      }),
+      makeRow({
+        id: 'b' as ID,
+        storeSlug: 'two',
+        price: 1000,
+        previousPrice: 900,
+      }),
+      makeRow({ id: 'c' as ID, storeSlug: 'three', price: 1400 }),
+    ];
+
+    const [group] = await run(ReportKind.BEST, rows);
+    const [winner, second, third] = group.offers;
+
+    expect(group.discountPct).toBe(17);
+    expect(winner.referencePrice).toBe(1200);
+    expect(winner.discountPct).toBe(17);
+    expect(second.referencePrice).toBe(1500);
+    expect(second.discountPct).toBe(20);
+    expect(third.referencePrice).toBeNull();
+  });
+
+  it('picks the same winner whichever order the rows arrive in', async () => {
+    /**
+     * The current-rows query has no `ORDER BY`, so two offers at one price
+     * used to hand the group a different winner — and a different store, URL
+     * and price history — from one request to the next.
+     */
+    const tie = [
+      makeRow({
+        id: 'a' as ID,
+        storeSlug: 'one',
+        storeName: 'Alpha',
+        price: 1000,
+      }),
+      makeRow({
+        id: 'b' as ID,
+        storeSlug: 'two',
+        storeName: 'Beta',
+        price: 1000,
+      }),
+    ];
+
+    const [forward] = await run(ReportKind.BEST, tie);
+    const [reversed] = await run(ReportKind.BEST, [...tie].reverse());
+
+    expect(forward.id).toBe('a');
+    expect(reversed.id).toBe('a');
+    expect(reversed.offers[0].id).toBe('a');
   });
 
   it('keeps a winner whose runner-up is above the price ceiling', async () => {
@@ -464,6 +526,15 @@ describe('ReportService — best offers group by the stored bottling', () => {
     expect(data[0].id).toBe('a');
     expect(data[0].price).toBe(1699);
     expect(data[0].referencePrice).toBe(3299);
+
+    /**
+     * And the offer the saving is measured against is listed, ceiling or not:
+     * the group already quotes its price, so hiding the store asking it would
+     * state the comparison without letting the user check it.
+     */
+    expect(data[0].offers.map((offer) => offer.storeSlug))
+      .toEqual(['rozetka', 'maudau']);
+    expect(data[0].offers[1].price).toBe(3299);
   });
 
   it('measures the saving against the true runner-up', async () => {

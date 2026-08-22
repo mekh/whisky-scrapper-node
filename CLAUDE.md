@@ -1307,9 +1307,15 @@ Pre-existing bugs fixed while wiring auth (context for future changes):
   groups them by the persisted `productId`, so a page of 50 is 50 distinct
   bottlings (3 099 groups over 7 673 in-stock offers) and every top-level field
   is the cheapest offer's, with the rest in `offers` (price ascending).
-  `catalog` groups every in-stock offer, `new`/`drops` only the offers that
-  qualified, and `low`/`best` keep their per-offer selection as single-offer
-  groups. The grouping is JS-side, over the same `findCurrentRows` query — the
+  `catalog` and `best` group every in-stock offer, `new`/`drops` only the
+  offers that qualified, and `low` keeps its per-offer selection as
+  single-offer groups (two stores at their own window low are two items).
+  `best` carried its winner alone until 2026-08-22, on the grounds that
+  `referencePrice` already stated the comparison — but a price names neither
+  the store asking it nor the page to open, and the client renders a group's
+  offers anyway. Only its winner is enriched against the runner-up; the other
+  offers read as the catalog's do, against their own previous price.
+  The grouping is JS-side, over the same `findCurrentRows` query — the
   per-kind rules read values that never existed in SQL (window extremes, the
   real current date, `minDiscount`), so pushing `LIMIT` down would have forked
   them. **`best` is the one kind whose price filter does not run in SQL**
@@ -1320,7 +1326,9 @@ Pre-existing bugs fixed while wiring auth (context for future changes):
   two-store guard, and the affordable offer took the fall with it — a whisky
   at 1699 (rozetka) against 3299 (maudau) vanished from `maxPrice=2000`, and
   the groups that survived had their saving measured against whichever
-  runner-up happened to fit. Every other predicate still filters in SQL:
+  runner-up happened to fit. The candidates it keeps are also what its
+  `offers` array lists, so a `best` group legitimately shows stores above the
+  ceiling. Every other predicate still filters in SQL:
   volume, country, type and flavors answer identically for every offer of one
   bottling, and `stores` is meant to narrow the comparison.
   See `MIGRATION.md` "Report groups". Response DTOs are camelCase (DB field

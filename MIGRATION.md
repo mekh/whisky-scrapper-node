@@ -101,13 +101,13 @@ now the **cheapest offer's** value — and the item carries one added field:
 
 Which offers a group holds depends on the kind:
 
-| Kind      | `offers`                                                                                                                    |
-| --------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `catalog` | every in-stock offer of the bottling                                                                                        |
-| `new`     | only the offers that qualified — a whisky two stores just started listing holds exactly those two, not the stores that have had it for months |
-| `drops`   | only the discounted offers (after `minDiscount` and the discount-day window)                                                 |
-| `low`     | unchanged selection: one item **per qualifying offer**, each with a single offer. Two stores at their own window low stay two items, so two items can share a `productId` |
-| `best`    | unchanged: one item per multi-store bottling, carrying the winning offer alone (`referencePrice` already names the runner-up) |
+| Kind      | `offers`                                                                                                                                                                                                                  |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `catalog` | every in-stock offer of the bottling                                                                                                                                                                                      |
+| `new`     | only the offers that qualified — a whisky two stores just started listing holds exactly those two, not the stores that have had it for months                                                                             |
+| `drops`   | only the discounted offers (after `minDiscount` and the discount-day window)                                                                                                                                              |
+| `low`     | unchanged selection: one item **per qualifying offer**, each with a single offer. Two stores at their own window low stay two items, so two items can share a `productId`                                                 |
+| `best`    | every in-stock offer of the bottling (2026-08-22), one item per multi-store bottling, led by the winning offer. Each offer's `discountPct` is its own price move; the winner's is the item's saving against the runner-up |
 
 Consequences worth knowing:
 
@@ -119,6 +119,15 @@ Consequences worth knowing:
   `minPrice`/`maxPrice` leave a group holding only its matching offers, so the
   headline price is the cheapest *matching* offer. A bottling appears whenever
   at least one of its offers survives.
+- **`best` is the exception to the price bounds** (2026-08-22): it compares a
+  bottling's offers against each other, so it is given every offer whatever it
+  costs, and `minPrice`/`maxPrice` then filter the **winning** offer — the only
+  price the item quotes as its own. Its `offers` array therefore lists stores
+  above the ceiling, which is the point: they are what the saving is measured
+  against. With the bounds applied in SQL instead, a runner-up above the
+  ceiling was dropped before the comparison, the group fell under the two-store
+  guard, and the affordable offer vanished with it (1699 at rozetka against
+  3299 at maudau disappeared from `maxPrice=2000`).
 - **`name` search behaves the same way.** The term is matched against the
   bottling's `name` **or** an offer's `nameOrig`, so a raw-name term like
   «в коробці» yields a group of just the offers that spell it out.

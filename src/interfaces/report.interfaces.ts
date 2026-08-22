@@ -406,11 +406,17 @@ export type ReportOffer = Pick<
 export interface ReportGroup extends ReportRow {
   /**
    * The offers of this bottling the report selected, cheapest first and never
-   * empty. Which offers those are depends on the kind: the catalog groups
-   * every in-stock offer, while `new` and `drops` group only the offers that
-   * qualified (newly listed / discounted), so a product added by two stores
-   * lists exactly those two. `low` and `best` keep their per-offer selection
-   * and therefore carry a single offer.
+   * empty. Which offers those are depends on the kind: `catalog` and `best`
+   * hold every in-stock offer, while `new` and `drops` hold only the offers
+   * that qualified (newly listed / discounted), so a product added by two
+   * stores lists exactly those two. `low` keeps its per-offer selection and
+   * therefore carries a single offer.
+   *
+   * `best` is the one kind whose offers can fall outside the requested price
+   * bounds: they are what its winner is compared against, and the item's
+   * `referencePrice` already quotes the runner-up. An offer-level
+   * `discountPct` is always that offer's own price move, except on `best`'s
+   * winning offer, which carries the item's saving against the runner-up.
    *
    * Every field the group itself carries is the first offer's — the cheapest
    * one — which is what the collapsed row shows and what an offer-level sort

@@ -96,6 +96,30 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
   }
 
   /**
+   * Which of the given canonical ids exist.
+   *
+   * The favorites and blacklist writes need this because their tables carry a
+   * foreign key to `product`: an id that does not exist would raise a
+   * constraint violation the client reads as a 500, where it owes them a 400
+   * naming the ids it could not place.
+   *
+   * @param ids - Canonical product ids to check; duplicates are ignored.
+   * @returns The subset that exists.
+   */
+  public async findExistingIds(ids: ID[]): Promise<Set<ID>> {
+    if (!ids.length) {
+      return new Set();
+    }
+
+    const rows = await this.query(
+      'SELECT id FROM product WHERE id = ANY($1::uuid[])',
+      [ids],
+    ) as { id: ID }[];
+
+    return new Set(rows.map((row) => row.id));
+  }
+
+  /**
    * Resolves a batch of bottlings to canonical ids, creating the ones the
    * catalogue has never seen.
    *

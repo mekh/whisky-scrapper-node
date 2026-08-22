@@ -62,6 +62,12 @@ export interface ReportOptions {
 
 export interface ReportQuery {
   /**
+   * Keep only the caller's favorited bottlings. Their blacklist is applied
+   * either way and cannot be switched off from the query string.
+   */
+  favoritesOnly?: boolean;
+
+  /**
    * Store slugs to include (CSV in the query string).
    */
   stores?: string[];
@@ -154,6 +160,20 @@ export interface ReportQuery {
 }
 
 export interface ReportFilter {
+  /**
+   * The user the report is being run for. Required, and deliberately not
+   * optional: it is what the blacklist and favorites predicates key on, so a
+   * caller that forgot it would silently serve one user an unfiltered
+   * catalogue.
+   */
+  userId: ID;
+
+  /**
+   * When true, keep only bottlings this user has favorited. The blacklist
+   * predicates are unconditional and are not expressed here at all.
+   */
+  favoritesOnly?: boolean;
+
   /**
    * Store slugs to include. Empty/undefined means every store.
    */

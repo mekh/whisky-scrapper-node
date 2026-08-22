@@ -41,6 +41,17 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
   }
 
   /**
+   * Which of the given canonical ids exist, so a caller can reject the rest as
+   * a bad request instead of hitting a foreign-key violation.
+   *
+   * @param ids - Canonical product ids to check; duplicates are ignored.
+   * @returns The subset that exists.
+   */
+  public async findExistingIds(ids: ID[]): Promise<Set<ID>> {
+    return this.repo.findExistingIds(ids);
+  }
+
+  /**
    * Resolves a batch of bottlings to canonical ids, creating the unknown ones.
    *
    * @param inputs - One entry per distinct match key, deduplicated and sorted

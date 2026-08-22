@@ -7,6 +7,7 @@ export * from './entity.interfaces';
 export * from './jwt.interfaces';
 export * from './meta.interfaces';
 export * from './permission.interfaces';
+export * from './preference.interfaces';
 export * from './product.interfaces';
 export * from './report.interfaces';
 export * from './rest.interfaces';

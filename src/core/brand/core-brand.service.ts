@@ -18,13 +18,25 @@ export class CoreBrandService extends CoreBaseService<BrandEntity> {
   }
 
   /**
-   * Resolves brand names to ids, creating any missing ones.
+   * Resolves brand names to ids, creating any missing ones. This is the scrape
+   * path; anything driven by a request wants `findIdsByName` instead, which
+   * cannot mint a brand from a typo.
    *
    * @param names - Brand names; blanks and duplicates are ignored.
    * @returns Map from each present name to its id.
    */
   public async resolveByName(names: string[]): Promise<Map<string, ID>> {
     return this.repo.getOrCreateByName(names);
+  }
+
+  /**
+   * Resolves brand names to ids without creating the missing ones.
+   *
+   * @param names - Brand names; blanks and duplicates are ignored.
+   * @returns Map from each matched name to its id; unknown names are absent.
+   */
+  public async findIdsByName(names: string[]): Promise<Map<string, ID>> {
+    return this.repo.findIdsByName(names);
   }
 
   /**

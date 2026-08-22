@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { CoreBrandModule } from './brand';
 import { CoreCountryModule } from './country';
 import { CoreFlavorModule } from './flavor';
+import { CorePreferenceModule } from './preference';
 import { CorePriceSnapshotModule } from './price-snapshot';
 import { CoreProductModule } from './product';
 import { CoreStoreModule } from './store';
@@ -21,6 +22,7 @@ import { CoreTypeModule } from './type';
     CoreBrandModule,
     CoreCountryModule,
     CoreFlavorModule,
+    CorePreferenceModule,
     CorePriceSnapshotModule,
     CoreProductModule,
     CoreStoreModule,
@@ -33,6 +35,7 @@ import { CoreTypeModule } from './type';
     CoreBrandModule,
     CoreCountryModule,
     CoreFlavorModule,
+    CorePreferenceModule,
     CorePriceSnapshotModule,
     CoreProductModule,
     CoreStoreModule,

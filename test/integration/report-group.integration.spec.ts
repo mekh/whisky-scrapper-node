@@ -13,6 +13,13 @@ import {
   closeIntegrationModule,
 } from './integration-module';
 
+/**
+ * The report's per-user predicates are anti-joins against tables this suite
+ * never writes, so any uuid reads as "a user with no preferences" — no `user`
+ * row is needed.
+ */
+const USER_ID = '0198d1f6-0000-7000-8000-0000000000b1' as ID;
+
 const STAMP = Date.now();
 
 const SLUG_A = `__it_grp_a_${STAMP}`;
@@ -65,7 +72,7 @@ describe('report grouping over the live query (integration)', () => {
   ): Promise<ReportGroup[]> => {
     const page = await service.report(
       ReportKind.CATALOG,
-      { name: TOKEN, ...filter },
+      { userId: USER_ID, name: TOKEN, ...filter },
       OPTIONS,
     );
 
@@ -232,7 +239,7 @@ describe('report grouping over the live query (integration)', () => {
   it('counts bottlings, not offers', async () => {
     const page = await service.report(
       ReportKind.CATALOG,
-      { name: TOKEN },
+      { userId: USER_ID, name: TOKEN },
       OPTIONS,
     );
 

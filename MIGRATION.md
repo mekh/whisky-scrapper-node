@@ -54,6 +54,12 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 | — (new)                                                                               | `GET /dashboard/breakdown?by=type\|country\|priceBucket\|flavor\|store&date=&stores=` — one day's in-stock assortment sliced by a dimension                                                                                                                                                                 | any logged-in user |
 | — (new)                                                                               | `GET /dashboard/movers?from&to&stores=&limit=&minPrice=` — biggest price drops and rises over the range (first vs last snapshot per listing)                                                                                                                                                                | any logged-in user |
 | — (new)                                                                               | `GET /dashboard/sync-activity?from&to&stores=` — sync runs, outcomes and persist counters per day                                                                                                                                                                                                           | any logged-in user |
+| — (new)                                                                               | `GET /preference` — the caller's own favorites and blacklist                                                                                                                                                                                                                                                | any logged-in user |
+| — (new)                                                                               | `GET /preference/{userId}` — another user's preferences                                                                                                                                                                                                                                                     | `preference:read` or self (admin bypasses) |
+| — (new)                                                                               | `POST /preference/favorites` `{productIds}` — add favorites (idempotent), `200` + the fresh preference                                                                                                                                                                                                      | any logged-in user |
+| — (new)                                                                               | `DELETE /preference/favorites` `{productIds}` — remove favorites (body on DELETE)                                                                                                                                                                                                                          | any logged-in user |
+| — (new)                                                                               | `POST /preference/blacklist` `{productIds?, brands?}` — hide bottlings and/or brands; also drops those bottlings from the favorites                                                                                                                                                                          | any logged-in user |
+| — (new)                                                                               | `DELETE /preference/blacklist` `{productIds?, brands?}` — un-hide; restores no favorite                                                                                                                                                                                                                     | any logged-in user |
 | `GET /` + static                                                                      | unchanged — the frontend is hosted separately (point it at this API's base URL)                                                                                                                                                                                                                             | —                  |
 
 Report list responses are paginated: `{ data: ReportGroup[], total, limit,
@@ -258,7 +264,9 @@ Same set as legacy, camelCased: `stores`, `minPrice`, `maxPrice`, `minVolume`,
 `maxVolume`, `flavors`, `excludeFlavors`, `types` (was `whisky_type`; now a CSV,
 `unknown` matches typeless products), `countries`, `minDiscount`, `name`,
 `window` (today|yesterday|week|month|year), `sort`, `order` (asc|desc), `page`,
-`perPage`. Multi-value params are comma-separated (e.g. `stores=maudau,novus`).
+`perPage`, plus the node-only `favoritesOnly` (`true`/`false`, see
+"Preferences"). Multi-value params are comma-separated
+(e.g. `stores=maudau,novus`).
 `window` drives the `low`/`drops` lookback with `week|month|year`; for the `new`
 report `today`/`yesterday` instead narrow listings to that added-on day (`/meta`
 `windows` still lists only the period values). The `new` report measures recency
@@ -284,6 +292,43 @@ tab surfaces it as the "Знижено" picker, mirroring "Додано" on `new
 ties on the item id, so paging is stable. Omitting `sort` keeps the report's
 natural order (e.g. `drops` by discount desc); the web `drops` tab defaults its
 view to `sort=daysDiscount&order=asc` (freshest price drops first).
+
+### Preferences (2026-08-22)
+
+`GET /preference` answers
+`{ favorites: string[], blacklistProducts: string[], blacklistBrands: string[] }`,
+and so does every mutation — the client replaces its cached copy from the
+response and needs no follow-up read. Both reads are
+`private, no-cache, no-store, must-revalidate`.
+
+Four things are easy to get wrong:
+
+- **Favorites and the product blacklist take the canonical `productId`** — a
+  report group's `productId`, **not** an offer's `id`. Sending an offer id
+  answers `400 Unknown product`. (`POST /product/update` deliberately accepts
+  either id; this endpoint does not, because a favorite is a whisky rather than
+  one shop's listing of it.)
+- **Brands are names in both directions**, spelled as the report's `brand`
+  field spells them. An unknown name is `400 Unknown brand` listing the
+  offenders — it never coins a brand.
+- **A blacklist call must name something**: `{}` or two empty arrays is
+  `400`. An empty `productIds` on the favorites endpoints is a documented
+  no-op, so a client may post whatever selection it holds.
+- **Adding a product to the blacklist removes it from the favorites**, in one
+  transaction. Blacklisting a *brand* does not: the report hides such a
+  favorite while the rule stands, so lifting the rule restores it.
+
+The blacklist filters every report kind, for that user, in SQL. Products whose
+brand never resolved survive a brand rule (there is no unknown brand to hide).
+The single-item paths — `GET /report/history` and the price history behind it —
+are deliberately **not** filtered, so the product card that just hid a bottling
+keeps working and the entry stays inspectable while removal is API-only.
+
+Because `/report/*` is cached `private, max-age=600` and its rows are now
+per-user, a client must bypass that cache after a preference mutation (the web
+client's `forceFreshWindow()` exists for exactly this) before invalidating its
+report queries — otherwise the user's own change is masked for up to ten
+minutes.
 
 ### `/meta`
 

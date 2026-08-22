@@ -10,7 +10,7 @@ import {
 } from 'class-validator';
 
 import { PER_PAGE_OPTIONS } from '~constants';
-import { CsvArray } from '~decorators/fields';
+import { BoolQuery, CsvArray } from '~decorators/fields';
 import { ReportSortField, ReportWindow, SortOrder } from '~enums';
 import { ReportQuery } from '~types';
 
@@ -58,6 +58,9 @@ export class ReportQueryDto implements ReportQuery {
   @IsOptional()
   @IsString()
   public name?: string;
+
+  @BoolQuery()
+  public favoritesOnly?: boolean;
 
   @IsOptional()
   @IsEnum(ReportWindow)

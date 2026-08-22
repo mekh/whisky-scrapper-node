@@ -16,6 +16,8 @@ import type {
   PermissionMap,
 } from '~types';
 
+import { PreferenceController } from '../src/domain/preference/preference.controller';
+
 // Sentinel handed to every CanDo callback so tests can assert identity.
 const MANAGER = { tag: 'ctx-manager' } as unknown as CtxManager;
 
@@ -371,6 +373,104 @@ describe('PermissionGuard — special resources skip user.permissions', () => {
     await runGuard(meta, asUser({ permissions }));
 
     expect(getSpy).toHaveBeenCalledWith(Resource.USER);
+  });
+});
+
+describe('PermissionGuard — GET /preference/:userId', () => {
+  /**
+   * The real handler's metadata, so the matrix below exercises the shipped
+   * `[PREFERENCE, READ] OR [SELF, isSelf]` pair rather than a restatement of
+   * it.
+   *
+   * @returns The metadata attached to `PreferenceController.byUser`.
+   */
+  function byUserMeta(): AuthPermissionMeta {
+    const method = Object.getOwnPropertyDescriptor(
+      PreferenceController.prototype,
+      'byUser',
+    )?.value as object;
+
+    return Reflect.getMetadata(
+      PERMISSION_META_INJECT_TOKEN,
+      method,
+    ) as AuthPermissionMeta;
+  }
+
+  /**
+   * Runs the guard with a context manager that answers `getData` — unlike the
+   * sentinel the other suites pass, the real `isSelf` reads the route params
+   * off it.
+   *
+   * @param user - The current user, or null for anonymous.
+   * @param targetUserId - The `:userId` the request addresses.
+   * @returns Whether the guard authorizes the request.
+   */
+  function runByUserGuard(
+    user: CtxUser | null,
+    targetUserId: string,
+  ): Promise<boolean> {
+    const meta = byUserMeta();
+    const guard = new PermissionGuard();
+
+    const manager = {
+      user,
+      getData: (): { params: { userId: string } } => ({
+        params: { userId: targetUserId },
+      }),
+    };
+
+    const ctx = {
+      user,
+      isResourcePublic: (): boolean => meta.isPublic,
+      getMetaOrThrow: (): AuthPermissionMeta => meta,
+      manager: manager as unknown as CtxManager,
+    };
+
+    jest
+      .spyOn(ContextManager, 'create')
+      .mockReturnValue(ctx as unknown as ContextManager);
+
+    return guard.canActivate({} as ExecutionContext);
+  }
+
+  it('allows a user to read their own preferences', async () => {
+    const granted = await runByUserGuard(asUser({ id: 'u1' }), 'u1');
+
+    expect(granted).toBe(true);
+  });
+
+  it("denies reading another user's preferences", async () => {
+    const granted = await runByUserGuard(asUser({ id: 'u1' }), 'u2');
+
+    expect(granted).toBe(false);
+  });
+
+  it('lets an admin read anyone, holding no scope at all', async () => {
+    const granted = await runByUserGuard(
+      asUser({ id: 'u1', admin: true }),
+      'u2',
+    );
+
+    expect(granted).toBe(true);
+  });
+
+  it('allows a scope holder to read another user', async () => {
+    const permissions = new Map([
+      [Resource.PREFERENCE, new Set([Action.READ])],
+    ]);
+
+    const granted = await runByUserGuard(
+      asUser({ id: 'u1', permissions }),
+      'u2',
+    );
+
+    expect(granted).toBe(true);
+  });
+
+  it('denies an anonymous request', async () => {
+    const granted = await runByUserGuard(null, 'u1');
+
+    expect(granted).toBe(false);
   });
 });
 

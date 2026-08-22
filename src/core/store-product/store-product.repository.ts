@@ -255,6 +255,17 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
    * does match the standard `Glenfiddich 12` through some store's raw name,
    * and stopping there is exactly what used to hide every other 12-year-old.
    *
+   * The last three predicates are the running user's own, and all three filter
+   * the bottling rather than the offer, so they compose with the report's
+   * grouping for free: a group is either wholly present or wholly gone. The two
+   * blacklist ones are unconditional — a hidden product or brand is hidden on
+   * every report kind, and no query parameter turns them off. Note the brand
+   * one's NULL semantics: the comparison is UNKNOWN when the bottling has no
+   * brand, so the subquery finds nothing and `NOT EXISTS` holds — a brandless
+   * product survives every brand blacklist, which is the only sane reading,
+   * since there is no "unknown brand" to hide. `favoritesOnly` is the one that
+   * is opt-in, and with no favorites at all it correctly yields nothing.
+   *
    * @param filter - The report filter; empty fields mean no constraint.
    * @returns One row per matching offer.
    */
@@ -281,6 +292,8 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
       filter.excludeFlavors?.length ? filter.excludeFlavors : null,
       aged?.name ?? null,
       aged?.age ?? null,
+      filter.userId,
+      filter.favoritesOnly ?? null,
     ];
 
     const sql = `${CURRENT_SQL}
@@ -306,6 +319,15 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
         SELECT 1 FROM product_flavor pf
         JOIN flavor f ON f.id = pf."flavorId"
         WHERE pf."productId" = p.id AND f.name = ANY($11)))
+      AND NOT EXISTS (
+        SELECT 1 FROM blacklist_product bp
+        WHERE bp."userId" = $14 AND bp."productId" = p.id)
+      AND NOT EXISTS (
+        SELECT 1 FROM blacklist_brand bb
+        WHERE bb."userId" = $14 AND bb."brandId" = p."brandId")
+      AND ($15::boolean IS NOT TRUE OR EXISTS (
+        SELECT 1 FROM favorite f
+        WHERE f."userId" = $14 AND f."productId" = p.id))
     `;
 
     return this.query(sql, params) as Promise<ReportCurrentRow[]>;

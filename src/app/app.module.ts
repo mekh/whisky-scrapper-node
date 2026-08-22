@@ -18,6 +18,7 @@ import { ConfigModule, DbConfig, ValidationConfig } from '~config';
 import { DomainAuthModule } from '~domain/auth';
 import { DomainDashboardModule } from '~domain/dashboard';
 import { DomainMetaModule } from '~domain/meta';
+import { DomainPreferenceModule } from '~domain/preference';
 import { DomainProductModule } from '~domain/product';
 import { DomainReportModule } from '~domain/report';
 import { DomainStoreModule } from '~domain/store';
@@ -67,6 +68,7 @@ import { LogInterceptor, ValidationInterceptor } from './interceptors';
     DomainMetaModule,
     DomainStoreModule,
     DomainProductModule,
+    DomainPreferenceModule,
     ScrapeModule,
   ],
   providers: [

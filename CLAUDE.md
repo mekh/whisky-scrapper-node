@@ -1440,6 +1440,60 @@ Pre-existing bugs fixed while wiring auth (context for future changes):
     and `@BoolQuery()` (explicit `'true'`/`'false'` mapping, since
     `@Type(() => Boolean)` turns `'false'` into `true`).
 
+- **Per-user preferences are built** (`core/preference`, `domain/preference`,
+  2026-08-22): favorites and a blacklist of bottlings and/or brands, six
+  endpoints under `/preference` (contract in `MIGRATION.md`), and three
+  predicates inside `findCurrentRows` that make every report kind personal.
+  The load-bearing decisions:
+  - **Three composite-keyed tables** (`favorite`, `blacklist_product`,
+    `blacklist_brand`), all `(userId, <target>)` with a `createdAt` and no
+    `updatedAt` — a membership row has nothing to update. They follow the
+    `product_flavor` pattern: an explicit entity so `migration:generate` stays
+    drift-free, but every row is written in raw SQL by one repository
+    (`PreferenceRepository`, which extends TypeORM's `Repository` directly
+    since composite-keyed rows do not satisfy `EntityBase`).
+  - **Everything targets the bottling** (`product.id`), never a store offer, so
+    a favorite lights up in every shop carrying the whisky and a blacklist
+    entry hides it everywhere. Brand entries store `brand.id` while the API
+    speaks canonical names, resolved by a new find-only
+    `CoreBrandService.findIdsByName` — `resolveByName` **creates** missing
+    brands, so a request path must never use it or one user's typo mints a row
+    every other user's filters read.
+  - **Blacklisting a product drops it from the favorites, in one transaction;
+    blacklisting a brand does not.** A favorite is a specific bottling somebody
+    chose and a brand rule is a broad filter, so the two are revoked
+    independently — the report hides such a favorite while the rule stands, and
+    lifting the rule restores it instead of having silently destroyed it. An
+    integration test proves the atomicity by failing the second statement on a
+    foreign key and asserting the favorite survived.
+  - **The report predicates are bottling-level, which is what makes them
+    safe**: a group is either wholly present or wholly gone, so `best`'s
+    two-store comparison and its `selectionFilter` spread need no special case
+    (contrast the offer-level price bounds, whose trap is documented above).
+    The brand predicate is UNKNOWN for a null `brandId`, so brandless bottlings
+    survive every brand rule — correct, since there is no "unknown brand" to
+    hide. `ReportFilter.userId` is **required**, deliberately: an optional
+    field would let a future caller silently serve an unfiltered catalogue.
+  - **`/report/history` and the single-offer path stay unfiltered by
+    construction** — they take no `ReportFilter` — so the product card that
+    just hid a bottling keeps working while un-hiding is API-only. Equally
+    deliberate: `/dashboard/*`, `/meta` countries and `/store/:slug`
+    `productCount` are assortment analytics, not the user's catalogue, and are
+    not personalized.
+  - **`PermissionEntity.resource`/`action` now state `type: 'varchar'`
+    explicitly.** They relied on reflection metadata, which serializes an
+    enum-typed property to `Object` under per-file transpilation (ts-jest with
+    `isolatedModules`) — TypeORM then refuses to build the metadata at all,
+    which is why the entity could not be registered in a Jest-hosted graph.
+    That surfaced the moment `CorePreferenceModule` had to import
+    `CoreUserModule` (its entity relates to `user`), which drags in the
+    permission entity as the inverse side of `UserEntity#permissions`.
+  - **Report responses are now per-user while still `private, max-age=600`.**
+    `private` keeps proxies out, and `Vary: Authorization` would be useless
+    here (the access token rotates on refresh, defeating caching entirely), so
+    the client owes a cache bypass after any preference mutation and on
+    login/logout — see `MIGRATION.md`.
+
 **`MIGRATION.md`** is the endpoint + field map (legacy → node) for the future
 React frontend — update it alongside any API contract change.
 

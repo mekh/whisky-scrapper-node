@@ -175,6 +175,73 @@ export interface EntityPriceSnapshot extends EntityBaseRich {
   capturedOn: string;
 }
 
+/**
+ * One user's favorite bottling. Composite-keyed on `(userId, productId)` with
+ * no surrogate id and no `updatedAt`: the row either exists or it does not, and
+ * there is nothing about it to update.
+ */
+export interface EntityFavorite {
+  /**
+   * The user who favorited the bottling.
+   */
+  userId: ID;
+
+  /**
+   * The favorited bottling (`product.id`), never a store offer — a favorite is
+   * a whisky, not one shop's listing of it.
+   */
+  productId: ID;
+
+  /**
+   * When the favorite was added. Kept so the eventual management screen can
+   * order by it; nothing in the report reads it.
+   */
+  createdAt: Date;
+}
+
+/**
+ * A bottling one user has hidden. Every report filters these out, in every
+ * store, for that user only.
+ */
+export interface EntityBlacklistProduct {
+  /**
+   * The user who hid the bottling.
+   */
+  userId: ID;
+
+  /**
+   * The hidden bottling (`product.id`).
+   */
+  productId: ID;
+
+  /**
+   * When the bottling was hidden.
+   */
+  createdAt: Date;
+}
+
+/**
+ * A brand one user has hidden. Broader than a product entry: it removes every
+ * bottling the brand is resolved on, including ones listed later.
+ */
+export interface EntityBlacklistBrand {
+  /**
+   * The user who hid the brand.
+   */
+  userId: ID;
+
+  /**
+   * The hidden brand (`brand.id`). Products with no brand resolved are never
+   * matched by a brand entry — there is no "unknown brand" to hide.
+   */
+  brandId: ID;
+
+  /**
+   * When the brand was hidden.
+   */
+  createdAt: Date;
+}
+
 export interface EntitySyncLog extends EntityBaseRich {
   storeId: ID;
   added: number;

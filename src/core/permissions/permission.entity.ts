@@ -18,12 +18,19 @@ export class PermissionEntity extends BaseRichEntity
   @GuidV7Column()
   public userId!: ID;
 
+  /**
+   * Both columns state `varchar` explicitly rather than leaving TypeORM to read
+   * the type off reflection metadata. An enum-typed property serializes to
+   * `Object` under per-file transpilation (ts-jest with `isolatedModules`), and
+   * TypeORM then refuses to build the metadata at all — which is why this
+   * entity could not be registered in a Jest-hosted module graph.
+   */
   @IsEnum(Resource)
-  @Column({ length: 32, nullable: false })
+  @Column({ type: 'varchar', length: 32, nullable: false })
   public resource!: Resource;
 
   @IsEnum(Action)
-  @Column({ length: 32, nullable: false })
+  @Column({ type: 'varchar', length: 32, nullable: false })
   public action!: Action;
 
   @ManyToOne('UserEntity', 'permissions', {

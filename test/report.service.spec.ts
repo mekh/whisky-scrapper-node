@@ -13,7 +13,14 @@ import type {
 
 import { ReportService } from '../src/domain/report/report.service';
 
-const FILTER: ReportFilter = {};
+/**
+ * Any uuid does: the read path's per-user predicates run in SQL, which the fake
+ * repository never reaches, and nothing here writes a row that needs the user
+ * to exist.
+ */
+const USER_ID = '0198d1f6-0000-7000-8000-000000000001' as ID;
+
+const FILTER: ReportFilter = { userId: USER_ID };
 
 const OPTIONS: ReportOptions = {
   window: ReportWindow.WEEK,
@@ -316,7 +323,7 @@ describe('ReportService — drops discount window', () => {
  */
 async function runBest(
   rows: ReportCurrentRow[],
-  filter: ReportFilter,
+  filter: Omit<ReportFilter, 'userId'>,
 ): Promise<{ data: ReportGroup[]; selected: ReportFilter }> {
   const findCurrentRows = jest.fn<Promise<ReportCurrentRow[]>, [ReportFilter]>()
     .mockResolvedValue(rows);
@@ -332,7 +339,11 @@ async function runBest(
     snapshots as unknown as CorePriceSnapshotService,
   );
 
-  const page = await service.report(ReportKind.BEST, filter, OPTIONS);
+  const page = await service.report(
+    ReportKind.BEST,
+    { userId: USER_ID, ...filter },
+    OPTIONS,
+  );
 
   return { data: page.data, selected: findCurrentRows.mock.calls[0][0] };
 }
@@ -570,7 +581,8 @@ describe('ReportService — best offers group by the stored bottling', () => {
   });
 
   it('leaves every other predicate to SQL', async () => {
-    const filter: ReportFilter = {
+    const filter: Omit<ReportFilter, 'userId'> = {
+      favoritesOnly: true,
       stores: ['one', 'two'],
       minPrice: 100,
       maxPrice: 2000,
@@ -580,8 +592,14 @@ describe('ReportService — best offers group by the stored bottling', () => {
 
     const { selected } = await runBest([], filter);
 
+    /**
+     * The per-user predicates ride along untouched: unlike the price bounds,
+     * they filter the bottling, so keeping them in the candidate query cannot
+     * drop a runner-up the comparison needs.
+     */
     expect(selected).toEqual({
       ...filter,
+      userId: USER_ID,
       minPrice: undefined,
       maxPrice: undefined,
     });

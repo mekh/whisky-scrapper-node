@@ -1,10 +1,12 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 
 import { DEFAULT_PER_PAGE, READ_CACHE_MAX_AGE_SECONDS } from '~constants';
+import { CurrentUser } from '~decorators/auth';
 import { CacheControl } from '~decorators/http';
 import { Paginated, Plain } from '~decorators/types';
 import { ReportWindow, Resource, SortOrder } from '~enums';
 import type {
+  CtxUser,
   PriceHistory,
   ReportFilter,
   ReportGroup,
@@ -31,18 +33,21 @@ export class ReportController {
   @CacheControl(READ_CACHE_MAX_AGE_SECONDS)
   @Paginated(ReportGroupType, Resource.AUTHENTICATED)
   public report(
+    @CurrentUser() user: CtxUser,
     @Param() params: ReportKindParamsDto,
     @Query() query: ReportQueryDto,
   ): Promise<TypePaginated<ReportGroup>> {
     return this.reportService.report(
       params.kind,
-      this.toFilter(query),
+      this.toFilter(query, user),
       this.toOptions(query),
     );
   }
 
-  private toFilter(query: ReportQueryDto): ReportFilter {
+  private toFilter(query: ReportQueryDto, user: CtxUser): ReportFilter {
     return {
+      userId: user.id,
+      favoritesOnly: query.favoritesOnly,
       stores: query.stores,
       minPrice: query.minPrice,
       maxPrice: query.maxPrice,

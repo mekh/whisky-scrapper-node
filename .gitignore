@@ -1,4 +1,6 @@
 .idea/
+# macOS Finder metadata, at any depth.
+.DS_Store
 /dist
 /node_modules
 /build

@@ -1312,7 +1312,18 @@ Pre-existing bugs fixed while wiring auth (context for future changes):
   groups. The grouping is JS-side, over the same `findCurrentRows` query — the
   per-kind rules read values that never existed in SQL (window extremes, the
   real current date, `minDiscount`), so pushing `LIMIT` down would have forked
-  them. See `MIGRATION.md` "Report groups". Response DTOs are camelCase (DB field
+  them. **`best` is the one kind whose price filter does not run in SQL**
+  (2026-08-22): it compares a bottling's offers against each other, so the
+  candidates are selected without `minPrice`/`maxPrice` and the bounds are
+  applied to the winning offer instead. With them in SQL, a runner-up above
+  the ceiling was dropped before the comparison, the group fell under the
+  two-store guard, and the affordable offer took the fall with it — a whisky
+  at 1699 (rozetka) against 3299 (maudau) vanished from `maxPrice=2000`, and
+  the groups that survived had their saving measured against whichever
+  runner-up happened to fit. Every other predicate still filters in SQL:
+  volume, country, type and flavors answer identically for every offer of one
+  bottling, and `stores` is meant to narrow the comparison.
+  See `MIGRATION.md` "Report groups". Response DTOs are camelCase (DB field
   names), carry no UI text (structured `isNew`/`daysNew`/`discountPct`/
   `referencePrice` instead of the legacy `note`). Whisky types/flavors come from
   the `type`/`flavor` tables, never hardcoded. The whisky core graph is wired

@@ -305,6 +305,38 @@ describe('ReportService — drops discount window', () => {
   });
 });
 
+/**
+ * Runs the `best` report under a price filter, reporting both the groups it
+ * produced and the filter the repository was actually asked for — the second
+ * is what pins the price bounds to the winner instead of to the candidates.
+ *
+ * @param rows - The current rows the fake repository returns.
+ * @param filter - The report filter to run with.
+ * @returns The report groups and the filter `findCurrentRows` received.
+ */
+async function runBest(
+  rows: ReportCurrentRow[],
+  filter: ReportFilter,
+): Promise<{ data: ReportGroup[]; selected: ReportFilter }> {
+  const findCurrentRows = jest.fn<Promise<ReportCurrentRow[]>, [ReportFilter]>()
+    .mockResolvedValue(rows);
+
+  const snapshots = {
+    latestDate: jest.fn().mockResolvedValue('2026-07-21'),
+    priceExtremes: jest.fn().mockResolvedValue(new Map()),
+    currentPriceSince: jest.fn().mockResolvedValue(new Map()),
+  };
+
+  const service = new ReportService(
+    { findCurrentRows } as unknown as CoreStoreProductService,
+    snapshots as unknown as CorePriceSnapshotService,
+  );
+
+  const page = await service.report(ReportKind.BEST, filter, OPTIONS);
+
+  return { data: page.data, selected: findCurrentRows.mock.calls[0][0] };
+}
+
 describe('ReportService — best offers group by the stored bottling', () => {
   it('returns the cheapest offer, against the runner-up', async () => {
     const rows = [
@@ -411,6 +443,77 @@ describe('ReportService — best offers group by the stored bottling', () => {
 
     expect(group.offers).toHaveLength(1);
     expect(group.offers[0].id).toBe('b');
+  });
+
+  it('keeps a winner whose runner-up is above the price ceiling', async () => {
+    /**
+     * The real "Glenfiddich Triple Oak" case: 1699 at rozetka against 3299 at
+     * maudau. Filtering the price in SQL took the runner-up out of the group,
+     * the group fell under the two-store guard, and the affordable offer the
+     * user was filtering *for* disappeared from `maxPrice=2000`.
+     */
+    const rows = [
+      makeRow({ id: 'a' as ID, storeSlug: 'rozetka', price: 1699 }),
+      makeRow({ id: 'b' as ID, storeSlug: 'maudau', price: 3299 }),
+    ];
+
+    const { data, selected } = await runBest(rows, { maxPrice: 2000 });
+
+    expect(selected.maxPrice).toBeUndefined();
+    expect(data).toHaveLength(1);
+    expect(data[0].id).toBe('a');
+    expect(data[0].price).toBe(1699);
+    expect(data[0].referencePrice).toBe(3299);
+  });
+
+  it('measures the saving against the true runner-up', async () => {
+    /**
+     * With the ceiling applied in SQL the 2500 offer was invisible, so the
+     * winner's saving read as 20% off 2000 rather than 36% off the cheapest
+     * price anyone else actually asks.
+     */
+    const rows = [
+      makeRow({ id: 'a' as ID, storeSlug: 'one', price: 1600 }),
+      makeRow({ id: 'b' as ID, storeSlug: 'two', price: 2500 }),
+      makeRow({ id: 'c' as ID, storeSlug: 'three', price: 2000 }),
+    ];
+
+    const { data } = await runBest(rows, { maxPrice: 2000 });
+
+    expect(data).toHaveLength(1);
+    expect(data[0].referencePrice).toBe(2000);
+    expect(data[0].discountPct).toBe(20);
+  });
+
+  it('drops a winner priced outside the bounds', async () => {
+    const rows = [
+      makeRow({ id: 'a' as ID, storeSlug: 'one', price: 2400 }),
+      makeRow({ id: 'b' as ID, storeSlug: 'two', price: 3000 }),
+    ];
+
+    const above = await runBest(rows, { maxPrice: 2000 });
+    const below = await runBest(rows, { minPrice: 2500 });
+
+    expect(above.data).toHaveLength(0);
+    expect(below.data).toHaveLength(0);
+  });
+
+  it('leaves every other predicate to SQL', async () => {
+    const filter: ReportFilter = {
+      stores: ['one', 'two'],
+      minPrice: 100,
+      maxPrice: 2000,
+      countries: ['gb'],
+      name: 'glen',
+    };
+
+    const { selected } = await runBest([], filter);
+
+    expect(selected).toEqual({
+      ...filter,
+      minPrice: undefined,
+      maxPrice: undefined,
+    });
   });
 });
 

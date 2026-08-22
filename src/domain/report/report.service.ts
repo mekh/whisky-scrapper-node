@@ -94,6 +94,9 @@ export class ReportService {
    * report rejected is absent from its product's group too. `low` and `best`
    * pick one offer per row by design and therefore yield single-offer groups.
    *
+   * The one predicate that cannot run in SQL for every kind is the price
+   * bound — see `selectionFilter`.
+   *
    * @param kind - Which report to build.
    * @param filter - The product filter.
    * @param options - Report options (window, min-discount).
@@ -105,7 +108,7 @@ export class ReportService {
     options: ReportOptions,
   ): Promise<ReportGroup[]> {
     const [current, latest] = await Promise.all([
-      this.offers.findCurrentRows(filter),
+      this.offers.findCurrentRows(this.selectionFilter(kind, filter)),
       this.snapshots.latestDate(),
     ]);
 
@@ -123,10 +126,40 @@ export class ReportService {
       case ReportKind.NEW:
         return this.newest(current, this.today(), options.window);
       case ReportKind.BEST:
-        return this.best(current, options);
+        return this.best(current, filter, options);
       default:
         throw new ServerError(`Unknown report kind: ${String(kind)}`);
     }
+  }
+
+  /**
+   * The filter the current rows are selected with: the caller's filter for
+   * every report but `best`, which is asked for its candidates without the
+   * price bounds.
+   *
+   * `best` is the one kind that compares a bottling's offers against each
+   * other, so an offer the user would never buy still has to be loaded. Drop
+   * the runner-up in SQL because it costs more than the ceiling and the group
+   * falls under the two-store guard, taking the affordable offer the report
+   * exists to show down with it: a whisky listed at 1699 in one store and 3299
+   * in another disappeared from `maxPrice=2000` entirely. A surviving group
+   * would be misreported too, its saving measured against whichever runner-up
+   * happened to fit the bounds. The bounds are applied to the winning offer
+   * instead (see `best`) — the price the user would actually pay.
+   *
+   * @param kind - The report being built.
+   * @param filter - The caller's filter.
+   * @returns The filter to select the current rows with.
+   */
+  private selectionFilter(
+    kind: ReportKind,
+    filter: ReportFilter,
+  ): ReportFilter {
+    if (kind !== ReportKind.BEST) {
+      return filter;
+    }
+
+    return { ...filter, minPrice: undefined, maxPrice: undefined };
   }
 
   /**
@@ -319,7 +352,14 @@ export class ReportService {
    * Best offers: products sold in several stores, keeping the cheapest and
    * marking the saving against the runner-up. Ordered by saving desc.
    *
-   * @param current - All matching current rows.
+   * The price bounds are applied here rather than in SQL, because the rows
+   * this report is handed deliberately still hold the offers that fall outside
+   * them — they are what the winner is compared against (see
+   * `selectionFilter`). A bound therefore filters the winning offer, which is
+   * the only price this report ever quotes.
+   *
+   * @param current - All matching current rows, price bounds not yet applied.
+   * @param filter - The report filter, for its price bounds.
    * @param options - Report options (min-discount).
    * @returns One single-offer group per multi-store bottling: this report has
    *   already chosen the offer that matters, and its `referencePrice` names the
@@ -328,6 +368,7 @@ export class ReportService {
    */
   private best(
     current: ReportCurrentRow[],
+    filter: ReportFilter,
     options: ReportOptions,
   ): ReportGroup[] {
     const groups = this.groupByProduct(current);
@@ -336,7 +377,7 @@ export class ReportService {
     groups.forEach((group) => {
       const row = this.bestOfGroup(group);
 
-      if (row) {
+      if (row && this.withinPriceBounds(row.price, filter)) {
         rows.push(row);
       }
     });
@@ -379,6 +420,23 @@ export class ReportService {
       referencePrice: runnerUp.price,
       isNew: false,
     });
+  }
+
+  /**
+   * Whether a price satisfies the filter's price bounds.
+   *
+   * Only `best` asks: every other report has both bounds applied in SQL, where
+   * they select the offers and can do no harm.
+   *
+   * @param price - The price to test.
+   * @param filter - The report filter carrying the bounds.
+   * @returns True when the price is within every bound the filter sets.
+   */
+  private withinPriceBounds(price: number, filter: ReportFilter): boolean {
+    const min = filter.minPrice ?? null;
+    const max = filter.maxPrice ?? null;
+
+    return (min === null || price >= min) && (max === null || price <= max);
   }
 
   /**

@@ -1,16 +1,35 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Query,
+} from '@nestjs/common';
 
+import { READ_CACHE_MAX_AGE_SECONDS } from '~constants';
+import { CacheControl } from '~decorators/http';
 import { Plain } from '~decorators/types';
 import { Action, Resource } from '~enums';
-import type { TypeProduct } from '~types';
+import type { ProductSearchItem, TypeProduct } from '~types';
 
-import { ProductUpdateDto } from './dto';
+import { ProductSearchQueryDto, ProductUpdateDto } from './dto';
 import { ProductService } from './product.service';
-import { ProductType } from './types';
+import { ProductSearchItemType, ProductType } from './types';
 
 @Controller('product')
 export class ProductController {
   public constructor(private readonly productService: ProductService) {}
+
+  @Get('search')
+  @CacheControl(READ_CACHE_MAX_AGE_SECONDS)
+  @Plain([ProductSearchItemType], Resource.AUTHENTICATED)
+  public search(
+    @Query() query: ProductSearchQueryDto,
+  ): Promise<ProductSearchItem[]> {
+    return this.productService.search(query);
+  }
 
   @Post('update')
   @HttpCode(HttpStatus.OK)

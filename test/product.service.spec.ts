@@ -15,7 +15,11 @@ const PRODUCT_ID = 'product-1' as ID;
 
 interface Mocks {
   service: ProductService;
-  products: { setManualFlavors: jest.Mock; updateByIdOrThrow: jest.Mock };
+  products: {
+    search: jest.Mock;
+    setManualFlavors: jest.Mock;
+    updateByIdOrThrow: jest.Mock;
+  };
   flavors: { findIdsByName: jest.Mock };
 }
 
@@ -29,6 +33,7 @@ interface Mocks {
  */
 function makeService(known: Map<string, ID> = new Map()): Mocks {
   const products = {
+    search: jest.fn().mockResolvedValue([]),
     updateByIdOrThrow: jest.fn().mockResolvedValue({ name: 'Sample' }),
     setManualFlavors: jest.fn().mockResolvedValue(undefined),
   };
@@ -68,6 +73,28 @@ async function update(
 ): Promise<void> {
   await service.update({ id: OFFER_ID, ...input });
 }
+
+describe('ProductService.search', () => {
+  it('passes the term through with the requested limit', async () => {
+    const { service, products } = makeService();
+
+    await service.search({ q: 'glen', limit: 5 });
+
+    expect(products.search).toHaveBeenCalledWith('glen', 5);
+  });
+
+  it('applies the default limit when the request names none', async () => {
+    /**
+     * The default lives in the domain service, not the controller — this is
+     * the test that keeps it from silently moving.
+     */
+    const { service, products } = makeService();
+
+    await service.search({ q: 'glen' });
+
+    expect(products.search).toHaveBeenCalledWith('glen', 10);
+  });
+});
 
 describe('ProductService.update flavors', () => {
   it("stores the resolved ids as the bottling's curated set", async () => {

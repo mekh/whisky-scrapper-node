@@ -3,7 +3,12 @@ import { Transactional } from 'typeorm-transactional';
 
 import { PreferenceRepository } from './preference.repository';
 
-import type { ID, Preference, PreferenceBlacklistIds } from '~types';
+import type {
+  ID,
+  Preference,
+  PreferenceBlacklistIds,
+  PreferenceDetails,
+} from '~types';
 
 /**
  * Persistence-layer public API for a user's favorites and blacklist. Does not
@@ -37,6 +42,17 @@ export class CorePreferenceService {
    */
   public async findByUserId(userId: ID): Promise<Preference> {
     return this.repo.findByUserId(userId);
+  }
+
+  /**
+   * Loads a user's preference lists resolved to renderable entries. Newest
+   * first is part of the contract — the settings screen relies on it.
+   *
+   * @param userId - Whose preferences to resolve.
+   * @returns The three lists; each is empty when the user has no entries.
+   */
+  public async findDetailsByUserId(userId: ID): Promise<PreferenceDetails> {
+    return this.repo.findDetailsByUserId(userId);
   }
 
   /**

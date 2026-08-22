@@ -20,10 +20,17 @@ const STORED: Preference = {
   blacklistBrands: ['Ardbeg'],
 };
 
+const DETAILS = {
+  favorites: [],
+  blacklistProducts: [],
+  blacklistBrands: [],
+};
+
 interface Mocks {
   service: PreferenceService;
   preferences: {
     findByUserId: jest.Mock;
+    findDetailsByUserId: jest.Mock;
     addFavorites: jest.Mock;
     removeFavorites: jest.Mock;
     addToBlacklist: jest.Mock;
@@ -48,6 +55,7 @@ function makeService(options: {
 } = {}): Mocks {
   const preferences = {
     findByUserId: jest.fn().mockResolvedValue(STORED),
+    findDetailsByUserId: jest.fn().mockResolvedValue(DETAILS),
     addFavorites: jest.fn().mockResolvedValue(STORED),
     removeFavorites: jest.fn().mockResolvedValue(STORED),
     addToBlacklist: jest.fn().mockResolvedValue(STORED),
@@ -86,6 +94,16 @@ describe('PreferenceService reads', () => {
 
     expect(result).toBe(STORED);
     expect(preferences.findByUserId).toHaveBeenCalledWith(USER_ID);
+    expect(users.findByIdOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('reads the resolved details without a user lookup', async () => {
+    const { service, preferences, users } = makeService();
+
+    const result = await service.getOwnDetails(USER_ID);
+
+    expect(result).toBe(DETAILS);
+    expect(preferences.findDetailsByUserId).toHaveBeenCalledWith(USER_ID);
     expect(users.findByIdOrThrow).not.toHaveBeenCalled();
   });
 

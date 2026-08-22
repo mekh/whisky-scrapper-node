@@ -14,11 +14,16 @@ import { CacheControl } from '~decorators/http';
 import { Plain } from '~decorators/types';
 import { ByUserIdDto } from '~domain/common/dto';
 import { Action, Resource } from '~enums';
-import type { CtxManager, CtxUser, Preference } from '~types';
+import type {
+  CtxManager,
+  CtxUser,
+  Preference,
+  PreferenceDetails,
+} from '~types';
 
 import { PreferenceBlacklistDto, PreferenceFavoritesDto } from './dto';
 import { PreferenceService } from './preference.service';
-import { PreferenceType } from './preference.type.dto';
+import { PreferenceDetailsType, PreferenceType } from './types';
 
 const isSelf = (ctx: CtxManager): boolean => {
   const { params } = ctx.getData<{ params: { userId?: string } }>();
@@ -40,6 +45,13 @@ export class PreferenceController {
   @Plain(PreferenceType, Resource.AUTHENTICATED)
   public own(@CurrentUser() user: CtxUser): Promise<Preference> {
     return this.preferences.getOwn(user.id);
+  }
+
+  @Get('details')
+  @CacheControl('no-cache')
+  @Plain(PreferenceDetailsType, Resource.AUTHENTICATED)
+  public details(@CurrentUser() user: CtxUser): Promise<PreferenceDetails> {
+    return this.preferences.getOwnDetails(user.id);
   }
 
   @Get(':userId')

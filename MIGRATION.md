@@ -60,6 +60,9 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 | — (new)                                                                               | `DELETE /preference/favorites` `{productIds}` — remove favorites (body on DELETE)                                                                                                                                                                                                                          | any logged-in user |
 | — (new)                                                                               | `POST /preference/blacklist` `{productIds?, brands?}` — hide bottlings and/or brands; also drops those bottlings from the favorites                                                                                                                                                                          | any logged-in user |
 | — (new)                                                                               | `DELETE /preference/blacklist` `{productIds?, brands?}` — un-hide; restores no favorite                                                                                                                                                                                                                     | any logged-in user |
+| — (new)                                                                               | `GET /preference/details` — the caller's own lists resolved to renderable entries, newest first (see "Preferences")                                                                                                                                                                                          | any logged-in user |
+| — (new)                                                                               | `GET /product/search?q=&limit=` — lightweight autocomplete over the whole catalogue, one item per bottling; **ignores the caller's blacklist** (see "Catalogue search")                                                                                                                                      | any logged-in user |
+| — (new)                                                                               | `GET /brand/search?q=&limit=` — lightweight autocomplete over brand names (see "Catalogue search")                                                                                                                                                                                                          | any logged-in user |
 | `GET /` + static                                                                      | unchanged — the frontend is hosted separately (point it at this API's base URL)                                                                                                                                                                                                                             | —                  |
 
 Report list responses are paginated: `{ data: ReportGroup[], total, limit,
@@ -325,10 +328,44 @@ are deliberately **not** filtered, so the product card that just hid a bottling
 keeps working and the entry stays inspectable while removal is API-only.
 
 Because `/report/*` is cached `private, max-age=600` and its rows are now
-per-user, a client must bypass that cache after a preference mutation (the web
-client's `forceFreshWindow()` exists for exactly this) before invalidating its
-report queries — otherwise the user's own change is masked for up to ten
-minutes.
+per-user, a client must bypass that cache after a preference mutation before
+invalidating its report queries — otherwise the user's own change is masked
+for up to ten minutes. The web client does this two ways: `forceFreshWindow()`
+covers the refetches of report queries mounted at mutation time, and
+`markReportsStale()` busts each report URL one-shot on its next fetch, which
+covers a report page opened however long after the mutation (e.g. after
+editing the lists on the settings screen).
+
+**`GET /preference/details` (2026-08-22)** is the settings screen's read: the
+same three lists resolved to renderable entries, newest first. Products come
+as `{ productId, name, nameOrig, brand, age, abv, volumeMl, inStock,
+addedOn }` and brands as `{ name, addedOn }`. It exists because the bare-id
+read cannot be rendered — the reports unconditionally hide blacklisted
+bottlings, so their names are resolvable nowhere else. Details worth knowing:
+`name` can be null (display falls back to `nameOrig`), `nameOrig` can be null
+too (a bottling no store lists — still shown, still removable), `inStock`
+means "some offer of the bottling is in stock", and `addedOn` is the UTC
+calendar day while the ordering keys on the full timestamp. Same
+`private, no-cache` headers as the other preference reads.
+
+### Catalogue search (2026-08-22)
+
+`GET /product/search?q=&limit=` and `GET /brand/search?q=&limit=` are the
+lightweight autocomplete reads behind the settings screen's pickers. `q` is a
+case-insensitive substring of at least 2 characters; `limit` defaults to 10,
+capped at 20. Both answer flat arrays (product items as in
+`/preference/details` minus `addedOn`; brands as `{ name }`) and are cached
+`private, max-age=600` — they are not user-scoped.
+
+**These are, with `GET /report/history`, the only catalogue reads that ignore
+the caller's blacklist.** That is the point, not an oversight: the picker's
+job includes finding an already-hidden bottling (or brand) so it can be
+un-hidden, and a search filtered by the lists it edits would make such an
+entry unfindable. Product matching mirrors the report's name search — the
+canonical name OR any store's raw name, plus the trailing-age pass
+(`Glenfiddich 12`) — with in-stock bottlings ranked first, then prefix
+matches, then the shortest name. Out-of-stock bottlings are deliberately
+included (a favorite is a property of the bottle, not of today's stock).
 
 ### `/meta`
 

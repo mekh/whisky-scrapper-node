@@ -1,7 +1,13 @@
 import { TypeormRepository } from '@toxicoder/nestjs-typeorm-repository';
 import { Repository } from 'typeorm';
 
-import { ID, Preference } from '~types';
+import {
+  ID,
+  Preference,
+  PreferenceBrand,
+  PreferenceDetails,
+  PreferenceProductRow,
+} from '~types';
 
 import { FavoriteEntity } from './favorite.entity';
 
@@ -30,6 +36,65 @@ const FIND_SQL = `
 `;
 
 /**
+ * Resolves both product lists in one pass, each row joined to what the
+ * settings screen renders. Joining `product`, `brand` and `store_product`
+ * here follows `FIND_SQL`, which already joins `brand` — the layering rule
+ * bars a foreign *service* from injecting this repository, not a join.
+ *
+ * Decisions that are easy to undo by accident:
+ *
+ * - `LEFT JOIN LATERAL`, not `JOIN`: an inner join would silently drop a
+ *   bottling with no offer row — precisely the entry the user opened this
+ *   screen to remove. Hence `nameOrig` is nullable and `inStock` coalesced.
+ * - The lateral's tie-break (`inStock DESC, lastSeen DESC, id`) is the one
+ *   `findOfferRefById` uses, so this screen and the product screen agree on
+ *   which store's raw name stands for a bottling. It also makes the picked
+ *   row's `inStock` mean "some offer is in stock" with no separate `EXISTS`.
+ * - `abv::float8` — the column is `real`, which the raw driver would hand
+ *   back as a string.
+ * - `createdAt DESC`, unlike `FIND_SQL`'s ASC: the id payload feeds a `Set`
+ *   where order is meaningless, while a management screen wants newest first.
+ *   `addedOn` exposes only the UTC calendar day (the `capturedOn` precedent),
+ *   but the ordering keys on the full timestamp, so same-day entries keep
+ *   their true order.
+ */
+const DETAILS_PRODUCTS_SQL = `
+  WITH item AS (
+    SELECT 'favorite'::text AS list, f."productId", f."createdAt"
+    FROM favorite f WHERE f."userId" = $1
+    UNION ALL
+    SELECT 'blacklist', bp."productId", bp."createdAt"
+    FROM blacklist_product bp WHERE bp."userId" = $1
+  )
+  SELECT i.list, i."productId", p.name, o."nameOrig",
+         b.name AS brand, p.age, p.abv::float8 AS abv, p."volumeMl",
+         COALESCE(o."inStock", false) AS "inStock",
+         i."createdAt"::date::text AS "addedOn"
+  FROM item i
+  JOIN product p ON p.id = i."productId"
+  LEFT JOIN brand b ON b.id = p."brandId"
+  LEFT JOIN LATERAL (
+    SELECT sp."nameOrig", sp."inStock"
+    FROM store_product sp
+    WHERE sp."productId" = p.id
+    ORDER BY sp."inStock" DESC, sp."lastSeen" DESC, sp.id
+    LIMIT 1
+  ) o ON true
+  ORDER BY i."createdAt" DESC, i."productId"
+`;
+
+/**
+ * Blacklisted brands with the day each rule was added, newest first.
+ */
+const DETAILS_BRANDS_SQL = `
+  SELECT b.name, bb."createdAt"::date::text AS "addedOn"
+  FROM blacklist_brand bb
+  JOIN brand b ON b.id = bb."brandId"
+  WHERE bb."userId" = $1
+  ORDER BY bb."createdAt" DESC, b.name
+`;
+
+/**
  * Owns all three preference tables. They are one feature, always read together
  * and written in the same transaction, so a single repository is the coherent
  * unit here — the same reason `ProductRepository` owns every `product_flavor`
@@ -54,6 +119,39 @@ export class PreferenceRepository extends Repository<FavoriteEntity> {
       favorites: [],
       blacklistProducts: [],
       blacklistBrands: [],
+    };
+  }
+
+  /**
+   * Loads a user's preference lists resolved to renderable entries, newest
+   * first — what the settings screen shows, as opposed to the bare id sets
+   * `findByUserId` answers with.
+   *
+   * The two statements run sequentially on purpose: under `@Transactional()`
+   * both ride one CLS-bound connection, which cannot serve parallel queries.
+   *
+   * @param userId - Whose preferences to resolve.
+   * @returns The three lists; each is empty when the user has no entries.
+   */
+  public async findDetailsByUserId(userId: ID): Promise<PreferenceDetails> {
+    const products = await this.query(
+      DETAILS_PRODUCTS_SQL,
+      [userId],
+    ) as PreferenceProductRow[];
+
+    const brands = await this.query(
+      DETAILS_BRANDS_SQL,
+      [userId],
+    ) as PreferenceBrand[];
+
+    return {
+      favorites: products
+        .filter((row) => row.list === 'favorite')
+        .map(({ list: _list, ...item }) => item),
+      blacklistProducts: products
+        .filter((row) => row.list === 'blacklist')
+        .map(({ list: _list, ...item }) => item),
+      blacklistBrands: brands,
     };
   }
 

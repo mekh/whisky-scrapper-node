@@ -7,5 +7,6 @@ export * from './inject-tokens.constants';
 export * from './password.constants';
 export * from './report.constants';
 export * from './scrape.constants';
+export * from './search.constants';
 export * from './user-name.constants';
 export * from './whisky.constants';

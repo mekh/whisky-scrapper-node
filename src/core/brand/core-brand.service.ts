@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { CoreBaseService } from '~core/_common';
-import { ID } from '~types';
+import { ID, TypeBrand } from '~types';
 
 import { BrandEntity } from './brand.entity';
 import { BrandRepository } from './brand.repository';
@@ -37,6 +37,20 @@ export class CoreBrandService extends CoreBaseService<BrandEntity> {
    */
   public async findIdsByName(names: string[]): Promise<Map<string, ID>> {
     return this.repo.findIdsByName(names);
+  }
+
+  /**
+   * Autocomplete search over brand names, best matches first.
+   *
+   * @param term - The substring to look for.
+   * @param limit - Rows to return at most.
+   * @returns Matching brands, best matches first.
+   */
+  public async searchByName(
+    term: string,
+    limit: number,
+  ): Promise<TypeBrand[]> {
+    return this.repo.searchByName(term, limit);
   }
 
   /**

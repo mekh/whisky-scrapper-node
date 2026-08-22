@@ -9,6 +9,7 @@ import {
   ProductMatchRow,
   ProductNameCandidateRow,
   ProductScrapeFlavorLink,
+  ProductSearchItem,
   ProductStoreFieldsRow,
 } from '~types';
 
@@ -49,6 +50,21 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
    */
   public async findExistingIds(ids: ID[]): Promise<Set<ID>> {
     return this.repo.findExistingIds(ids);
+  }
+
+  /**
+   * Autocomplete search over the whole catalogue, one row per bottling.
+   * Deliberately not preference-filtered — see the repository's `SEARCH_SQL`.
+   *
+   * @param term - The substring to look for.
+   * @param limit - Rows to return at most.
+   * @returns Matching bottlings, best matches first.
+   */
+  public async search(
+    term: string,
+    limit: number,
+  ): Promise<ProductSearchItem[]> {
+    return this.repo.searchByName(term, limit);
   }
 
   /**

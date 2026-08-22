@@ -1,4 +1,5 @@
 import { ID } from './entity.interfaces';
+import { ProductSearchItem } from './search.interfaces';
 
 /**
  * One user's personal filters over the catalogue: what they want to keep an eye
@@ -55,6 +56,69 @@ export interface PreferenceBlacklistInput {
    * `brand` table.
    */
   brands?: string[];
+}
+
+/**
+ * One favorited or blacklisted bottling, resolved to what the settings screen
+ * renders. Extends the autocomplete item on purpose: one renderer serves both
+ * a picker option and a list row.
+ */
+export interface PreferenceProduct extends ProductSearchItem {
+  /**
+   * UTC calendar day (`YYYY-MM-DD`) the entry was added — the `capturedOn`
+   * precedent. The lists are still ordered by the full `createdAt`, so
+   * same-day entries keep their true order.
+   */
+  addedOn: string;
+}
+
+/**
+ * One blacklisted brand, resolved to what the settings screen renders.
+ */
+export interface PreferenceBrand {
+  /**
+   * Canonical brand name — names, never ids, in both directions.
+   */
+  name: string;
+
+  /**
+   * UTC calendar day (`YYYY-MM-DD`) the entry was added.
+   */
+  addedOn: string;
+}
+
+/**
+ * A user's preference lists resolved to renderable entries, newest first.
+ * `GET /preference` answers with bare ids because the report rows only need
+ * membership; this shape exists for the settings screen, which has to show
+ * names for entries the reports deliberately hide.
+ */
+export interface PreferenceDetails {
+  /**
+   * Favorited bottlings, newest first.
+   */
+  favorites: PreferenceProduct[];
+
+  /**
+   * Blacklisted bottlings, newest first.
+   */
+  blacklistProducts: PreferenceProduct[];
+
+  /**
+   * Blacklisted brands, newest first.
+   */
+  blacklistBrands: PreferenceBrand[];
+}
+
+/**
+ * Internal repository row: one resolved product entry before it is
+ * partitioned into the favorites and blacklist lists.
+ */
+export interface PreferenceProductRow extends PreferenceProduct {
+  /**
+   * Which list the row belongs to.
+   */
+  list: 'favorite' | 'blacklist';
 }
 
 /**

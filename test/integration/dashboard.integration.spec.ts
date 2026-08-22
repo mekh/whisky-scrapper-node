@@ -337,6 +337,7 @@ describe('dashboard aggregates over the live queries (integration)', () => {
     expect(typeof point.medianPrice).toBe('number');
   });
 
+  /* eslint-disable-next-line max-len */
   it('partitions per store without letting distincts sum to the total', async () => {
     const series = await service.series({
       from: D1,
@@ -447,6 +448,7 @@ describe('dashboard aggregates over the live queries (integration)', () => {
     expect(movers.rises).toHaveLength(1);
   });
 
+  /* eslint-disable-next-line max-len */
   it('includes runs after midnight of the range end (half-open bound)', async () => {
     const activity = await service.syncActivity({
       from: D1,

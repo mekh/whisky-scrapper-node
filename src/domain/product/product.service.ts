@@ -1,12 +1,19 @@
 import { Injectable } from '@nestjs/common';
 
+import { SEARCH_DEFAULT_LIMIT } from '~constants';
 import { CoreCountryService } from '~core/country';
 import { CoreFlavorService } from '~core/flavor';
 import { CoreProductService } from '~core/product';
 import { CoreStoreProductService } from '~core/store-product';
 import { CoreTypeService } from '~core/type';
 import { BadRequestError, NotFoundError } from '~errors';
-import { ID, ProductUpdateInput, TypeProduct } from '~types';
+import {
+  ID,
+  ProductSearchItem,
+  ProductUpdateInput,
+  SearchQuery,
+  TypeProduct,
+} from '~types';
 
 @Injectable()
 export class ProductService {
@@ -17,6 +24,21 @@ export class ProductService {
     private readonly types: CoreTypeService,
     private readonly flavors: CoreFlavorService,
   ) {}
+
+  /**
+   * Autocomplete search over the whole catalogue, one row per bottling.
+   *
+   * Deliberately not filtered by the caller's preferences: the settings
+   * screen's picker must be able to find an already-hidden bottling so it can
+   * be un-hidden. The default limit is applied here rather than in the
+   * controller — it is business policy, not transport.
+   *
+   * @param query - The term and an optional row limit.
+   * @returns Matching bottlings, best matches first.
+   */
+  public async search(query: SearchQuery): Promise<ProductSearchItem[]> {
+    return this.products.search(query.q, query.limit ?? SEARCH_DEFAULT_LIMIT);
+  }
 
   /**
    * Applies a manual product edit: writes only the fields that were provided

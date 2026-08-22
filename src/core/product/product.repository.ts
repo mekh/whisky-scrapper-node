@@ -10,8 +10,10 @@ import {
   ProductMatchRow,
   ProductNameCandidateRow,
   ProductScrapeFlavorLink,
+  ProductSearchItem,
   ProductStoreFieldsRow,
 } from '~types';
+import { SearchTermUtils } from '~utils';
 
 import { ProductEntity } from './product.entity';
 
@@ -61,6 +63,64 @@ const FILL_MISSING_SQL = `
       OR (v."brandId" IS NOT NULL AND p."brandId" IS NULL)
       OR (v."typeId" IS NOT NULL AND p."typeId" IS NULL)
       OR (v."countryId" IS NOT NULL AND p."countryId" IS NULL))
+`;
+
+/**
+ * Autocomplete search, one row per bottling.
+ *
+ * Deliberately NOT preference-filtered — it takes no user at all. The picker's
+ * job includes finding a bottling the user already hid so it can be un-hidden;
+ * filtering it by the lists it edits would make such an entry unfindable. This
+ * joins `/report/history` as a read that ignores the blacklist on purpose
+ * (documented in MIGRATION.md).
+ *
+ * Matching mirrors `findCurrentRows`: the canonical name OR any store's raw
+ * name, plus the age-aware pass (`$2`/`$3` from `SearchTermUtils.splitAge`) —
+ * the age is stripped from the canonical name and every store spells it
+ * differently, so `Glenfiddich 12` matches nothing as one substring. No brand
+ * predicate: `product.name` is "brand + expression" by construction.
+ *
+ * Ordering: in-stock first, then prefix matches, then the shortest name, so
+ * `glenfiddich` offers `Glenfiddich` above `Glenfiddich 15 Solera Vat`. The
+ * `COALESCE(p.name, '')` before the prefix test matters — a NULL name yields
+ * NULL, and `DESC` sorts NULLs first, which would float the nameless rows to
+ * the top of every result.
+ *
+ * Plain leading-wildcard ILIKE over the few-thousand-row `product` table is
+ * sub-10 ms; a `pg_trgm` index is the escape hatch if the catalogue outgrows
+ * that.
+ */
+const SEARCH_SQL = `
+  SELECT p.id AS "productId", p.name, o."nameOrig", b.name AS brand,
+         p.age, p.abv::float8 AS abv, p."volumeMl",
+         COALESCE(o."inStock", false) AS "inStock"
+  FROM product p
+  LEFT JOIN brand b ON b.id = p."brandId"
+  LEFT JOIN LATERAL (
+    SELECT sp."nameOrig", sp."inStock"
+    FROM store_product sp
+    WHERE sp."productId" = p.id
+    ORDER BY sp."inStock" DESC, sp."lastSeen" DESC, sp.id
+    LIMIT 1
+  ) o ON true
+  WHERE p.name ILIKE '%' || $1 || '%'
+     OR EXISTS (
+       SELECT 1 FROM store_product sp
+       WHERE sp."productId" = p.id
+         AND sp."nameOrig" ILIKE '%' || $1 || '%'
+     )
+     OR ($2::text IS NOT NULL AND p.age = $3::int
+         AND (p.name ILIKE '%' || $2 || '%'
+              OR EXISTS (
+                SELECT 1 FROM store_product sp
+                WHERE sp."productId" = p.id
+                  AND sp."nameOrig" ILIKE '%' || $2 || '%'
+              )))
+  ORDER BY COALESCE(o."inStock", false) DESC,
+           (COALESCE(p.name, '') ILIKE $1 || '%') DESC,
+           length(COALESCE(p.name, o."nameOrig", '')),
+           p.name NULLS LAST, p.id
+  LIMIT $4
 `;
 
 @TypeormRepository(ProductEntity)
@@ -117,6 +177,29 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
     ) as { id: ID }[];
 
     return new Set(rows.map((row) => row.id));
+  }
+
+  /**
+   * Autocomplete search over the whole catalogue, one row per bottling. See
+   * `SEARCH_SQL` for why it is not preference-filtered and how it matches.
+   *
+   * @param term - The substring to look for; the caller enforces the minimum
+   *   length.
+   * @param limit - Rows to return at most.
+   * @returns Matching bottlings, best matches first.
+   */
+  public async searchByName(
+    term: string,
+    limit: number,
+  ): Promise<ProductSearchItem[]> {
+    const aged = SearchTermUtils.splitAge(term);
+
+    return this.query(SEARCH_SQL, [
+      term,
+      aged?.name ?? null,
+      aged?.age ?? null,
+      limit,
+    ]) as Promise<ProductSearchItem[]>;
   }
 
   /**

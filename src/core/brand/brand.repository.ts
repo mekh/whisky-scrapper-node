@@ -1,9 +1,22 @@
 import { TypeormRepository } from '@toxicoder/nestjs-typeorm-repository';
 
 import { BaseRepository } from '~core/_common';
-import { ID } from '~types';
+import { ID, TypeBrand } from '~types';
 
 import { BrandEntity } from './brand.entity';
+
+/**
+ * Autocomplete search over brand names. No stock filter on purpose: a brand
+ * row exists only because some product referenced it, and a brand rule
+ * legitimately outlives the stock. Prefix matches rank first, then the
+ * shortest name, so `glen` offers `Glen Grant` above `Glenmorangie`.
+ */
+const SEARCH_SQL = `
+  SELECT name FROM brand
+  WHERE name ILIKE '%' || $1 || '%'
+  ORDER BY (name ILIKE $1 || '%') DESC, length(name), name
+  LIMIT $2
+`;
 
 @TypeormRepository(BrandEntity)
 export class BrandRepository extends BaseRepository<BrandEntity> {
@@ -38,5 +51,20 @@ export class BrandRepository extends BaseRepository<BrandEntity> {
     ) as { id: ID; name: string }[];
 
     return new Map(rows.map((row) => [row.name, row.id]));
+  }
+
+  /**
+   * Autocomplete search over brand names; see `SEARCH_SQL` for the ordering.
+   *
+   * @param term - The substring to look for; the caller enforces the minimum
+   *   length.
+   * @param limit - Rows to return at most.
+   * @returns Matching brands, best matches first.
+   */
+  public async searchByName(
+    term: string,
+    limit: number,
+  ): Promise<TypeBrand[]> {
+    return this.query(SEARCH_SQL, [term, limit]) as Promise<TypeBrand[]>;
   }
 }

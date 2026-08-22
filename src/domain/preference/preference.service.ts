@@ -9,6 +9,7 @@ import type {
   ID,
   Preference,
   PreferenceBlacklistInput,
+  PreferenceDetails,
   PreferenceFavoritesInput,
 } from '~types';
 
@@ -51,6 +52,18 @@ export class PreferenceService {
    */
   public async getOwn(userId: ID): Promise<Preference> {
     return this.preferences.findByUserId(userId);
+  }
+
+  /**
+   * Loads the calling user's own preferences resolved to renderable entries,
+   * newest first — the settings screen's read. No existence check, for the
+   * same reason as {@link getOwn}.
+   *
+   * @param userId - The authenticated user.
+   * @returns Their favorites and blacklist, resolved for display.
+   */
+  public async getOwnDetails(userId: ID): Promise<PreferenceDetails> {
+    return this.preferences.findDetailsByUserId(userId);
   }
 
   /**

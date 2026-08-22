@@ -12,6 +12,7 @@ const USER = { id: 'user-1' as ID, sid: 'sid-1' } as CtxUser;
 
 const OWN_HANDLERS = [
   'own',
+  'details',
   'addFavorites',
   'removeFavorites',
   'addToBlacklist',
@@ -46,6 +47,7 @@ function makeController(): {
   } {
   const service = {
     getOwn: jest.fn().mockResolvedValue('own'),
+    getOwnDetails: jest.fn().mockResolvedValue('own-details'),
     getForUser: jest.fn().mockResolvedValue('for-user'),
     addFavorites: jest.fn().mockResolvedValue('add-fav'),
     removeFavorites: jest.fn().mockResolvedValue('remove-fav'),
@@ -96,6 +98,14 @@ describe('PreferenceController delegation', () => {
     await controller.own(USER);
 
     expect(service.getOwn).toHaveBeenCalledWith(USER.id);
+  });
+
+  it('reads the resolved details with the authenticated id', async () => {
+    const { controller, service } = makeController();
+
+    await controller.details(USER);
+
+    expect(service.getOwnDetails).toHaveBeenCalledWith(USER.id);
   });
 
   it('reads another user by the route parameter', async () => {

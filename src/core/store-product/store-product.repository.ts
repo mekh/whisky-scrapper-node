@@ -10,6 +10,7 @@ import {
   StoreProductUpsertInput,
   StoreProductUpsertResult,
 } from '~types';
+import { SearchTermUtils } from '~utils';
 
 import { StoreProductEntity } from './store-product.entity';
 
@@ -219,6 +220,16 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
    * one that straddles both — the canonical name holds brand + expression, so
    * the descriptors a user may search for survive only in the offer's raw name.
    *
+   * A term ending in a number gets a second pass on top of that substring
+   * match: the number is read as an age statement and matched against the
+   * bottling's `age` column, the rest as the name (`Glenfiddich 12` ->
+   * `Glenfiddich` + 12). The age is stripped from the canonical name and the
+   * stores spell it every which way (`12 yo`, `12 років`, `12 y.o.`), so
+   * `Glenfiddich 12` could never reach `Glenfiddich Triple Oak` as one
+   * substring. The two passes are a union, not a fallback: the plain substring
+   * does match the standard `Glenfiddich 12` through some store's raw name,
+   * and stopping there is exactly what used to hide every other 12-year-old.
+   *
    * @param filter - The report filter; empty fields mean no constraint.
    * @returns One row per matching offer.
    */
@@ -227,6 +238,7 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
   ): Promise<ReportCurrentRow[]> {
     const types = filter.types?.filter((name) => name !== 'unknown') ?? null;
     const hasUnknownType = filter.types?.includes('unknown') ?? false;
+    const aged = SearchTermUtils.splitAge(filter.name);
 
     const params = [
       filter.stores?.length ? filter.stores : null,
@@ -242,6 +254,8 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
       hasUnknownType,
       filter.flavors?.length ? filter.flavors : null,
       filter.excludeFlavors?.length ? filter.excludeFlavors : null,
+      aged?.name ?? null,
+      aged?.age ?? null,
     ];
 
     const sql = `${CURRENT_SQL}
@@ -253,7 +267,10 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
       AND ($5::int IS NULL OR p."volumeMl" <= $5)
       AND ($6::text[] IS NULL OR lower(c.code) = ANY($6))
       AND ($7::text IS NULL OR p.name ILIKE '%' || $7 || '%'
-           OR sp."nameOrig" ILIKE '%' || $7 || '%')
+           OR sp."nameOrig" ILIKE '%' || $7 || '%'
+           OR ($12::text IS NOT NULL AND p.age = $13::int
+               AND (p.name ILIKE '%' || $12 || '%'
+                    OR sp."nameOrig" ILIKE '%' || $12 || '%')))
       AND ($8::text[] IS NULL OR t.name = ANY($8)
            OR ($9 AND p."typeId" IS NULL))
       AND ($10::text[] IS NULL OR EXISTS (

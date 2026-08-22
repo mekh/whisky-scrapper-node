@@ -6,3 +6,4 @@ export { ErrorUtils } from './error.util';
 export { Hash } from './hash.util';
 export { ProductMatchUtils } from './product-match.util';
 export { NAME_TAG_WORDS, ProductNameUtils } from './product-name.util';
+export { SearchTermUtils } from './search-term.util';

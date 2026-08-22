@@ -419,8 +419,16 @@ entity/repository/service/module shape:
   region case that _is_ a provenance tag is settled at catalogue level instead,
   by `collapseTags` in the backfill script.
   Because descriptors survive only in `nameOrig`, the report name
-  filter and `resolveIdByTerm` match **both** columns. Existing rows are
-  rewritten by `pnpm clean-names` (`scripts/clean-product-names.ts`,
+  filter and `resolveIdByTerm` match **both** columns. The report filter adds
+  one more pass for a term ending in a number: it is split into a name part
+  and an age (`Glenfiddich 12` -> `Glenfiddich` + 12) and matched against
+  `product.age`, because the age is stripped from the canonical name and every
+  store spells it differently (`12 yo`, `12 років`), so no single substring
+  could reach `Glenfiddich Triple Oak`. The two passes are OR-ed
+  (`SearchTermUtils.splitAge` + `findCurrentRows`) — a fallback would have kept
+  hiding those rows behind the standard bottling the substring does match.
+  Existing rows are rewritten by `pnpm clean-names`
+  (`scripts/clean-product-names.ts`,
   `--dry-run` / `--no-llm` / `--store <slug>`), which is a script and not a
   migration on purpose: migrations gate every deploy and must not depend on an
   external API. It does overwrite manual name edits.

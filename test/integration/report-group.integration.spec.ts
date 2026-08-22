@@ -26,6 +26,13 @@ const SLUG_B = `__it_grp_b_${STAMP}`;
  */
 const TOKEN = `itgrp${STAMP}`;
 
+/**
+ * A second such token, carried by the one seeded bottling that states an age.
+ * It is kept out of `TOKEN` so the assertions on the catalogue's shape above
+ * count the same rows they always did.
+ */
+const AGED = `itage${STAMP}`;
+
 const DAY = '2026-07-25';
 
 const OPTIONS: ReportOptions = {
@@ -45,6 +52,7 @@ describe('report grouping over the live query (integration)', () => {
   let storeA: ID;
   let storeB: ID;
   let sampleId: ID;
+  let agedId: ID;
 
   /**
    * Runs the catalog report with the seeded rows in scope.
@@ -94,9 +102,14 @@ describe('report grouping over the live query (integration)', () => {
    *
    * @param key - Suffix of its match key.
    * @param name - The canonical product name.
+   * @param age - Its age statement in years, or null when it has none.
    * @returns The new product id.
    */
-  const makeBottling = async (key: string, name: string): Promise<ID> => {
+  const makeBottling = async (
+    key: string,
+    name: string,
+    age: number | null = null,
+  ): Promise<ID> => {
     const { ids } = await products.findOrCreateByMatchKeys([
       {
         matchKey: `${TOKEN}-${key}`,
@@ -104,7 +117,7 @@ describe('report grouping over the live query (integration)', () => {
         brandId: null,
         typeId: null,
         countryId: null,
-        age: null,
+        age,
         abv: null,
         volumeMl: 700,
       },
@@ -170,6 +183,14 @@ describe('report grouping over the live query (integration)', () => {
     sampleId = await makeBottling('sample', `Sample ${TOKEN} 0.7l`);
 
     const otherId = await makeBottling('other', `Other ${TOKEN} 0.7l`);
+
+    /**
+     * A 12-year-old whose age appears in neither name, which is the shape the
+     * plain substring search cannot reach.
+     */
+    agedId = await makeBottling('aged', `Aged ${AGED}`, 12);
+
+    await makeOffer(storeA, agedId, `Віскі Aged ${AGED} 0.7л`, 1500);
 
     await makeOffer(storeA, sampleId, `Віскі Sample ${TOKEN} 0.7л`, 1000);
     await makeOffer(
@@ -246,6 +267,31 @@ describe('report grouping over the live query (integration)', () => {
     expect(data).toHaveLength(1);
     expect(data[0].offers).toHaveLength(1);
     expect(data[0].offers[0].storeSlug).toBe(SLUG_B);
+  });
+
+  it('reads a trailing number as an age the name misses', async () => {
+    /**
+     * Neither the canonical nor the raw name holds a `12`, so the substring
+     * pass matches nothing: the row comes back only because the term is split
+     * into a name part and an age.
+     */
+    const data = await catalog({ name: `${AGED} 12` });
+
+    expect(data).toHaveLength(1);
+    expect(data[0].productId).toBe(agedId);
+  });
+
+  it('matches nothing when the age of the term is another one', async () => {
+    const data = await catalog({ name: `${AGED} 15` });
+
+    expect(data).toHaveLength(0);
+  });
+
+  it('keeps matching the name alone when the term has no age', async () => {
+    const data = await catalog({ name: AGED });
+
+    expect(data).toHaveLength(1);
+    expect(data[0].productId).toBe(agedId);
   });
 
   it('applies a product-level filter to the whole group', async () => {

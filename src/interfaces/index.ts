@@ -10,6 +10,7 @@ export * from './product.interfaces';
 export * from './report.interfaces';
 export * from './rest.interfaces';
 export * from './scrape.interfaces';
+export * from './search.interfaces';
 export * from './session.interfaces';
 export * from './store.interfaces';
 export * from './sync.interfaces';

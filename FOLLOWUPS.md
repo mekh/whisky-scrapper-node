@@ -141,32 +141,36 @@ win once dashboard use grows, but `@CacheControl` compiles to a static Nest
 
 ## 6. `goodwine`'s full catalog does not fit its sync budget
 
-**Status**: open, introduced by fixing item 1. **Needs a decision.**
+**Status**: timeout RESOLVED (2026-08-22) — `SYNC_STORE_TIMEOUT_MS` raised from
+15 to **20 minutes**. The one-off field backfill below is still outstanding.
 
-With the cap raised, `goodwine`'s listing walk is 61 pages at its tier-2
-politeness delay of 8-15 s, i.e. **roughly 8-15 minutes for the listing alone**
-against a `SYNC_STORE_TIMEOUT_MS` of 15 minutes. An average run fits (~11.7 min)
-and the soft LLM/detail deadline (`SYNC_LLM_DEADLINE_MARGIN_MS`, 2 min) stops
-detail enrichment in time for the run to persist what it scraped — but a run
-whose jitter lands high does not fit at all, and a timed-out run persists
-nothing.
+With the item-1 cap raised, `goodwine`'s listing walk is 61 pages at its tier-2
+politeness delay of 8-15 s, i.e. **roughly 8-15 minutes for the listing alone**.
+Against the old 15-minute budget an average run fitted (~11.7 min) but an
+unlucky one did not, and a run that overruns is abandoned having written
+nothing — so the tightest store was the one that lost a whole scrape to jitter.
+At 20 minutes even the worst case (61 x 15 s = 15.25 min) clears the budget with
+~4.75 minutes to spare, and the soft LLM/detail deadline
+(`SYNC_LLM_DEADLINE_MARGIN_MS`, 2 min) leaves the run time to persist.
 
-There is also a one-off cost: the first successful run discovers ~724 SKUs the
-store has never had on file. `goodwine` is `supportsDetail`, so each of those
+The trade accepted: the budget is global, so every HTTP store may now run five
+minutes longer before being cut off. That only costs anything on a store that
+was already going to fail, and a store that hangs is still bounded.
+
+**Still open — the one-off field cost.** The first successful run discovers ~724
+SKUs the store has never had on file. `goodwine` is `supportsDetail`, so each
 wants a detail page at the same 8-15 s delay (~2.4 h of fetching). The soft
-deadline will cut that short and the fields stay null until a backfill — the
-same pattern `fozzy`, `alcomag` and `silpo` needed.
+deadline cuts that short, so the offers land with their secondary fields null
+and stay that way until seeded — the same pattern `fozzy`, `alcomag` and `silpo`
+needed:
 
-**Options** (pick one; not decided here because each trades something
-different):
+```
+pnpm backfill --store goodwine
+```
 
-1. Seed once with `pnpm backfill --store goodwine` (no lock, hours, fills the
-   fields properly), then let normal syncs keep it current.
-2. Lower `goodwine`'s `store_config` delay from 8-15 s to something closer to
-   the tier-1 stores' 4-8 s, which halves the listing walk. Needs a judgement
-   call about how hard the store may be hit.
-3. Raise `SYNC_STORE_TIMEOUT_MS` — but it is global, so this loosens the budget
-   for every store.
+Takes hours, holds no sync lock, and is re-runnable. Nothing breaks without it;
+those ~724 offers simply carry no abv/volume/type/country until it has run.
 
-Until one of these is done, expect `goodwine` runs to be slow and occasionally
-to fail on the store timeout.
+Lowering `goodwine`'s `store_config` delay towards the tier-1 stores' 4-8 s
+would halve both numbers, but that is a judgement call about how hard the store
+may be hit and is deliberately not taken here.

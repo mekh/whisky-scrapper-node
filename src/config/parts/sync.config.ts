@@ -9,7 +9,14 @@ const DEFAULT_TIMEZONE = 'Europe/Kyiv';
 
 const DEFAULT_MAX_PARALLEL_TRACKS = 4;
 
-const DEFAULT_STORE_TIMEOUT_MS = 15 * 60 * 1000;
+/**
+ * Raised from 15 minutes on 2026-08-22, for `goodwine`: its catalogue is 61
+ * pages and its politeness delay is 8-15 s, so the listing walk alone is 8-15
+ * minutes and an unlucky run did not fit at all. A run that overruns is
+ * abandoned having written nothing, which made the tightest store the one that
+ * lost a whole scrape to jitter.
+ */
+const DEFAULT_STORE_TIMEOUT_MS = 20 * 60 * 1000;
 
 /**
  * The browser tier is an order of magnitude slower: `rozetka` renders ~38 pages

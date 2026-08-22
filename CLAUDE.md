@@ -994,10 +994,11 @@ wrappers): `scrape/` has its own internal layering.
   the run persists the listing instead of dying on the store timeout — the
   skipped items' fields stay empty until a backfill run, which the log line
   says outright.
-  Three stores' first full detail sweep exceeds `SYNC_STORE_TIMEOUT_MS` and so
+  Four stores' first full detail sweep exceeds `SYNC_STORE_TIMEOUT_MS` and so
   has to be seeded through `pnpm backfill --store <slug>` once: `fozzy`
-  (~300 pages), `alcomag` (~600) and `silpo` (778 stored rows missing ABV,
-  ~60–110 min at its 4–8 s delay). After that the normal gate leaves only
+  (~300 pages), `alcomag` (~600), `silpo` (778 stored rows missing ABV,
+  ~60–110 min at its 4–8 s delay) and now `goodwine` (~724 SKUs the 30-page cap
+  had been hiding, at an 8–15 s delay). After that the normal gate leaves only
   genuinely new SKUs to fetch, which fits the budget easily.
 - **Parity harness**: `scripts/scrape-parity-diff.ts <slug> [--python <dump>]
   [--ts <dump>] [--out <dir>]` runs the legacy Python scraper
@@ -1249,7 +1250,10 @@ so a checkout and the prod container are told apart without either being
 configured); sync vars in
 `SyncConfig` — `SYNC_CRON_ENABLED` (default false), `SYNC_CRON_EXPRESSION`
 (default `0 12 * * *`), `SYNC_TIMEZONE` (default `Europe/Kyiv`),
-`SYNC_MAX_PARALLEL_TRACKS` (4), `SYNC_STORE_TIMEOUT_MS` (900000),
+`SYNC_MAX_PARALLEL_TRACKS` (4), `SYNC_STORE_TIMEOUT_MS` (1200000 — raised from
+900000 on 2026-08-22 for `goodwine`, whose 61-page catalogue at an 8-15 s delay
+is 8-15 minutes of listing walk alone, so an unlucky run did not fit and was
+abandoned having written nothing),
 `SYNC_BROWSER_STORE_TIMEOUT_MS` (2700000 — the budget for a `needsBrowser`
 store, which needs ~20 min for a full pass and would never fit the HTTP one),
 `SYNC_LLM_DEADLINE_MARGIN_MS` (120000 — how early the optional passes, detail

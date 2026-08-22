@@ -64,6 +64,12 @@ interface Harness extends HarnessOptions {
 /**
  * A bottling the catalogue already knows. Every field defaults to "filled", so
  * a test states only the gaps it wants a pass to chase.
+ *
+ * `flavorsCuratedAt` is the exception: "filled" for it would mean *curated*,
+ * which locks both flavor passes out of the row, so the default is the
+ * uncurated `null`. It has to be stated rather than left off — the repository
+ * always selects the column, and `isIncomplete` compares it with `===`, so an
+ * absent property is a shape production never produces.
  */
 function stored(over: Partial<ProductMatchRow> = {}): ProductMatchRow {
   return {
@@ -75,6 +81,7 @@ function stored(over: Partial<ProductMatchRow> = {}): ProductMatchRow {
     typeId: 'type-1',
     countryId: 'country-1',
     lastLlmFlavorAt: new Date('2026-08-01T00:00:00Z'),
+    flavorsCuratedAt: null,
     ...over,
   };
 }

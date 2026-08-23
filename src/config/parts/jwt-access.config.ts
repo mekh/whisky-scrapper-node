@@ -22,7 +22,9 @@ export class JwtAccessConfig extends BaseConfig implements JwtOptionsFactory {
     ...this.expiresIn && { expiresIn: this.expiresIn },
   };
 
-  public verifyOptions: JwtVerifyOptions = {};
+  public verifyOptions: JwtVerifyOptions = {
+    algorithms: ['HS256'],
+  };
 
   public createJwtOptions(): JwtModuleOptions {
     return {

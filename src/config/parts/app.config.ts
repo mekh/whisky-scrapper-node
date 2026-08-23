@@ -49,4 +49,12 @@ export class AppConfig extends BaseConfig {
   public readonly corsOrigins: string[] =
     this.asArray('CORS_ORIGINS')?.map((origin) => origin.trim())
     ?? ['https://whisky.vlm.com.ua'];
+
+  @IsInt()
+  @IsPositive()
+  public readonly throttleTtlMs = this.asNumber('THROTTLE_TTL_MS') ?? 60000;
+
+  @IsInt()
+  @IsPositive()
+  public readonly throttleLimit = this.asNumber('THROTTLE_LIMIT') ?? 100;
 }

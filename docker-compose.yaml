@@ -50,6 +50,8 @@ services:
       - LOG_CALLSITES=false
       - LOG_COLORS=true
       - SWAGGER_ENABLED=true
+      - THROTTLE_TTL_MS=${THROTTLE_TTL_MS:-}
+      - THROTTLE_LIMIT=${THROTTLE_LIMIT:-}
       - SYNC_CRON_ENABLED=${SYNC_CRON_ENABLED:-false}
       - SYNC_CRON_EXPRESSION=${SYNC_CRON_EXPRESSION:-0 12 * * *}
       - SYNC_TIMEZONE=${SYNC_TIMEZONE:-Europe/Kyiv}

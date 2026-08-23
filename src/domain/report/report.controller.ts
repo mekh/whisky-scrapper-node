@@ -1,5 +1,6 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 
+import { UserThrottlerGuard } from '~app/guards/user-throttler.guard';
 import { DEFAULT_PER_PAGE, READ_CACHE_MAX_AGE_SECONDS } from '~constants';
 import { CurrentUser } from '~decorators/auth';
 import { CacheControl } from '~decorators/http';
@@ -19,6 +20,7 @@ import { ReportService } from './report.service';
 import { PriceHistoryType, ReportGroupType } from './types';
 
 @Controller('report')
+@UseGuards(UserThrottlerGuard)
 export class ReportController {
   public constructor(private readonly reportService: ReportService) {}
 

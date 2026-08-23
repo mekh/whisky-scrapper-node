@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule, ThrottlerModuleOptions } from '@nestjs/throttler';
 import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { ClsMiddleware } from 'nestjs-cls';
 import { DataSource, DataSourceOptions } from 'typeorm';
@@ -14,7 +15,7 @@ import {
   getDataSourceByName,
 } from 'typeorm-transactional';
 
-import { ConfigModule, DbConfig, ValidationConfig } from '~config';
+import { AppConfig, ConfigModule, DbConfig, ValidationConfig } from '~config';
 import { DomainAuthModule } from '~domain/auth';
 import { DomainBrandModule } from '~domain/brand';
 import { DomainDashboardModule } from '~domain/dashboard';
@@ -44,6 +45,27 @@ import { LogInterceptor, ValidationInterceptor } from './interceptors';
      * `domain/store` is its only user today.
      */
     ScheduleModule.forRoot(),
+    /**
+     * Per-user rate limiting for the heavy read endpoints. The default
+     * throttler is applied only where `UserThrottlerGuard` is used (report and
+     * dashboard controllers), keyed on the authenticated user id.
+     */
+    ThrottlerModule.forRootAsync({
+      imports: [
+        ConfigModule,
+      ],
+      inject: [
+        AppConfig,
+      ],
+      useFactory: (config: AppConfig): ThrottlerModuleOptions => ({
+        throttlers: [
+          {
+            ttl: config.throttleTtlMs,
+            limit: config.throttleLimit,
+          },
+        ],
+      }),
+    }),
     TypeOrmModule.forRootAsync({
       imports: [
         ConfigModule,

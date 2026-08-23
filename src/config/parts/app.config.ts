@@ -56,5 +56,5 @@ export class AppConfig extends BaseConfig {
 
   @IsInt()
   @IsPositive()
-  public readonly throttleLimit = this.asNumber('THROTTLE_LIMIT') ?? 100;
+  public readonly throttleLimit = this.asNumber('THROTTLE_LIMIT') ?? 60;
 }

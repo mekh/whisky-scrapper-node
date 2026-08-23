@@ -3,6 +3,7 @@ import { WebPushError, sendNotification, setVapidDetails } from 'web-push';
 
 import { PushConfig } from '~config';
 import { WebPushOutcome, WebPushTarget } from '~types';
+import { ErrorUtils } from '~utils';
 
 const HTTP_NOT_FOUND = 404;
 
@@ -99,7 +100,10 @@ export class WebPushService {
 
       return true;
     } catch (error) {
-      this.logger.error('VAPID configuration rejected: %o', error);
+      this.logger.error(
+        'VAPID configuration rejected: %s',
+        ErrorUtils.text(error),
+      );
 
       return false;
     }
@@ -139,7 +143,7 @@ export class WebPushService {
       return 'failed';
     }
 
-    this.logger.error('Push send failed: %o', error);
+    this.logger.error('Push send failed: %s', ErrorUtils.text(error));
 
     return 'failed';
   }

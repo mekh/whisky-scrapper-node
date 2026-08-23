@@ -6,6 +6,8 @@ import { BaseConfig } from '../src/config/base.config';
 
 const VAR = 'TEST_NUMBER_VAR';
 
+const STRING_VAR = 'TEST_STRING_VAR';
+
 /**
  * A minimal concrete config. `BaseConfig` self-validates on construction and
  * class-validator rejects an object carrying no validation metadata at all
@@ -23,11 +25,13 @@ let config: NumberProbe;
 
 beforeEach(() => {
   delete process.env[VAR];
+  delete process.env[STRING_VAR];
   config = new NumberProbe();
 });
 
 afterEach(() => {
   delete process.env[VAR];
+  delete process.env[STRING_VAR];
 });
 
 describe('BaseConfig.asNumber', () => {
@@ -92,5 +96,35 @@ describe('BaseConfig.asNumber', () => {
     process.env[VAR] = '12abc';
 
     expect(config.asNumber(VAR, 100)).toBe(100);
+  });
+});
+
+describe('BaseConfig.nonEmpty', () => {
+  it('reads a configured value, trimmed', () => {
+    process.env[STRING_VAR] = '  mailto:ops@example.com  ';
+
+    expect(config.nonEmpty(STRING_VAR)).toBe('mailto:ops@example.com');
+  });
+
+  it('is undefined when the variable is unset', () => {
+    expect(config.nonEmpty(STRING_VAR)).toBeUndefined();
+  });
+
+  it('is undefined on an empty or blank value', () => {
+    /**
+     * The regression this pins down: compose declares every forwarded
+     * variable as `${NAME:-}`, so in a container the name is always defined
+     * and holds an empty string when the host `.env` omits it. A plain
+     * `asString(...) ?? default` therefore hands that empty string on and the
+     * documented default becomes unreachable — which is how an empty
+     * `PUSH_VAPID_SUBJECT` silently disabled web push in production.
+     */
+    process.env[STRING_VAR] = '';
+
+    expect(config.nonEmpty(STRING_VAR)).toBeUndefined();
+
+    process.env[STRING_VAR] = '   ';
+
+    expect(config.nonEmpty(STRING_VAR)).toBeUndefined();
   });
 });

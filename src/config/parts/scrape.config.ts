@@ -138,18 +138,4 @@ export class ScrapeConfig extends BaseConfig {
   @Min(0)
   public readonly llmMaxRetries = this.asNumber('LLM_MAX_RETRIES')
     ?? DEFAULT_LLM_MAX_RETRIES;
-
-  /**
-   * Reads a variable that has a default, treating an **empty** value as unset:
-   * compose forwards a var as an empty string when the host `.env` omits it,
-   * and neither an empty endpoint nor an empty app name is usable.
-   *
-   * @param envName - The variable to read.
-   * @returns The configured value, or undefined when unset or empty.
-   */
-  private nonEmpty(envName: string): string | undefined {
-    const value = this.asString(envName);
-
-    return value !== undefined && value !== '' ? value : undefined;
-  }
 }

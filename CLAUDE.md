@@ -1199,6 +1199,15 @@ Every config concern is a class in `src/config/parts/` extending `BaseConfig`:
 
 - Read env vars via `this.asString('NAME') ?? default`, `asNumber`,
   `asBoolean`, `asEnum`, `asArray` — never `process.env` directly.
+- **A string var that has a default must be read with `nonEmpty`, not
+  `asString(...) ?? default`.** `asString` returns whatever the process holds,
+  and the `environment` block below forwards an omitted host var as an *empty
+  string*, so the name is always defined in a container and `??` hands that
+  empty string on as if it were configured — the documented default becomes
+  unreachable in production. `nonEmpty` treats empty and blank as unset, the
+  way `asNumber` already does. This cost a production debugging session on
+  `PUSH_VAPID_SUBJECT`, whose empty value `web-push` rejects, silently
+  disabling push.
 - Fields are `public readonly`, annotated with class-validator decorators;
   `BaseConfig` self-validates on construction (via `setImmediate`) and throws
   `ConfigurationError` on invalid values.

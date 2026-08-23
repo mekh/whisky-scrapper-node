@@ -56,6 +56,24 @@ export class BaseConfig {
     return this.env[envName] ?? defaultValue;
   }
 
+  /**
+   * Reads a variable that has a default, treating an **empty** value as unset:
+   * compose forwards a variable the host `.env` omits as an empty string, so a
+   * plain `??` would hand that empty string on as if it were configured.
+   *
+   * @param envName - The variable to read.
+   * @returns The configured value, or undefined when unset or empty.
+   */
+  public nonEmpty(envName: string): string | undefined {
+    const value = this.asString(envName)?.trim();
+
+    if (!value) {
+      return undefined;
+    }
+
+    return value;
+  }
+
   public asEnum<T extends Enum>(
     envName: string,
     enumType: T,

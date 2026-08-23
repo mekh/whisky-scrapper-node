@@ -50,9 +50,14 @@ export class PushConfig extends BaseConfig {
   /**
    * VAPID contact, a `mailto:` address or an `https://` URL. Push services
    * use it to reach the operator about a misbehaving sender.
+   *
+   * Read via `nonEmpty`, not `??`: compose declares the variable as
+   * `${PUSH_VAPID_SUBJECT:-}`, so in a container the name is always defined
+   * and a plain `??` would hand the empty string to the library, which
+   * rejects it and silently turns push off.
    */
   @IsString()
-  public readonly vapidSubject = this.asString('PUSH_VAPID_SUBJECT')
+  public readonly vapidSubject = this.nonEmpty('PUSH_VAPID_SUBJECT')
     ?? DEFAULT_VAPID_SUBJECT;
 
   /**

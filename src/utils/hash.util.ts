@@ -20,6 +20,11 @@ export class Hash {
   };
 
   /**
+   * Memoized decoy hash, computed once and reused by {@link decoyHash}.
+   */
+  private static decoyHashPromise?: Promise<string>;
+
+  /**
    * Hashes a secret with Argon2id synchronously.
    *
    * @param secret - The plaintext secret to hash.
@@ -65,6 +70,20 @@ export class Hash {
    */
   public static needsRehash(hash: string): boolean {
     return hash.startsWith(PBKDF2_PREFIX);
+  }
+
+  /**
+   * Returns a stable Argon2 hash to verify a supplied password against when a
+   * login names no existing user. Verifying against it makes an unknown
+   * account cost the same time as a real user given a wrong password, so the
+   * two cannot be told apart by response timing. Computed once and reused.
+   *
+   * @returns A promise resolving to a fixed Argon2id hash.
+   */
+  public static decoyHash(): Promise<string> {
+    Hash.decoyHashPromise ??= Hash.hashAsync('decoy');
+
+    return Hash.decoyHashPromise;
   }
 
   /**

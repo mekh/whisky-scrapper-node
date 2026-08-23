@@ -30,12 +30,6 @@ interface RefreshInput {
   userAgent: string;
 }
 
-interface VerifyPassword {
-  password: string;
-  hash: string;
-  errorMessage?: string;
-}
-
 @Injectable()
 export class AuthService {
   constructor(
@@ -54,20 +48,27 @@ export class AuthService {
       : { name: login };
 
     const user = await this.users.getAuthInfo(query);
-    const errorMessage = 'Invalid name or password';
-    if (!user) {
-      throw new NotAuthenticatedError(errorMessage);
+
+    /**
+     * Always run a password verification — against the real hash when the
+     * user exists, against a fixed decoy otherwise — so an unknown login and
+     * a wrong password cost the same time and cannot be told apart by timing.
+     */
+    const hash = user?.password ?? await Hash.decoyHash();
+
+    const valid = await Hash.verifyAsync(password, hash);
+
+    if (!user || !valid) {
+      throw new NotAuthenticatedError('Invalid name or password');
     }
 
+    /**
+     * Reached only once the password is proven, so an attacker without it
+     * always gets the generic error above and never learns the account state.
+     */
     if (!user.active) {
       throw new NotAuthorizedError();
     }
-
-    await this.verifyPassword({
-      password,
-      hash: user.password,
-      errorMessage: 'Invalid name or password',
-    });
 
     await this.upgradeHashIfNeeded(user.id, user.password, password);
 
@@ -202,18 +203,6 @@ export class AuthService {
       await this.session.revokeAll(userId);
 
       throw new NotAuthenticatedError();
-    }
-  }
-
-  private async verifyPassword({
-    password,
-    hash,
-    errorMessage,
-  }: VerifyPassword): Promise<void> {
-    const res = await Hash.verifyAsync(password, hash);
-
-    if (!res) {
-      throw new NotAuthenticatedError(errorMessage ?? 'Password missmatch');
     }
   }
 

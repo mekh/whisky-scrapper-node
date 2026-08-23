@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
@@ -42,4 +43,10 @@ export class AppConfig extends BaseConfig {
   @IsBoolean()
   public readonly swaggerEnabled: boolean = this.asBoolean('SWAGGER_ENABLED') ??
     false;
+
+  @IsArray()
+  @IsString({ each: true })
+  public readonly corsOrigins: string[] =
+    this.asArray('CORS_ORIGINS')?.map((origin) => origin.trim())
+    ?? ['https://whisky.vlm.com.ua'];
 }

@@ -27,7 +27,13 @@ const run = async (): Promise<void> => {
 
   app.useLogger(app.get(LoggerService));
   app.enableVersioning({ type: VersioningType.URI });
-  app.enableCors();
+
+  /**
+   * Restrict CORS to the configured origins instead of the previous
+   * wildcard. Dev (vite proxy) and prod (nginx) both call the API
+   * same-origin, so CORS is only a safety net; set CORS_ORIGINS to widen it.
+   */
+  app.enableCors({ origin: config.corsOrigins });
 
   // Cookie parser is required to read the refresh token from the `refresh`
   // cookie on the auth endpoints.

@@ -19,6 +19,13 @@ const OWN_HANDLERS = [
   'removeFromBlacklist',
 ] as const;
 
+const FOR_USER_WRITE_HANDLERS = [
+  'addFavoritesForUser',
+  'removeFavoritesForUser',
+  'addToBlacklistForUser',
+  'removeFromBlacklistForUser',
+] as const;
+
 /**
  * Reads the permission metadata a controller handler carries.
  *
@@ -49,10 +56,16 @@ function makeController(): {
     getOwn: jest.fn().mockResolvedValue('own'),
     getOwnDetails: jest.fn().mockResolvedValue('own-details'),
     getForUser: jest.fn().mockResolvedValue('for-user'),
+    getDetailsForUser: jest.fn().mockResolvedValue('for-user-details'),
     addFavorites: jest.fn().mockResolvedValue('add-fav'),
     removeFavorites: jest.fn().mockResolvedValue('remove-fav'),
     addToBlacklist: jest.fn().mockResolvedValue('add-black'),
     removeFromBlacklist: jest.fn().mockResolvedValue('remove-black'),
+    addFavoritesForUser: jest.fn().mockResolvedValue('add-fav-user'),
+    removeFavoritesForUser: jest.fn().mockResolvedValue('remove-fav-user'),
+    addToBlacklistForUser: jest.fn().mockResolvedValue('add-black-user'),
+    removeFromBlacklistForUser: jest.fn()
+      .mockResolvedValue('remove-black-user'),
   };
 
   const controller = new PreferenceController(
@@ -78,17 +91,35 @@ describe('PreferenceController permissions', () => {
     },
   );
 
-  it('byUser accepts the scope holder or the user themselves', () => {
-    const meta = metaOf('byUser');
+  it.each(['byUser', 'byUserDetails'])(
+    '%s accepts the read scope holder or the user themselves',
+    (handler) => {
+      const meta = metaOf(handler);
 
-    expect(meta?.mode).toBe(PermissionMode.OR);
-    expect(meta?.isPublic).toBe(false);
-    expect(meta?.permissions).toHaveLength(2);
-    expect(meta?.permissions[0])
-      .toEqual([Resource.PREFERENCE, Action.READ]);
-    expect(meta?.permissions[1][0]).toBe(Resource.SELF);
-    expect(typeof meta?.permissions[1][1]).toBe('function');
-  });
+      expect(meta?.mode).toBe(PermissionMode.OR);
+      expect(meta?.isPublic).toBe(false);
+      expect(meta?.permissions).toHaveLength(2);
+      expect(meta?.permissions[0])
+        .toEqual([Resource.PREFERENCE, Action.READ]);
+      expect(meta?.permissions[1][0]).toBe(Resource.SELF);
+      expect(typeof meta?.permissions[1][1]).toBe('function');
+    },
+  );
+
+  it.each([...FOR_USER_WRITE_HANDLERS])(
+    '%s accepts the update scope holder or the user themselves',
+    (handler) => {
+      const meta = metaOf(handler);
+
+      expect(meta?.mode).toBe(PermissionMode.OR);
+      expect(meta?.isPublic).toBe(false);
+      expect(meta?.permissions).toHaveLength(2);
+      expect(meta?.permissions[0])
+        .toEqual([Resource.PREFERENCE, Action.UPDATE]);
+      expect(meta?.permissions[1][0]).toBe(Resource.SELF);
+      expect(typeof meta?.permissions[1][1]).toBe('function');
+    },
+  );
 });
 
 describe('PreferenceController delegation', () => {
@@ -132,4 +163,44 @@ describe('PreferenceController delegation', () => {
     expect(service.removeFromBlacklist)
       .toHaveBeenCalledWith(USER.id, blacklist);
   });
+
+  it('reads another user\'s details by the route parameter', async () => {
+    const { controller, service } = makeController();
+
+    await controller.byUserDetails({ userId: 'user-2' as ID });
+
+    expect(service.getDetailsForUser).toHaveBeenCalledWith('user-2');
+  });
+
+  it(
+    'hands each per-user mutation the route parameter and the body untouched',
+    async () => {
+      /**
+       * The id must come from the route, never from the caller's own token —
+       * passing `user.id` here would silently edit the admin instead of the
+       * target user.
+       */
+      const { controller, service } = makeController();
+      const target = { userId: 'user-2' as ID };
+      const favorites = { productIds: ['product-1' as ID] };
+      const blacklist = {
+        productIds: ['product-2' as ID],
+        brands: ['Ardbeg'],
+      };
+
+      await controller.addFavoritesForUser(target, favorites);
+      await controller.removeFavoritesForUser(target, favorites);
+      await controller.addToBlacklistForUser(target, blacklist);
+      await controller.removeFromBlacklistForUser(target, blacklist);
+
+      expect(service.addFavoritesForUser)
+        .toHaveBeenCalledWith('user-2', favorites);
+      expect(service.removeFavoritesForUser)
+        .toHaveBeenCalledWith('user-2', favorites);
+      expect(service.addToBlacklistForUser)
+        .toHaveBeenCalledWith('user-2', blacklist);
+      expect(service.removeFromBlacklistForUser)
+        .toHaveBeenCalledWith('user-2', blacklist);
+    },
+  );
 });

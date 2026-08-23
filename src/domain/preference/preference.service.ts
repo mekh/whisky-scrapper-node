@@ -81,6 +81,21 @@ export class PreferenceService {
   }
 
   /**
+   * Loads another user's preferences resolved to renderable entries, newest
+   * first — the admin users screen's read.
+   *
+   * @param userId - Whose preferences to read.
+   * @returns Their favorites and blacklist, resolved for display.
+   * @throws {NotFoundError} When no such user exists — otherwise a mistyped id
+   *   would answer with an empty but entirely plausible payload.
+   */
+  public async getDetailsForUser(userId: ID): Promise<PreferenceDetails> {
+    await this.users.findByIdOrThrow(userId);
+
+    return this.preferences.findDetailsByUserId(userId);
+  }
+
+  /**
    * Adds bottlings to the user's favorites.
    *
    * @param userId - Whose favorites to extend.
@@ -98,6 +113,26 @@ export class PreferenceService {
   }
 
   /**
+   * Adds bottlings to another user's favorites, for an admin or for the user
+   * themselves.
+   *
+   * @param userId - Whose favorites to extend.
+   * @param input - Canonical product ids; an empty list is a no-op.
+   * @returns Their preferences after the change.
+   * @throws {NotFoundError} When no such user exists — otherwise the write
+   *   would surface the foreign key as a server error.
+   * @throws {BadRequestError} When an id matches no bottling.
+   */
+  public async addFavoritesForUser(
+    userId: ID,
+    input: PreferenceFavoritesInput,
+  ): Promise<Preference> {
+    await this.users.findByIdOrThrow(userId);
+
+    return this.addFavorites(userId, input);
+  }
+
+  /**
    * Removes bottlings from the user's favorites.
    *
    * Unknown ids are not rejected here: a delete that matches nothing changes
@@ -112,6 +147,24 @@ export class PreferenceService {
     input: PreferenceFavoritesInput,
   ): Promise<Preference> {
     return this.preferences.removeFavorites(userId, input.productIds);
+  }
+
+  /**
+   * Removes bottlings from another user's favorites, for an admin or for the
+   * user themselves.
+   *
+   * @param userId - Whose favorites to trim.
+   * @param input - Canonical product ids; an empty list is a no-op.
+   * @returns Their preferences after the change.
+   * @throws {NotFoundError} When no such user exists.
+   */
+  public async removeFavoritesForUser(
+    userId: ID,
+    input: PreferenceFavoritesInput,
+  ): Promise<Preference> {
+    await this.users.findByIdOrThrow(userId);
+
+    return this.removeFavorites(userId, input);
   }
 
   /**
@@ -140,6 +193,27 @@ export class PreferenceService {
   }
 
   /**
+   * Hides bottlings and/or brands for another user, for an admin or for the
+   * user themselves. Same semantics as {@link addToBlacklist}, including the
+   * favorite drop.
+   *
+   * @param userId - Whose blacklist to extend.
+   * @param input - Product ids and/or brand names; at least one is required.
+   * @returns Their preferences after the change.
+   * @throws {NotFoundError} When no such user exists.
+   * @throws {BadRequestError} When both lists are empty, an id matches no
+   *   bottling, or a name matches no brand.
+   */
+  public async addToBlacklistForUser(
+    userId: ID,
+    input: PreferenceBlacklistInput,
+  ): Promise<Preference> {
+    await this.users.findByIdOrThrow(userId);
+
+    return this.addToBlacklist(userId, input);
+  }
+
+  /**
    * Un-hides bottlings and/or brands.
    *
    * Brand names are still resolved strictly, and that is safe rather than
@@ -165,6 +239,26 @@ export class PreferenceService {
       productIds: input.productIds ?? [],
       brandIds,
     });
+  }
+
+  /**
+   * Un-hides bottlings and/or brands for another user, for an admin or for
+   * the user themselves.
+   *
+   * @param userId - Whose blacklist to trim.
+   * @param input - Product ids and/or brand names; at least one is required.
+   * @returns Their preferences after the change.
+   * @throws {NotFoundError} When no such user exists.
+   * @throws {BadRequestError} When both lists are empty or a name matches no
+   *   brand.
+   */
+  public async removeFromBlacklistForUser(
+    userId: ID,
+    input: PreferenceBlacklistInput,
+  ): Promise<Preference> {
+    await this.users.findByIdOrThrow(userId);
+
+    return this.removeFromBlacklist(userId, input);
   }
 
   /**

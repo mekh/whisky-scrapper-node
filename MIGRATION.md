@@ -61,6 +61,11 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 | — (new)                                                                               | `POST /preference/blacklist` `{productIds?, brands?}` — hide bottlings and/or brands; also drops those bottlings from the favorites                                                                                                                                                                          | any logged-in user |
 | — (new)                                                                               | `DELETE /preference/blacklist` `{productIds?, brands?}` — un-hide; restores no favorite                                                                                                                                                                                                                     | any logged-in user |
 | — (new)                                                                               | `GET /preference/details` — the caller's own lists resolved to renderable entries, newest first (see "Preferences")                                                                                                                                                                                          | any logged-in user |
+| — (new)                                                                               | `GET /preference/{userId}/details` — another user's lists resolved to renderable entries, newest first                                                                                                                                                                                                      | `preference:read` or self (admin bypasses) |
+| — (new)                                                                               | `POST /preference/{userId}/favorites` `{productIds}` — add favorites for another user, `200` + the fresh preference                                                                                                                                                                                          | `preference:update` or self (admin bypasses) |
+| — (new)                                                                               | `DELETE /preference/{userId}/favorites` `{productIds}` — remove another user's favorites                                                                                                                                                                                                                    | `preference:update` or self (admin bypasses) |
+| — (new)                                                                               | `POST /preference/{userId}/blacklist` `{productIds?, brands?}` — hide bottlings and/or brands for another user; also drops those bottlings from their favorites                                                                                                                                              | `preference:update` or self (admin bypasses) |
+| — (new)                                                                               | `DELETE /preference/{userId}/blacklist` `{productIds?, brands?}` — un-hide for another user; restores no favorite                                                                                                                                                                                           | `preference:update` or self (admin bypasses) |
 | — (new)                                                                               | `GET /push/config` — whether web push is on plus the VAPID public key to subscribe with (see "Push notifications")                                                                                                                                                                                          | any logged-in user |
 | — (new)                                                                               | `GET /push/subscription` — the caller's subscribed devices (no key material)                                                                                                                                                                                                                                | any logged-in user |
 | — (new)                                                                               | `POST /push/subscription` `{endpoint, p256dh, auth}` — register/refresh this browser's subscription, `200` + the fresh device list                                                                                                                                                                          | any logged-in user |
@@ -353,6 +358,18 @@ too (a bottling no store lists — still shown, still removable), `inStock`
 means "some offer of the bottling is in stock", and `addedOn` is the UTC
 calendar day while the ordering keys on the full timestamp. Same
 `private, no-cache` headers as the other preference reads.
+
+**Per-user admin variants (2026-08-23)** exist so the users screen can read
+and edit another user's lists: `GET /preference/{userId}/details` plus
+`POST`/`DELETE` on `/preference/{userId}/favorites` and
+`/preference/{userId}/blacklist`. Bodies, responses, and semantics are
+identical to the own routes above — including "blacklisting a product drops
+its favorite" — and an unknown `userId` is `404` rather than empty lists or a
+foreign-key `500`. Reads require `preference:read`, writes `preference:update`
+(or self; admins bypass both). One honest caveat: the **target** user's
+browser HTTP cache cannot be busted from here. `/preference*` is `no-cache`,
+so their next read is fresh, but `/report/*` is `private, max-age=600` — the
+edited user may keep seeing pre-change report rows for up to ten minutes.
 
 ### Push notifications (2026-08-23)
 

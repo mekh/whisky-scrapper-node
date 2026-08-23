@@ -376,18 +376,21 @@ describe('PermissionGuard — special resources skip user.permissions', () => {
   });
 });
 
-describe('PermissionGuard — GET /preference/:userId', () => {
+describe.each([
+  ['GET /preference/:userId', 'byUser', Action.READ],
+  ['POST /preference/:userId/favorites', 'addFavoritesForUser', Action.UPDATE],
+])('PermissionGuard — %s', (_route, handler, action) => {
   /**
    * The real handler's metadata, so the matrix below exercises the shipped
-   * `[PREFERENCE, READ] OR [SELF, isSelf]` pair rather than a restatement of
-   * it.
+   * `[PREFERENCE, <action>] OR [SELF, isSelf]` pair rather than a restatement
+   * of it.
    *
-   * @returns The metadata attached to `PreferenceController.byUser`.
+   * @returns The metadata attached to the `PreferenceController` handler.
    */
-  function byUserMeta(): AuthPermissionMeta {
+  function handlerMeta(): AuthPermissionMeta {
     const method = Object.getOwnPropertyDescriptor(
       PreferenceController.prototype,
-      'byUser',
+      handler,
     )?.value as object;
 
     return Reflect.getMetadata(
@@ -405,11 +408,11 @@ describe('PermissionGuard — GET /preference/:userId', () => {
    * @param targetUserId - The `:userId` the request addresses.
    * @returns Whether the guard authorizes the request.
    */
-  function runByUserGuard(
+  function runHandlerGuard(
     user: CtxUser | null,
     targetUserId: string,
   ): Promise<boolean> {
-    const meta = byUserMeta();
+    const meta = handlerMeta();
     const guard = new PermissionGuard();
 
     const manager = {
@@ -433,20 +436,20 @@ describe('PermissionGuard — GET /preference/:userId', () => {
     return guard.canActivate({} as ExecutionContext);
   }
 
-  it('allows a user to read their own preferences', async () => {
-    const granted = await runByUserGuard(asUser({ id: 'u1' }), 'u1');
+  it('allows a user to address their own preferences', async () => {
+    const granted = await runHandlerGuard(asUser({ id: 'u1' }), 'u1');
 
     expect(granted).toBe(true);
   });
 
-  it("denies reading another user's preferences", async () => {
-    const granted = await runByUserGuard(asUser({ id: 'u1' }), 'u2');
+  it("denies addressing another user's preferences", async () => {
+    const granted = await runHandlerGuard(asUser({ id: 'u1' }), 'u2');
 
     expect(granted).toBe(false);
   });
 
-  it('lets an admin read anyone, holding no scope at all', async () => {
-    const granted = await runByUserGuard(
+  it('lets an admin address anyone, holding no scope at all', async () => {
+    const granted = await runHandlerGuard(
       asUser({ id: 'u1', admin: true }),
       'u2',
     );
@@ -454,12 +457,12 @@ describe('PermissionGuard — GET /preference/:userId', () => {
     expect(granted).toBe(true);
   });
 
-  it('allows a scope holder to read another user', async () => {
+  it('allows a scope holder to address another user', async () => {
     const permissions = new Map([
-      [Resource.PREFERENCE, new Set([Action.READ])],
+      [Resource.PREFERENCE, new Set([action])],
     ]);
 
-    const granted = await runByUserGuard(
+    const granted = await runHandlerGuard(
       asUser({ id: 'u1', permissions }),
       'u2',
     );
@@ -467,8 +470,22 @@ describe('PermissionGuard — GET /preference/:userId', () => {
     expect(granted).toBe(true);
   });
 
+  it('denies the wrong action on the same resource', async () => {
+    const wrongAction = action === Action.READ ? Action.UPDATE : Action.READ;
+    const permissions = new Map([
+      [Resource.PREFERENCE, new Set([wrongAction])],
+    ]);
+
+    const granted = await runHandlerGuard(
+      asUser({ id: 'u1', permissions }),
+      'u2',
+    );
+
+    expect(granted).toBe(false);
+  });
+
   it('denies an anonymous request', async () => {
-    const granted = await runByUserGuard(null, 'u1');
+    const granted = await runHandlerGuard(null, 'u1');
 
     expect(granted).toBe(false);
   });

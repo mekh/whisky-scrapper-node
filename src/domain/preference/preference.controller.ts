@@ -102,4 +102,71 @@ export class PreferenceController {
   ): Promise<Preference> {
     return this.preferences.removeFromBlacklist(user.id, body);
   }
+
+  @Get(':userId/details')
+  @CacheControl('no-cache')
+  @Plain(
+    PreferenceDetailsType,
+    [Resource.PREFERENCE, Action.READ],
+    [Resource.SELF, isSelf],
+  )
+  public byUserDetails(
+    @Param() params: ByUserIdDto,
+  ): Promise<PreferenceDetails> {
+    return this.preferences.getDetailsForUser(params.userId);
+  }
+
+  @Post(':userId/favorites')
+  @HttpCode(HttpStatus.OK)
+  @Plain(
+    PreferenceType,
+    [Resource.PREFERENCE, Action.UPDATE],
+    [Resource.SELF, isSelf],
+  )
+  public addFavoritesForUser(
+    @Param() params: ByUserIdDto,
+    @Body() body: PreferenceFavoritesDto,
+  ): Promise<Preference> {
+    return this.preferences.addFavoritesForUser(params.userId, body);
+  }
+
+  @Delete(':userId/favorites')
+  @Plain(
+    PreferenceType,
+    [Resource.PREFERENCE, Action.UPDATE],
+    [Resource.SELF, isSelf],
+  )
+  public removeFavoritesForUser(
+    @Param() params: ByUserIdDto,
+    @Body() body: PreferenceFavoritesDto,
+  ): Promise<Preference> {
+    return this.preferences.removeFavoritesForUser(params.userId, body);
+  }
+
+  @Post(':userId/blacklist')
+  @HttpCode(HttpStatus.OK)
+  @Plain(
+    PreferenceType,
+    [Resource.PREFERENCE, Action.UPDATE],
+    [Resource.SELF, isSelf],
+  )
+  public addToBlacklistForUser(
+    @Param() params: ByUserIdDto,
+    @Body() body: PreferenceBlacklistDto,
+  ): Promise<Preference> {
+    return this.preferences.addToBlacklistForUser(params.userId, body);
+  }
+
+  @Delete(':userId/blacklist')
+  @Plain(
+    PreferenceType,
+    [Resource.PREFERENCE, Action.UPDATE],
+    [Resource.SELF, isSelf],
+  )
+  public removeFromBlacklistForUser(
+    @Param() params: ByUserIdDto,
+    @Body() body: PreferenceBlacklistDto,
+  ): Promise<Preference> {
+    return this.preferences.removeFromBlacklistForUser(params.userId, body);
+  }
 }

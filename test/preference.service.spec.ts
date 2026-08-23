@@ -266,3 +266,82 @@ describe('PreferenceService blacklist', () => {
     expect(preferences.removeFromBlacklist).not.toHaveBeenCalled();
   });
 });
+
+describe('PreferenceService per-user variants', () => {
+  it('checks the user exists before reading their details', async () => {
+    const { service, preferences, users } = makeService();
+
+    const result = await service.getDetailsForUser(USER_ID);
+
+    expect(users.findByIdOrThrow).toHaveBeenCalledWith(USER_ID);
+    expect(preferences.findDetailsByUserId).toHaveBeenCalledWith(USER_ID);
+    expect(result).toBe(DETAILS);
+  });
+
+  it(
+    'propagates the 404 for unknown-user details, not empty lists',
+    async () => {
+      const { service, preferences, users } = makeService();
+
+      users.findByIdOrThrow.mockRejectedValue(new NotFoundError('User'));
+
+      await expect(service.getDetailsForUser(USER_ID))
+        .rejects.toThrow(NotFoundError);
+      expect(preferences.findDetailsByUserId).not.toHaveBeenCalled();
+    },
+  );
+
+  it('checks the user exists before each write', async () => {
+    const { service, preferences, users } = makeService({
+      brands: new Map([['Ardbeg', BRAND_ID]]),
+    });
+    const favorites = { productIds: [PRODUCT_ID] };
+    const blacklist = { brands: ['Ardbeg'] };
+
+    await service.addFavoritesForUser(USER_ID, favorites);
+    await service.removeFavoritesForUser(USER_ID, favorites);
+    await service.addToBlacklistForUser(USER_ID, blacklist);
+    await service.removeFromBlacklistForUser(USER_ID, blacklist);
+
+    expect(users.findByIdOrThrow).toHaveBeenCalledTimes(4);
+    expect(preferences.addFavorites)
+      .toHaveBeenCalledWith(USER_ID, [PRODUCT_ID]);
+    expect(preferences.removeFavorites)
+      .toHaveBeenCalledWith(USER_ID, [PRODUCT_ID]);
+    expect(preferences.addToBlacklist).toHaveBeenCalledWith(USER_ID, {
+      productIds: [],
+      brandIds: [BRAND_ID],
+    });
+    expect(preferences.removeFromBlacklist).toHaveBeenCalledWith(USER_ID, {
+      productIds: [],
+      brandIds: [BRAND_ID],
+    });
+  });
+
+  it('rejects a write for an unknown user before any validation', async () => {
+    const { service, preferences, products, users } = makeService();
+
+    users.findByIdOrThrow.mockRejectedValue(new NotFoundError('User'));
+
+    await expect(
+      service.addFavoritesForUser(USER_ID, { productIds: [PRODUCT_ID] }),
+    ).rejects.toThrow(NotFoundError);
+    expect(products.findExistingIds).not.toHaveBeenCalled();
+    expect(preferences.addFavorites).not.toHaveBeenCalled();
+  });
+
+  it('still runs the inherited validation after the user check', async () => {
+    const { service, preferences } = makeService({ products: [] });
+
+    await expect(
+      service.addFavoritesForUser(USER_ID, { productIds: [PRODUCT_ID] }),
+    ).rejects.toThrow(BadRequestError);
+    await expect(service.addToBlacklistForUser(USER_ID, {}))
+      .rejects.toThrow(BadRequestError);
+    await expect(service.removeFromBlacklistForUser(USER_ID, {}))
+      .rejects.toThrow(BadRequestError);
+    expect(preferences.addFavorites).not.toHaveBeenCalled();
+    expect(preferences.addToBlacklist).not.toHaveBeenCalled();
+    expect(preferences.removeFromBlacklist).not.toHaveBeenCalled();
+  });
+});

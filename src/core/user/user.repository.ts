@@ -36,6 +36,28 @@ export class UserRepository extends BaseRepository<UserEntity> {
   }
 
   /**
+   * Stamps the user's last-activity time, at most once per throttle window.
+   *
+   * The guard behind `WHERE` is what makes this affordable on every
+   * authenticated request: outside the window Postgres matches no row and
+   * writes nothing, so the cost is a primary-key probe.
+   *
+   * @param id - Identifier of the user making the request.
+   * @param throttleSeconds - Minimum gap between two stamps.
+   */
+  public async touchActivity(
+    id: ID,
+    throttleSeconds: number,
+  ): Promise<void> {
+    await this.query(
+      'UPDATE "user" SET "lastActiveAt" = now() '
+        + 'WHERE id = $1 AND ("lastActiveAt" IS NULL '
+        + 'OR "lastActiveAt" < now() - ($2 || \' seconds\')::interval)',
+      [id, throttleSeconds],
+    );
+  }
+
+  /**
    * Loads the stored Argon2 hash of a single user's password.
    *
    * The `password` column is declared `select: false`, so it is re-enabled

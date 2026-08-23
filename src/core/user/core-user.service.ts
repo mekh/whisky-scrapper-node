@@ -9,6 +9,9 @@ import { UserRepository } from './user.repository';
 
 import { EntityAuthUser, ID, UserGetByInput } from '~types';
 
+/** Minimum gap between two `lastActiveAt` stamps for one user, in seconds. */
+const ACTIVITY_THROTTLE_SECONDS = 300;
+
 /**
  * Persistence-layer public API for the `user` entity. Inherits the generic
  * CRUD surface from {@link CoreBaseService} and adds the password-specific
@@ -28,6 +31,17 @@ export class CoreUserService extends CoreBaseService<UserEntity> {
     return id || name || email
       ? this.repo.getAuthInfo({ id, name, email })
       : null;
+  }
+
+  /**
+   * Records that the user is active right now. Throttled in SQL, so calling
+   * it on every authenticated request writes at most once per five minutes
+   * per user.
+   *
+   * @param id - Identifier of the user making the request.
+   */
+  public async touchActivity(id: ID): Promise<void> {
+    await this.repo.touchActivity(id, ACTIVITY_THROTTLE_SECONDS);
   }
 
   /**

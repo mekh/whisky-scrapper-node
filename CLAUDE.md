@@ -1184,6 +1184,14 @@ Request flow (both global guards, `AuthJwtGuard` before `PermissionGuard`):
    `ServerError` ("Resource ... is not exposed") otherwise. A tuple may carry a
    `CanDo` callback (e.g. "self"); `PermissionMode.AND/OR` combines tuples.
 
+`user.lastActiveAt` is stamped by `AuthJwtGuard` on every authenticated
+request (`AuthService.touchActivity` → `CoreUserService`), fire-and-forget so
+neither its latency nor its failure reaches the response. The write is
+throttled in SQL — the `UPDATE` carries its own `lastActiveAt < now() -
+interval` guard, so outside the five-minute window Postgres matches no row and
+writes nothing. Nothing wrote the column before this, which is why the admin
+screen showed stale dates.
+
 **Gotcha — read the current user from the request context, not CLS.** Because
 `nestjs-cls` is not request-isolated under the Fastify + Nest-middleware setup,
 reading/writing `ClsService.user` for authorization leaks state across requests

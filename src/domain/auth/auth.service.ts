@@ -123,6 +123,17 @@ export class AuthService {
     await this.session.revoke(user.id, sessionId);
   }
 
+  /**
+   * Records that an authenticated request just arrived from this user, which
+   * is what feeds the admin screen's "last activity" column. Throttled in the
+   * core layer, so calling it per request is affordable.
+   *
+   * @param userId - Identifier of the authenticated user.
+   */
+  public async touchActivity(userId: ID): Promise<void> {
+    await this.users.touchActivity(userId);
+  }
+
   public async authenticate(accessJwt: string): Promise<CtxUser> {
     const jwt = await this.tokenService.verifyAccessToken(accessJwt);
     const permissions = this.tokenService.decodeScopes(jwt.scope);

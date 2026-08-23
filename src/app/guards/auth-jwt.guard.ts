@@ -53,6 +53,13 @@ export class AuthJwtGuard implements CanActivate {
     this.cls.user = user;
     context.user = user;
 
+    /*
+      Fire-and-forget: "last active" is a courtesy field, and the write is
+      throttled to one row update per user per five minutes, so neither its
+      latency nor its failure belongs on the request path.
+    */
+    void this.authService.touchActivity(user.id).catch(() => undefined);
+
     return true;
   }
 }

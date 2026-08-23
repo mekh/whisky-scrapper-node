@@ -401,6 +401,69 @@ describe('persistence write path (integration)', () => {
     expect(rows.map((row) => row.sku)).toEqual(['seen', 'vanished']);
   });
 
+  /**
+   * A snapshot is written when an offer is *seen* in stock, but the sweep only
+   * decides availability once the whole listing has been walked — and a capture
+   * day can hold several runs. So the day's rows are reconciled with the
+   * sweep's verdict; without it the day's first run owned them for good, since
+   * an out-of-stock offer is never upserted again.
+   */
+  it("reconciles a day's snapshots with the offers' final state", async () => {
+    const productId = await makeBottling();
+    const seen = await offers.upsertFromScrape(
+      baseOffer(productId, { sku: 'seen' }),
+    );
+    const vanished = await offers.upsertFromScrape(
+      baseOffer(productId, { sku: 'vanished' }),
+    );
+
+    const price = {
+      price: 100,
+      oldPrice: null,
+      currency: 'UAH',
+      inStock: true,
+      promo: false,
+    };
+
+    await snapshots.upsertForDate(seen?.id as ID, DAY, price);
+    await snapshots.upsertForDate(vanished?.id as ID, DAY, price);
+
+    await offers.markOutOfStockExcept(storeId, ['seen']);
+
+    expect(await snapshots.markOutOfStockForDay(storeId, DAY)).toBe(1);
+
+    const flags = await dataSource.query(
+      `SELECT sp.sku, ps."inStock"
+       FROM price_snapshot ps
+       JOIN store_product sp ON sp.id = ps."storeProductId"
+       WHERE sp."storeId" = $1 AND ps."capturedOn" = $2
+       ORDER BY sp.sku`,
+      [storeId, DAY],
+    ) as { sku: string; inStock: boolean }[];
+
+    expect(flags).toEqual([
+      { sku: 'seen', inStock: true },
+      { sku: 'vanished', inStock: false },
+    ]);
+
+    expect(await snapshots.markOutOfStockForDay(storeId, DAY)).toBe(0);
+
+    /**
+     * The other direction needs no statement of its own: a later run that
+     * sees the offer again upserts the row back to in stock.
+     */
+    await offers.upsertFromScrape(baseOffer(productId, { sku: 'vanished' }));
+    await snapshots.upsertForDate(vanished?.id as ID, DAY, price);
+
+    const revived = await dataSource.query(
+      `SELECT ps."inStock" FROM price_snapshot ps
+       WHERE ps."storeProductId" = $1 AND ps."capturedOn" = $2`,
+      [vanished?.id, DAY],
+    ) as { inStock: boolean }[];
+
+    expect(revived[0].inStock).toBe(true);
+  });
+
   it('hides out-of-stock offers from lists, keeps detail', async () => {
     const productId = await makeBottling();
     const offer = await offers.upsertFromScrape(

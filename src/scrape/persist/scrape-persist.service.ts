@@ -45,6 +45,15 @@ import type {
  * of the store's listing; see {@link flagOutOfStock} for what that buys and
  * what the count heuristic it replaced got wrong.
  *
+ * **The day's snapshots are then reconciled with the sweep's verdict.** A
+ * snapshot is written when an offer is *seen* in stock, while availability is
+ * decided only once the whole listing has been walked — and a capture day can
+ * hold several runs. So the write ends by flagging every row of the store's day
+ * whose offer the sweep left out of stock. Without it the day's first run owned
+ * its rows and no later one could correct them (an out-of-stock offer is never
+ * upserted), which made a day read as the high-water mark of its availability
+ * rather than its close.
+ *
  * **Lock ordering is load-bearing.** The whole persist runs in one transaction
  * that can last minutes, and up to `SYNC_MAX_PARALLEL_TRACKS` stores persist
  * concurrently against the *same* canonical rows. Two of them touching the same
@@ -207,6 +216,8 @@ export class ScrapePersistService {
       listing,
       reporter,
     );
+
+    await this.snapshots.markOutOfStockForDay(storeId, capturedOn);
 
     reporter?.({
       kind: 'persisted',

@@ -72,7 +72,7 @@ const FILL_MISSING_SQL = `
  * job includes finding a bottling the user already hid so it can be un-hidden;
  * filtering it by the lists it edits would make such an entry unfindable. This
  * joins `/report/history` as a read that ignores the blacklist on purpose
- * (documented in MIGRATION.md).
+ * (documented in CLAUDE.md, "API contract").
  *
  * Matching mirrors `findCurrentRows`: the canonical name OR any store's raw
  * name, plus the age-aware pass (`$2`/`$3` from `SearchTermUtils.splitAge`) —

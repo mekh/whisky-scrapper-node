@@ -47,6 +47,22 @@ export class CorePriceSnapshotService
   }
 
   /**
+   * Flags a store's snapshots for one capture day out of stock wherever the
+   * offer itself now is, so the day's rows state the availability the run
+   * ended on rather than the availability its first run happened to see.
+   *
+   * @param storeId - The store whose day is being reconciled.
+   * @param capturedOn - Capture day (`YYYY-MM-DD`).
+   * @returns How many snapshot rows were flagged.
+   */
+  public async markOutOfStockForDay(
+    storeId: ID,
+    capturedOn: string,
+  ): Promise<number> {
+    return this.repo.markOutOfStockForDay(storeId, capturedOn);
+  }
+
+  /**
    * Returns the most recent snapshot capture date across all offers.
    *
    * @returns The latest date (`YYYY-MM-DD`), or null when there are none.

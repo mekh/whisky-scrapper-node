@@ -94,7 +94,10 @@ interface Harness {
   service: ScrapePersistService;
   products: ProductMocks;
   offers: OfferMocks;
-  snapshots: { upsertForDate: jest.Mock };
+  snapshots: {
+    upsertForDate: jest.Mock;
+    markOutOfStockForDay: jest.Mock;
+  };
 }
 
 function makeService(
@@ -136,6 +139,7 @@ function makeService(
 
   const snapshots = {
     upsertForDate: jest.fn().mockResolvedValue(undefined),
+    markOutOfStockForDay: jest.fn().mockResolvedValue(0),
   };
 
   const service = new ScrapePersistService(
@@ -301,6 +305,40 @@ describe('ScrapePersistService — the out-of-stock sweep', () => {
 
     expect(offers.markOutOfStockExcept).toHaveBeenCalledWith(STORE_ID, []);
     expect(offers.markOutOfStockBySkus).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The day's snapshots have to state the availability the run ended on, not
+   * the one its first pass happened to see: a second run of the same day flags
+   * offers the first one wrote rows for, and an out-of-stock offer is never
+   * upserted, so nothing else would ever correct those rows.
+   */
+  it("reconciles the day's snapshots with the sweep's verdict", async () => {
+    const { service, snapshots } = makeService(4);
+
+    await service.persist(
+      STORE_ID,
+      [snap('a'), snap('b')],
+      ['gone'],
+      DAY,
+      COMPLETE,
+    );
+
+    expect(snapshots.markOutOfStockForDay).toHaveBeenCalledWith(STORE_ID, DAY);
+  });
+
+  it('reconciles the day even when the sweep was skipped', async () => {
+    const { service, snapshots } = makeService(4);
+
+    await service.persist(
+      STORE_ID,
+      [snap('a'), snap('b')],
+      ['gone'],
+      DAY,
+      INCOMPLETE,
+    );
+
+    expect(snapshots.markOutOfStockForDay).toHaveBeenCalledWith(STORE_ID, DAY);
   });
 });
 

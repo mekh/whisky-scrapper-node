@@ -24,9 +24,15 @@ import type {
 const SITE = 'https://silpo.ua';
 
 /**
- * The "no branch selected" guest branch. The SPA substitutes a real branch
- * UUID once a city is chosen; the zero UUID answers with the default
- * assortment and stock, which is what a first-time visitor sees.
+ * A real branch, deliberately — a branch is the assortment *and* its stock,
+ * so this constant decides what the store's availability means.
+ *
+ * The SPA's "no branch selected" zero UUID
+ * (`00000000-0000-0000-0000-000000000000`) must never come back here: it does
+ * not model stock at all. It answers `total: 1070` for this category with
+ * every item at `stock > 0`, where this branch answers `total: 249` of which
+ * 22 are `stock: 0` (verified live 2026-08-23). Querying it recorded ~600
+ * sold-out bottles a day as available for the store's whole first fortnight.
  */
 const DEFAULT_BRANCH = '1f0bae35-69aa-6bd2-82b6-9554c10c3d4a';
 

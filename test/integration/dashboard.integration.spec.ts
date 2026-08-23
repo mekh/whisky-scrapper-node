@@ -21,6 +21,12 @@ const SLUG_A = `__it_dash_a_${STAMP}`;
 const SLUG_B = `__it_dash_b_${STAMP}`;
 
 /**
+ * A store of its own for the out-of-stock listings, so the scoped assertions
+ * above keep the counts they were written against.
+ */
+const SLUG_C = `__it_dash_c_${STAMP}`;
+
+/**
  * A match-key token no catalogue row can contain, so cleanup deletes exactly
  * the seeded bottlings.
  */
@@ -52,6 +58,7 @@ describe('dashboard aggregates over the live queries (integration)', () => {
   let service: DashboardService;
   let storeA: ID;
   let storeB: ID;
+  let storeC: ID;
   let scope: string[];
 
   /**
@@ -110,6 +117,8 @@ describe('dashboard aggregates over the live queries (integration)', () => {
    * @param sku - The offer SKU.
    * @param firstSeen - The offer's first-seen day.
    * @param prices - Price per snapshot day.
+   * @param inStock - What the snapshots state about availability; false is the
+   *   sold-out listing a store keeps publishing at a price.
    * @returns The offer id.
    */
   const makeOffer = async (
@@ -118,6 +127,7 @@ describe('dashboard aggregates over the live queries (integration)', () => {
     sku: string,
     firstSeen: string,
     prices: Record<string, number>,
+    inStock = true,
   ): Promise<ID> => {
     const offer = await offers.upsertFromScrape({
       storeId,
@@ -139,7 +149,7 @@ describe('dashboard aggregates over the live queries (integration)', () => {
         price: prices[day],
         oldPrice: null,
         currency: 'UAH',
-        inStock: true,
+        inStock,
         promo: false,
       });
     }
@@ -179,6 +189,7 @@ describe('dashboard aggregates over the live queries (integration)', () => {
 
     storeA = await makeStore(SLUG_A, 'IT Dash A');
     storeB = await makeStore(SLUG_B, 'IT Dash B');
+    storeC = await makeStore(SLUG_C, 'IT Dash C');
     scope = [SLUG_A, SLUG_B];
 
     const prodA = await makeBottling('a');
@@ -248,6 +259,31 @@ describe('dashboard aggregates over the live queries (integration)', () => {
     });
 
     /**
+     * The third store's pair: one listing in stock at a flat price, and one
+     * the store keeps publishing while sold out — priced far below everything
+     * else and moving, so it would be visible in every aggregate if the
+     * snapshot's `inStock` flag were not read.
+     */
+    const prodE = await makeBottling('e');
+    const prodF = await makeBottling('f');
+
+    await makeOffer(storeC, prodE, 'sku-g', D1, {
+      [D1]: 5000,
+      [D2]: 5000,
+      [D3]: 5000,
+      [D4]: 5000,
+      [D5]: 5000,
+    });
+
+    await makeOffer(storeC, prodF, 'sku-h', D1, {
+      [D1]: 500,
+      [D2]: 400,
+      [D3]: 300,
+      [D4]: 250,
+      [D5]: 200,
+    }, false);
+
+    /**
      * A finished run late on the range's last day, for the half-open
      * timestamp-bound assertion.
      */
@@ -266,13 +302,13 @@ describe('dashboard aggregates over the live queries (integration)', () => {
     if (dataSource?.isInitialized) {
       await dataSource.query(
         'DELETE FROM store_product WHERE "storeId" = ANY($1)',
-        [[storeA, storeB]],
+        [[storeA, storeB, storeC]],
       );
       await dataSource.query('DELETE FROM product WHERE "matchKey" LIKE $1', [
         `${TOKEN}%`,
       ]);
       await dataSource.query('DELETE FROM store WHERE id = ANY($1)', [
-        [storeA, storeB],
+        [storeA, storeB, storeC],
       ]);
 
       await closeIntegrationModule(moduleRef);
@@ -420,7 +456,7 @@ describe('dashboard aggregates over the live queries (integration)', () => {
     ]);
   });
 
-  it('ranks the movers over each listing\'s own edge days', async () => {
+  it("ranks the movers over each listing's own edge days", async () => {
     const movers = await service.movers({ from: D1, to: D5, stores: scope });
 
     expect(movers.drops[0]).toMatchObject({
@@ -446,6 +482,58 @@ describe('dashboard aggregates over the live queries (integration)', () => {
      */
     expect(movers.drops).toHaveLength(1);
     expect(movers.rises).toHaveLength(1);
+  });
+
+  /**
+   * The dashboard reports what was *available*, and a snapshot row no longer
+   * implies availability: silpo's listing carries its sold-out items at a
+   * price, and an offer that sells out between two runs of one day keeps the
+   * row the earlier run wrote. Counting rows made such a day a high-water
+   * mark — silpo read as 827 listings in stock on a day it closed with 227.
+   */
+  it('counts what was in stock, not what was captured', async () => {
+    const scopeC = [SLUG_C];
+
+    const series = await service.series({ from: D1, to: D5, stores: scopeC });
+
+    expect(pointAt(series.total, D5)).toMatchObject({
+      inStockListings: 1,
+      trackedListings: 2,
+      oosListings: 1,
+      distinctProducts: 1,
+      medianPrice: 5000,
+    });
+
+    const summary = await service.summary({ from: D1, to: D5, stores: scopeC });
+
+    expect(summary.inStockListings.latest).toBe(1);
+    expect(summary.medianPrice.latest).toBe(5000);
+  });
+
+  it('keeps a sold-out listing out of the breakdowns', async () => {
+    const breakdown = await service.breakdown({
+      by: DashboardBreakdownBy.STORE,
+      date: D5,
+      stores: [SLUG_C],
+    });
+
+    expect(breakdown.totalListings).toBe(1);
+    expect(breakdown.totalProducts).toBe(1);
+    expect(breakdown.buckets).toEqual([
+      expect.objectContaining({ key: SLUG_C, listings: 1 }),
+    ]);
+  });
+
+  /**
+   * A price a store keeps quoting on a sold-out listing is not a price
+   * movement anybody can act on — and this one would otherwise be the biggest
+   * drop in the scope (-60 %).
+   */
+  it('never ranks a sold-out listing among the movers', async () => {
+    const movers = await service.movers({ from: D1, to: D5, stores: [SLUG_C] });
+
+    expect(movers.drops).toHaveLength(0);
+    expect(movers.rises).toHaveLength(0);
   });
 
   /* eslint-disable-next-line max-len */

@@ -289,7 +289,7 @@ which pins generated/created files to `./migrations/` and injects
   production (nginx proxies `/api` here) so the `HttpOnly; Secure;
   SameSite=strict` refresh cookie works without CORS. After any contract change,
   run `pnpm openapi` here, then `pnpm codegen` in `../web`. Endpoint/field map:
-  [`MIGRATION.md`](MIGRATION.md).
+  [`CLAUDE.md`](CLAUDE.md) → "API contract".
 - **Python scraper (`../scrapper`)** — writes products, snapshots and
   `sync_log` rows straight into this backend's Postgres. This service is the
   **schema owner**; the scraper never creates or migrates tables. **Being
@@ -506,7 +506,8 @@ log) surfaces problems.
 
 - Architecture, layering rules and path aliases (`~*`, `~types`, ...) are in
   [`CLAUDE.md`](CLAUDE.md).
-- The endpoint/field map for the frontend is [`MIGRATION.md`](MIGRATION.md).
+- The endpoint/field map for the frontend is [`CLAUDE.md`](CLAUDE.md) →
+  "API contract".
 - Python → TypeScript scraper parity results and the per-store sign-off rule
   are in [`PARITY.md`](PARITY.md).
 - Known defects that are deliberately postponed until the scrape migration is

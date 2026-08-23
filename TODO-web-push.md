@@ -1,7 +1,7 @@
 # Web push — remaining work (backend)
 
 The feature itself is implemented and fully tested (unit + integration); see
-`MIGRATION.md` → "Push notifications" for the contract. What remains is
+`CLAUDE.md` → "API contract" → "Push notifications" for the contract. What remains is
 verification against a real browser and the production rollout.
 
 ## 1. End-to-end verification (local)

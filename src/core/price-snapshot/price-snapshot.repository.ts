@@ -18,10 +18,12 @@ import { PriceSnapshotEntity } from './price-snapshot.entity';
 
 /**
  * Shared aggregate select over one group of snapshots. Counts key on the
- * snapshot rows (one row = one in-stock listing that day); distinct counts
- * climb to the bottling; percentiles share one sort, so asking for three
- * costs barely more than one. Casts follow the house convention — `::int`
- * because node-postgres returns bigint as a string, `::float8` for numerics.
+ * snapshot rows — one row = one listing that ended that day in stock, which
+ * is what every caller's `AND ps."inStock"` predicate guarantees; distinct
+ * counts climb to the bottling; percentiles share one sort, so asking for
+ * three costs barely more than one. Casts follow the house convention —
+ * `::int` because node-postgres returns bigint as a string, `::float8` for
+ * numerics.
  */
 const DAILY_SELECT = `
   COUNT(*)::int AS "inStockListings",
@@ -49,10 +51,29 @@ const DAILY_FROM = `
 
 /**
  * Range + optional store-slug scope shared by every dashboard aggregate.
+ *
+ * `ps."inStock"` is part of the scope, not an extra filter: the dashboard
+ * describes what was *available* on a day, and a snapshot row no longer
+ * implies availability. A store whose listing carries its sold-out items
+ * (silpo) writes a priced row for each of them, and an offer that goes out of
+ * stock between two runs of the same day keeps the row the earlier run wrote —
+ * counting rows instead of in-stock rows made that day a high-water mark.
  */
 const DAILY_WHERE = `
   WHERE ps."capturedOn" BETWEEN $1::date AND $2::date
+    AND ps."inStock"
     AND ($3::text[] IS NULL OR st.slug = ANY($3))`;
+
+/**
+ * The single-day counterpart of {@link DAILY_WHERE}: one capture day ($1) and
+ * the optional store scope ($2), shared by the breakdown queries and their
+ * denominators so the day's slices and its totals cannot disagree on what
+ * they count.
+ */
+const DAY_WHERE = `
+  WHERE ps."capturedOn" = $1::date
+    AND ps."inStock"
+    AND ($2::text[] IS NULL OR st.slug = ANY($2))`;
 
 @TypeormRepository(PriceSnapshotEntity)
 export class PriceSnapshotRepository
@@ -95,6 +116,45 @@ export class PriceSnapshotRepository
         data.promo,
       ],
     );
+  }
+
+  /**
+   * Flags a store's snapshots for one capture day out of stock wherever the
+   * offer itself now is — the write that keeps a day's rows agreeing with the
+   * availability the run ended on.
+   *
+   * It exists because a snapshot is written when an offer is *seen* in stock,
+   * while the sweep decides availability only after the whole listing has been
+   * walked, and a day can hold several runs. Without this, the first run of a
+   * day owned its rows: an offer sold out by the afternoon still counted as
+   * available for that day, and no later run could correct it (an out-of-stock
+   * offer is never upserted, so nothing rewrites the row). The opposite
+   * direction needs no statement — an offer seen in stock again has its row
+   * upserted with `inStock = true`.
+   *
+   * Call it inside the persist transaction, after the sweep.
+   *
+   * @param storeId - The store whose day is being reconciled.
+   * @param capturedOn - Capture day (`YYYY-MM-DD`).
+   * @returns How many snapshot rows were flagged.
+   */
+  public async markOutOfStockForDay(
+    storeId: ID,
+    capturedOn: string,
+  ): Promise<number> {
+    const result = await this.createQueryBuilder()
+      .update(PriceSnapshotEntity)
+      .set({ inStock: false })
+      .where('"capturedOn" = :capturedOn', { capturedOn })
+      .andWhere('"inStock"')
+      .andWhere(
+        '"storeProductId" IN (SELECT sp.id FROM store_product sp'
+          + ' WHERE sp."storeId" = :storeId AND NOT sp."inStock")',
+        { storeId },
+      )
+      .execute();
+
+    return result.affected ?? 0;
   }
 
   /**
@@ -353,6 +413,7 @@ export class PriceSnapshotRepository
        WHERE ps."capturedOn" IN (
            SELECT d0 FROM bounds UNION SELECT d1 FROM bounds
          )
+         AND ps."inStock"
          AND ($3::text[] IS NULL OR st.slug = ANY($3))
        GROUP BY ps."capturedOn"
        ORDER BY ps."capturedOn"`,
@@ -378,8 +439,7 @@ export class PriceSnapshotRepository
       `SELECT COUNT(*)::int AS listings,
               COUNT(DISTINCT sp."productId")::int AS products
        ${DAILY_FROM}
-       WHERE ps."capturedOn" = $1::date
-         AND ($2::text[] IS NULL OR st.slug = ANY($2))`,
+       ${DAY_WHERE}`,
       [date, stores],
     ) as { listings: number; products: number }[];
 
@@ -406,8 +466,7 @@ export class PriceSnapshotRepository
                 AS "medianPrice"
        ${DAILY_FROM}
        LEFT JOIN type t ON t.id = p."typeId"
-       WHERE ps."capturedOn" = $1::date
-         AND ($2::text[] IS NULL OR st.slug = ANY($2))
+       ${DAY_WHERE}
        GROUP BY 1
        ORDER BY 2 DESC`,
       [date, stores],
@@ -434,8 +493,7 @@ export class PriceSnapshotRepository
                 AS "medianPrice"
        ${DAILY_FROM}
        LEFT JOIN country c ON c.id = p."countryId"
-       WHERE ps."capturedOn" = $1::date
-         AND ($2::text[] IS NULL OR st.slug = ANY($2))
+       ${DAY_WHERE}
        GROUP BY 1
        ORDER BY 2 DESC`,
       [date, stores],
@@ -460,8 +518,7 @@ export class PriceSnapshotRepository
               percentile_cont(0.5) WITHIN GROUP (ORDER BY ps.price)::float8
                 AS "medianPrice"
        ${DAILY_FROM}
-       WHERE ps."capturedOn" = $1::date
-         AND ($2::text[] IS NULL OR st.slug = ANY($2))
+       ${DAY_WHERE}
        GROUP BY 1
        ORDER BY 2 DESC`,
       [date, stores],
@@ -490,8 +547,7 @@ export class PriceSnapshotRepository
        ${DAILY_FROM}
        JOIN product_flavor pf ON pf."productId" = sp."productId"
        JOIN flavor f ON f.id = pf."flavorId"
-       WHERE ps."capturedOn" = $1::date
-         AND ($2::text[] IS NULL OR st.slug = ANY($2))
+       ${DAY_WHERE}
        GROUP BY 1
        ORDER BY 2 DESC`,
       [date, stores],
@@ -521,8 +577,7 @@ export class PriceSnapshotRepository
               percentile_cont(0.5) WITHIN GROUP (ORDER BY ps.price)::float8
                 AS "medianPrice"
        ${DAILY_FROM}
-       WHERE ps."capturedOn" = $1::date
-         AND ($2::text[] IS NULL OR st.slug = ANY($2))
+       ${DAY_WHERE}
        GROUP BY width_bucket(ps.price, $3::numeric[])
        ORDER BY width_bucket(ps.price, $3::numeric[])`,
       [date, stores, boundaries],
@@ -537,6 +592,12 @@ export class PriceSnapshotRepository
    * range — a listing that appeared mid-range or went out of stock early is
    * compared over the days it actually had. `f.price > 0` guards the
    * `1.00 грн` placeholder some stores use on unavailable items.
+   *
+   * Only in-stock snapshots bound the comparison, so a price a store kept
+   * quoting on a sold-out listing cannot become a mover. The predicate sits in
+   * the `bounds` CTE alone and still holds for the edge joins: one row exists
+   * per `(storeProductId, capturedOn)`, so the row each join finds *is* the
+   * row that produced the bound.
    *
    * @param from - Inclusive range start (`YYYY-MM-DD`).
    * @param to - Inclusive range end (`YYYY-MM-DD`).
@@ -564,6 +625,7 @@ export class PriceSnapshotRepository
                 MAX(ps."capturedOn") AS d1
          FROM price_snapshot ps
          WHERE ps."capturedOn" BETWEEN $1::date AND $2::date
+           AND ps."inStock"
          GROUP BY 1
        ),
        edges AS (

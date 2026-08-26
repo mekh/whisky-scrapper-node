@@ -21,6 +21,7 @@ import { OkwineAdapter } from './okwine';
 import { RozetkaAdapter } from './rozetka';
 import { SilpoAdapter } from './silpo';
 import { WinePointAdapter } from './wine-point';
+import { WinebutikAdapter } from './winebutik';
 import { WinewineAdapter } from './winewine';
 import { ZakazAdapter } from './zakaz';
 
@@ -99,6 +100,14 @@ const SPECIALIZED: Record<string, (deps: AdapterDeps) => ScrapeAdapter> = {
     new RozetkaAdapter(deps.spec, deps.delayMultiplier, deps.reporter),
   silpo: (deps) =>
     new SilpoAdapter(
+      deps.spec,
+      deps.delayMultiplier,
+      deps.http,
+      deps.normalizer,
+      deps.reporter,
+    ),
+  winebutik: (deps) =>
+    new WinebutikAdapter(
       deps.spec,
       deps.delayMultiplier,
       deps.http,

@@ -10,6 +10,7 @@ import { OkwineAdapter } from '../../src/scrape/adapters/okwine';
 import { RozetkaAdapter } from '../../src/scrape/adapters/rozetka';
 import { SilpoAdapter } from '../../src/scrape/adapters/silpo';
 import { WinePointAdapter } from '../../src/scrape/adapters/wine-point';
+import { WinebutikAdapter } from '../../src/scrape/adapters/winebutik';
 import { WinewineAdapter } from '../../src/scrape/adapters/winewine';
 import { ZakazAdapter } from '../../src/scrape/adapters/zakaz';
 import { NormalizeService } from '../../src/scrape/normalize/normalize.service';
@@ -119,6 +120,8 @@ describe('AdapterRegistryService', () => {
     expect(registry.create(spec('silpo'))).toBeInstanceOf(SilpoAdapter);
     expect(registry.create(spec('bayadera'))).toBeInstanceOf(BayaderaAdapter);
     expect(registry.create(spec('fozzy'))).toBeInstanceOf(FozzyAdapter);
+    expect(registry.create(spec('winebutik')))
+      .toBeInstanceOf(WinebutikAdapter);
   });
 
   it('reports which of the detail-page stores fetch product pages', () => {
@@ -129,6 +132,7 @@ describe('AdapterRegistryService', () => {
     expect(registry.create(spec('wine-point')).supportsDetail).toBe(true);
     expect(registry.create(spec('goodwine')).supportsDetail).toBe(true);
     expect(registry.create(spec('fozzy')).supportsDetail).toBe(true);
+    expect(registry.create(spec('winebutik')).supportsDetail).toBe(true);
     expect(registry.create(spec('rozetka')).supportsDetail).toBe(false);
     expect(registry.create(spec('maudau')).supportsDetail).toBe(false);
   });

@@ -23,6 +23,11 @@ import type { HtmlNode } from '../html/html.interfaces';
  * the end is the only way to learn where the catalogue ends — and several
  * answer it with a 404, which is an answer. A 5xx or a dropped connection is
  * not: the walk holds a fragment, and says so, so persist declines to sweep.
+ *
+ * A store may also declare a page to be the listing's end itself via
+ * {@link pageEndsListing} — the winebutik case, whose listing sorts the
+ * purchasable items strictly ahead of a sold-out tail dozens of pages long,
+ * so the first sold-out card is the end of everything the walk is for.
  */
 export abstract class PagedHtmlAdapterBase extends HttpAdapterBase {
   /**
@@ -36,7 +41,8 @@ export abstract class PagedHtmlAdapterBase extends HttpAdapterBase {
   protected abstract readonly maxPages: number;
 
   /**
-   * Walks the listing until a page yields no new SKU.
+   * Walks the listing until a page yields no new SKU or declares itself the
+   * end (see {@link pageEndsListing}).
    *
    * @returns The store's whisky listing and whether the walk reached its end.
    * @throws {ScrapeHttpError} When the first page cannot be fetched.
@@ -63,7 +69,8 @@ export abstract class PagedHtmlAdapterBase extends HttpAdapterBase {
         );
       }
 
-      const fresh = this.parsePage(html, seen);
+      const $ = load(html);
+      const fresh = this.parsePage($, seen);
 
       fresh.forEach((snap) => seen.add(snap.storeSku));
       snaps.push(...fresh);
@@ -75,7 +82,7 @@ export abstract class PagedHtmlAdapterBase extends HttpAdapterBase {
         total: snaps.length,
       });
 
-      if (fresh.length === 0) {
+      if (fresh.length === 0 || this.pageEndsListing($)) {
         return this.listing(snaps, ListingStop.EXHAUSTED);
       }
 
@@ -106,18 +113,34 @@ export abstract class PagedHtmlAdapterBase extends HttpAdapterBase {
   ): ProductSnapshot | null;
 
   /**
+   * Whether this page is the end of the useful listing even though it still
+   * yielded new SKUs. Consulted after the page is parsed; a true ends the
+   * walk with the page's items kept and counts as having consumed the whole
+   * listing, exactly like running out of pages does.
+   *
+   * The default is that no page ever is — only a store whose listing carries
+   * an explicit end marker (a sold-out tail on an availability-sorted source)
+   * overrides this, so everything the marker trails can be skipped instead of
+   * walked and thrown away.
+   *
+   * @param _$ - Cheerio root of the listing page; unused by the default.
+   * @returns True when the walk must not fetch another page.
+   */
+  protected pageEndsListing(_$: CheerioAPI): boolean {
+    return false;
+  }
+
+  /**
    * Parses one page's cards, keeping only SKUs not seen on earlier pages.
    *
-   * @param html - The page's HTML.
+   * @param $ - Cheerio root of the listing page.
    * @param seen - SKUs collected so far.
    * @returns The page's new snapshots.
    */
   private parsePage(
-    html: string,
+    $: CheerioAPI,
     seen: ReadonlySet<string>,
   ): ProductSnapshot[] {
-    const $ = load(html);
-
     return this.freshSnapshots(
       $(this.cardSelector).toArray(),
       seen,

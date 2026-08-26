@@ -588,7 +588,11 @@ pages), and `product-canonical-split` (the catalogue/offer split: renames
 creates the canonical `product` beside it, groups the store rows in TypeScript
 through `ProductMatchUtils`, re-points `product_flavor`, and asserts the counts
 before it commits; its `down()` is structurally exact but semantically
-best-effort, documented in the file) — all
+best-effort, documented in the file), and `winebutik-store` (the `winebutik`
+store + config, same shape and un-onboarding `down()` semantics as the other
+store seeds; its comment documents the `pnpm backfill --store winebutik`
+first fill — ~550 detail pages at the politeness delay, past the store
+timeout) — all
 applied, formatted per the `typeorm-migration-format` skill, and drift-free
 against the entities.
 
@@ -839,9 +843,12 @@ wrappers): `scrape/` has its own internal layering.
   unavailable tail the walk never reaches; rozetka uses a page whose tiles are
   all already collected, because a page past the end **redirects to page 1**
   (verified live), while a page that rendered nothing is the Cloudflare
-  challenge winning and reads as incomplete; the six `PagedHtmlAdapterBase`
-  stores use a 404/410 or a page with no new SKU. `MAX_PAGES` is incomplete
-  everywhere.
+  challenge winning and reads as incomplete; the seven `PagedHtmlAdapterBase`
+  stores use a 404/410 or a page with no new SKU — and `winebutik`
+  additionally the first page carrying a known out-of-stock label, because
+  its listing sorts purchasable items ahead of a sold-out tail, which makes
+  that page the end of everything the walk is for (`pageEndsListing`).
+  `MAX_PAGES` is incomplete everywhere.
   **The count is reconciled against what the source handed over, not against
   the snapshots that survived mapping** — a listing routinely repeats a SKU or
   carries one with no price, and reconciling on the kept ones would read such a
@@ -849,9 +856,12 @@ wrappers): `scrape/` has its own internal layering.
 - **Adapter base classes** (`adapters/`): `ScrapeAdapterBase` (spec, pacing,
   progress, snapshot defaults) → `HttpAdapterBase` (owns the HTTP client) →
   `PagedHtmlAdapterBase` (walk `cardSelector` pages until one yields no new
-  SKU; a page that fails ends the walk unless nothing was collected yet, in
-  which case it throws — and whether that ending counts as reaching the end of
-  the listing depends on the status, see "Listing completeness")
+  SKU, or until a page declares itself the listing's end via the
+  `pageEndsListing` hook — default never, overridden by winebutik whose
+  sold-out tail is that marker; a page that fails ends the walk unless
+  nothing was collected yet, in which case it throws — and whether that
+  ending counts as reaching the end of the listing depends on the status, see
+  "Listing completeness")
   → `WooCommerceAdapterBase` (shared card markup,
   `/whiskey/page/N/` pagination and specification table of the two WooCommerce
   stores). `BrowserAdapterBase` is the parallel branch for the browser tier.
@@ -877,7 +887,7 @@ wrappers): `scrape/` has its own internal layering.
   listings are exactly what the store recorded that day). So from onboarding
   until 2026-08-22 the store logged ~600 sold-out bottles a day as available,
   which is what the dashboard then reported (see "Dashboard API" below). A
-  branch is the assortment *and* the availability, so which one is queried is
+  branch is the assortment _and_ the availability, so which one is queried is
   a data-quality decision, not a default.
   **The listing states no strength, type, age or flavor whatsoever**, which is
   how the store reached 778 null `abv` rows out of 831 — every other store sat
@@ -926,7 +936,7 @@ wrappers): `scrape/` has its own internal layering.
   the rendered unit label (`0,7л`), only available items are listed, and the
   product page's characteristics list fills country/brand/ABV/age/type via
   `supportsDetail` — age through `parseAgeValue`, added because the field is
-  a bare `12` no age regex matches), and `alcomag/`
+  a bare `12` no age regex matches), `alcomag/`
   (Bitrix/Aspro SSR via cheerio, `?PAGEN_1=N` pagination, `supportsDetail`;
   the article number is the SKU and may be non-numeric (`МТ10`), availability
   is a positive «Є в наявності» marker — an unknown label drops the card so a
@@ -940,7 +950,33 @@ wrappers): `scrape/` has its own internal layering.
   the page description into `rawAttrs.description` for the LLM flavor pass,
   and skips out-of-stock snapshots since only their SKU is persisted; a page
   number past the catalog end makes Bitrix serve page 1 again, which the
-  no-new-SKU stop absorbs). The registry
+  no-new-SKU stop absorbs), and `winebutik/`
+  (winebutik.com.ua — «Винний Бутик», Drupal 7 Commerce SSR via cheerio,
+  plain nginx with no bot wall, so tier 1 plain fetch; the pager is
+  **zero-based** — the first page is the bare listing URL and `?page=N` is
+  page N+1. The listing sorts purchasable items strictly ahead of a sold-out
+  tail spanning dozens of pages (~46 of ~82 pages purchasable at onboarding),
+  so the walk ends via `pageEndsListing` — the `PagedHtmlAdapterBase` hook
+  this store introduced — on the first page carrying a known out-of-stock
+  label («Запитати», «У найближчому надходженні»): for this source the tail
+  is the end-of-listing marker, so the stop reads as `EXHAUSTED`/complete and
+  earns the sweep, while an unknown label only drops its card, so a relabel
+  cannot end the walk with a completeness verdict it did not prove. Sold-out
+  cards render no price at all and the store shows no strike-through prices
+  anywhere, so `oldPrice` never fills; the SKU is the commerce `product_id`
+  of the card's add-to-cart form (present on sold-out cards too); volume is a
+  bare litre number (`0.75`), strength a `40.0%` field, and the card's short
+  description («Купажований шотландський віскі …») goes to `rawAttrs`, which
+  already feeds the keyword country pass. `supportsDetail`: the product
+  page's «Факти» block fills type (the Ukrainian `link-type` first, the
+  English `link-class` as fallback — each canonicalized before the next is
+  consulted), country (the first `link-region` link — the field lists the
+  country before the region — through `canonicalCountry`), abv/volume if
+  still null, and the body description into `rawAttrs` for the LLM flavor
+  pass. `link-producer` is **never** read: it names the legal producer
+  (`Bardinet` for Sir Edwards, `Glen Turner` for Glen Clan) — the same trap
+  as alcomag's «Виробник» — so brand is left to the brand-from-name pass).
+  The registry
   resolves a specialized adapter by slug and falls back to `ZakazAdapter` for
   any store with a `retailChain`/`category`.
 - **selectolax vs cheerio gotcha**: the Python adapters read text with
@@ -1004,12 +1040,14 @@ wrappers): `scrape/` has its own internal layering.
   the run persists the listing instead of dying on the store timeout — the
   skipped items' fields stay empty until a backfill run, which the log line
   says outright.
-  Four stores' first full detail sweep exceeds `SYNC_STORE_TIMEOUT_MS` and so
+  Five stores' first full detail sweep exceeds `SYNC_STORE_TIMEOUT_MS` and so
   has to be seeded through `pnpm backfill --store <slug>` once: `fozzy`
   (~300 pages), `alcomag` (~600), `silpo` (778 stored rows missing ABV,
-  ~60–110 min at its 4–8 s delay) and now `goodwine` (~724 SKUs the 30-page cap
-  had been hiding, at an 8–15 s delay). After that the normal gate leaves only
-  genuinely new SKUs to fetch, which fits the budget easily.
+  ~60–110 min at its 4–8 s delay), `goodwine` (~724 SKUs the 30-page cap
+  had been hiding, at an 8–15 s delay), and `winebutik` (~550 purchasable
+  SKUs, heavy on collector bottlings the catalogue does not cover). After
+  that the normal gate leaves only genuinely new SKUs to fetch, which fits
+  the budget easily.
 - **Parity harness**: `scripts/scrape-parity-diff.ts <slug> [--python <dump>]
   [--ts <dump>] [--out <dir>]` runs the legacy Python scraper
   (`scripts/scrape-parity-dump.py` through `../scrapper/.venv`) and the TS
@@ -1218,8 +1256,8 @@ Every config concern is a class in `src/config/parts/` extending `BaseConfig`:
   `asBoolean`, `asEnum`, `asArray` — never `process.env` directly.
 - **A string var that has a default must be read with `nonEmpty`, not
   `asString(...) ?? default`.** `asString` returns whatever the process holds,
-  and the `environment` block below forwards an omitted host var as an *empty
-  string*, so the name is always defined in a container and `??` hands that
+  and the `environment` block below forwards an omitted host var as an _empty
+  string_, so the name is always defined in a container and `??` hands that
   empty string on as if it were configured — the documented default becomes
   unreachable in production. `nonEmpty` treats empty and blank as unset, the
   way `asNumber` already does. This cost a production debugging session on
@@ -1380,54 +1418,54 @@ Conventions that hold everywhere:
 
 ### Auth endpoints
 
-| Endpoint                                                           | Notes                                                                                                                                                                          |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Endpoint                                                           | Notes                                                                                                                                                                                   |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POST /auth/login` `{login,password}` → `{access}` + cookie        | Response key is `access`. Cookie is `refresh`, HttpOnly, `sameSite=strict`, `path=/`. Imported (pbkdf2) users log in with old passwords; the hash is upgraded to Argon2 on first login. |
-| `POST /auth/refresh` (refresh cookie) → `{access}`                 | Rotates the refresh cookie.                                                                                                                                                    |
-| `POST /auth/logout`                                                | Revokes the session. `204`.                                                                                                                                                    |
-| `GET /auth/me` → `{id, sid, admin}`                                | Current user from the token.                                                                                                                                                   |
-| `GET /auth/session[/:userId]`, `DELETE /auth/session/:userId/:sid` | Session listing / revocation.                                                                                                                                                  |
+| `POST /auth/refresh` (refresh cookie) → `{access}`                 | Rotates the refresh cookie.                                                                                                                                                             |
+| `POST /auth/logout`                                                | Revokes the session. `204`.                                                                                                                                                             |
+| `GET /auth/me` → `{id, sid, admin}`                                | Current user from the token.                                                                                                                                                            |
+| `GET /auth/session[/:userId]`, `DELETE /auth/session/:userId/:sid` | Session listing / revocation.                                                                                                                                                           |
 
 Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 (space-separated `resource:action`). Admins bypass scope checks.
 
 ### Endpoint inventory
 
-| Endpoint                                                                                                                                                                                                                                                                                                  | Auth                                       |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| `GET /meta`                                                                                                                                                                                                                                                                                               | any logged-in user                         |
-| `GET /report/{kind}` (`kind`: catalog\|drops\|low\|new\|best)                                                                                                                                                                                                                                              | any logged-in user                         |
-| `GET /report/history?term=` — `term` takes a report row's id (a store offer), a canonical `productId` (resolved to that bottling's in-stock, most recently seen offer), or a name/URL substring. The series is always one store's price history                                                              | any logged-in user                         |
-| `GET /store` (sites + config) `store:list`, `GET /store/{slug}` `store:read`, `PATCH /store/{slug}` `{active}` `store:update`                                                                                                                                                                              | admin in practice                          |
-| `POST /store/{slug}/sync` — starts an on-demand sync, `202` + the open sync-log row                                                                                                                                                                                                                        | `store:sync`                               |
-| `GET /store/sync-status` — the syncs currently in flight                                                                                                                                                                                                                                                   | `store:list`                               |
-| `GET /store/{slug}/sync-log/{id}/file` — the run's log file as `text/plain`                                                                                                                                                                                                                                | `store:read`                               |
-| `POST /product/update` `{id, name?, countryCode?, typeName?, age?, abv?, volumeMl?}` — edit product overrides (undefined fields untouched). `id` accepts a report row's id (a store offer) or a canonical `productId`; either way the edit writes the **bottling**, so it applies to every store listing it  | `product:edit`                             |
-| `GET/POST /user`, `GET/PATCH/DELETE /user/:id`, `POST /user/password[/:userId]`, `GET/PUT /user/:userId/permissions`                                                                                                                                                                                        | admin                                      |
-| `GET /dashboard/meta` — capture bounds + per-store snapshot coverage (data floor, per-store first/last day, listing counts)                                                                                                                                                                                | any logged-in user                         |
-| `GET /dashboard/summary?from&to&stores=` — KPI metrics as `{latest, baseline, delta, deltaPct}` pairs over the range's first/last data day                                                                                                                                                                 | any logged-in user                         |
-| `GET /dashboard/series?from&to&stores=&byStore=&byCountry=&granularity=` — per-day metric series (total + optional per-store / per-country partitions)                                                                                                                                                     | any logged-in user                         |
-| `GET /dashboard/breakdown?by=type\|country\|priceBucket\|flavor\|store&date=&stores=` — one day's in-stock assortment sliced by a dimension                                                                                                                                                                | any logged-in user                         |
-| `GET /dashboard/movers?from&to&stores=&limit=&minPrice=` — biggest price drops and rises over the range (first vs last snapshot per listing)                                                                                                                                                               | any logged-in user                         |
-| `GET /dashboard/sync-activity?from&to&stores=` — sync runs, outcomes and persist counters per day                                                                                                                                                                                                          | any logged-in user                         |
-| `GET /preference` — the caller's own favorites and blacklist                                                                                                                                                                                                                                               | any logged-in user                         |
-| `GET /preference/{userId}` — another user's preferences                                                                                                                                                                                                                                                   | `preference:read` or self (admin bypasses) |
-| `POST /preference/favorites` `{productIds}` — add favorites (idempotent), `200` + the fresh preference                                                                                                                                                                                                     | any logged-in user                         |
-| `DELETE /preference/favorites` `{productIds}` — remove favorites (body on DELETE)                                                                                                                                                                                                                         | any logged-in user                         |
-| `POST /preference/blacklist` `{productIds?, brands?}` — hide bottlings and/or brands; also drops those bottlings from the favorites                                                                                                                                                                        | any logged-in user                         |
-| `DELETE /preference/blacklist` `{productIds?, brands?}` — un-hide; restores no favorite                                                                                                                                                                                                                    | any logged-in user                         |
-| `GET /preference/details` — the caller's own lists resolved to renderable entries, newest first (see "Preferences")                                                                                                                                                                                        | any logged-in user                         |
-| `GET /preference/{userId}/details` — another user's lists resolved to renderable entries, newest first                                                                                                                                                                                                     | `preference:read` or self (admin bypasses) |
-| `POST`/`DELETE /preference/{userId}/favorites` `{productIds}` — edit another user's favorites                                                                                                                                                                                                              | `preference:update` or self (admin bypasses) |
-| `POST`/`DELETE /preference/{userId}/blacklist` `{productIds?, brands?}` — edit another user's blacklist; the `POST` also drops those bottlings from their favorites                                                                                                                                        | `preference:update` or self (admin bypasses) |
-| `GET /push/config` — whether web push is on plus the VAPID public key to subscribe with (see "Push notifications")                                                                                                                                                                                         | any logged-in user                         |
-| `GET /push/subscription` — the caller's subscribed devices (no key material)                                                                                                                                                                                                                              | any logged-in user                         |
-| `POST /push/subscription` `{endpoint, p256dh, auth}` — register/refresh this browser's subscription, `200` + the fresh device list                                                                                                                                                                         | any logged-in user                         |
-| `DELETE /push/subscription` `{endpoint}` — drop this browser's subscription (body on DELETE)                                                                                                                                                                                                               | any logged-in user                         |
-| `POST /push/test` — send a test notification to every device of the caller                                                                                                                                                                                                                                | any logged-in user                         |
-| `POST /push/digest` `{capturedOn?}` — manually run the price-drop digest dispatch (idempotent per day)                                                                                                                                                                                                     | `store:sync`                               |
-| `GET /product/search?q=&limit=` — lightweight autocomplete over the whole catalogue, one item per bottling; **ignores the caller's blacklist** (see "Catalogue search")                                                                                                                                     | any logged-in user                         |
-| `GET /brand/search?q=&limit=` — lightweight autocomplete over brand names (see "Catalogue search")                                                                                                                                                                                                         | any logged-in user                         |
+| Endpoint                                                                                                                                                                                                                                                                                                    | Auth                                         |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `GET /meta`                                                                                                                                                                                                                                                                                                 | any logged-in user                           |
+| `GET /report/{kind}` (`kind`: catalog\|drops\|low\|new\|best)                                                                                                                                                                                                                                               | any logged-in user                           |
+| `GET /report/history?term=` — `term` takes a report row's id (a store offer), a canonical `productId` (resolved to that bottling's in-stock, most recently seen offer), or a name/URL substring. The series is always one store's price history                                                             | any logged-in user                           |
+| `GET /store` (sites + config) `store:list`, `GET /store/{slug}` `store:read`, `PATCH /store/{slug}` `{active}` `store:update`                                                                                                                                                                               | admin in practice                            |
+| `POST /store/{slug}/sync` — starts an on-demand sync, `202` + the open sync-log row                                                                                                                                                                                                                         | `store:sync`                                 |
+| `GET /store/sync-status` — the syncs currently in flight                                                                                                                                                                                                                                                    | `store:list`                                 |
+| `GET /store/{slug}/sync-log/{id}/file` — the run's log file as `text/plain`                                                                                                                                                                                                                                 | `store:read`                                 |
+| `POST /product/update` `{id, name?, countryCode?, typeName?, age?, abv?, volumeMl?}` — edit product overrides (undefined fields untouched). `id` accepts a report row's id (a store offer) or a canonical `productId`; either way the edit writes the **bottling**, so it applies to every store listing it | `product:edit`                               |
+| `GET/POST /user`, `GET/PATCH/DELETE /user/:id`, `POST /user/password[/:userId]`, `GET/PUT /user/:userId/permissions`                                                                                                                                                                                        | admin                                        |
+| `GET /dashboard/meta` — capture bounds + per-store snapshot coverage (data floor, per-store first/last day, listing counts)                                                                                                                                                                                 | any logged-in user                           |
+| `GET /dashboard/summary?from&to&stores=` — KPI metrics as `{latest, baseline, delta, deltaPct}` pairs over the range's first/last data day                                                                                                                                                                  | any logged-in user                           |
+| `GET /dashboard/series?from&to&stores=&byStore=&byCountry=&granularity=` — per-day metric series (total + optional per-store / per-country partitions)                                                                                                                                                      | any logged-in user                           |
+| `GET /dashboard/breakdown?by=type\|country\|priceBucket\|flavor\|store&date=&stores=` — one day's in-stock assortment sliced by a dimension                                                                                                                                                                 | any logged-in user                           |
+| `GET /dashboard/movers?from&to&stores=&limit=&minPrice=` — biggest price drops and rises over the range (first vs last snapshot per listing)                                                                                                                                                                | any logged-in user                           |
+| `GET /dashboard/sync-activity?from&to&stores=` — sync runs, outcomes and persist counters per day                                                                                                                                                                                                           | any logged-in user                           |
+| `GET /preference` — the caller's own favorites and blacklist                                                                                                                                                                                                                                                | any logged-in user                           |
+| `GET /preference/{userId}` — another user's preferences                                                                                                                                                                                                                                                     | `preference:read` or self (admin bypasses)   |
+| `POST /preference/favorites` `{productIds}` — add favorites (idempotent), `200` + the fresh preference                                                                                                                                                                                                      | any logged-in user                           |
+| `DELETE /preference/favorites` `{productIds}` — remove favorites (body on DELETE)                                                                                                                                                                                                                           | any logged-in user                           |
+| `POST /preference/blacklist` `{productIds?, brands?}` — hide bottlings and/or brands; also drops those bottlings from the favorites                                                                                                                                                                         | any logged-in user                           |
+| `DELETE /preference/blacklist` `{productIds?, brands?}` — un-hide; restores no favorite                                                                                                                                                                                                                     | any logged-in user                           |
+| `GET /preference/details` — the caller's own lists resolved to renderable entries, newest first (see "Preferences")                                                                                                                                                                                         | any logged-in user                           |
+| `GET /preference/{userId}/details` — another user's lists resolved to renderable entries, newest first                                                                                                                                                                                                      | `preference:read` or self (admin bypasses)   |
+| `POST`/`DELETE /preference/{userId}/favorites` `{productIds}` — edit another user's favorites                                                                                                                                                                                                               | `preference:update` or self (admin bypasses) |
+| `POST`/`DELETE /preference/{userId}/blacklist` `{productIds?, brands?}` — edit another user's blacklist; the `POST` also drops those bottlings from their favorites                                                                                                                                         | `preference:update` or self (admin bypasses) |
+| `GET /push/config` — whether web push is on plus the VAPID public key to subscribe with (see "Push notifications")                                                                                                                                                                                          | any logged-in user                           |
+| `GET /push/subscription` — the caller's subscribed devices (no key material)                                                                                                                                                                                                                                | any logged-in user                           |
+| `POST /push/subscription` `{endpoint, p256dh, auth}` — register/refresh this browser's subscription, `200` + the fresh device list                                                                                                                                                                          | any logged-in user                           |
+| `DELETE /push/subscription` `{endpoint}` — drop this browser's subscription (body on DELETE)                                                                                                                                                                                                                | any logged-in user                           |
+| `POST /push/test` — send a test notification to every device of the caller                                                                                                                                                                                                                                  | any logged-in user                           |
+| `POST /push/digest` `{capturedOn?}` — manually run the price-drop digest dispatch (idempotent per day)                                                                                                                                                                                                      | `store:sync`                                 |
+| `GET /product/search?q=&limit=` — lightweight autocomplete over the whole catalogue, one item per bottling; **ignores the caller's blacklist** (see "Catalogue search")                                                                                                                                     | any logged-in user                           |
+| `GET /brand/search?q=&limit=` — lightweight autocomplete over brand names (see "Catalogue search")                                                                                                                                                                                                          | any logged-in user                           |
 
 The frontend is hosted separately and reaches this API same-origin through a
 `/api` proxy that strips the prefix; no global route prefix is used.
@@ -1466,6 +1504,7 @@ in flight, oldest first:
 | `total`     | Products written so far (updated as the run progresses) |
 
 An empty array means nothing is running.
+
 ### Dashboard (2026-08-22)
 
 Six read-only endpoints under `/dashboard`, all `Resource.AUTHENTICATED`.
@@ -1480,7 +1519,7 @@ The contract details a client must not guess:
   `byStore`/`byCountry` additionally partition that same scope. The partition
   envelopes are separate from `total` because distinct counts and medians do
   not compose across partitions — never sum them.
-- **Every metric describes what was *in stock* that day**, out-of-stock
+- **Every metric describes what was _in stock_ that day**, out-of-stock
   snapshots included in neither the counts, the medians, the breakdowns nor
   the movers. A capture day can hold several syncs and some stores keep
   publishing a sold-out listing at a price, so "captured that day" and
@@ -1534,7 +1573,7 @@ Which offers a group holds depends on the kind:
 | `catalog` | every in-stock offer of the bottling                                                                                                                                                                                      |
 | `new`     | only the offers that qualified — a whisky two stores just started listing holds exactly those two, not the stores that have had it for months                                                                             |
 | `drops`   | only the discounted offers (after `minDiscount` and the discount-day window)                                                                                                                                              |
-| `low`     | one item **per qualifying offer**, each with a single offer. Two stores at their own window low stay two items, so two items can share a `productId`                                                 |
+| `low`     | one item **per qualifying offer**, each with a single offer. Two stores at their own window low stay two items, so two items can share a `productId`                                                                      |
 | `best`    | every in-stock offer of the bottling (2026-08-22), one item per multi-store bottling, led by the winning offer. Each offer's `discountPct` is its own price move; the winner's is the item's saving against the runner-up |
 
 Consequences worth knowing:
@@ -1576,36 +1615,36 @@ Consequences worth knowing:
 
 ### ReportRow (report item fields + `history.product`)
 
-| Field                        | Notes                                                                                                                                                                                                                                         |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id` (uuid)                 | the **store offer** — one row per store × SKU. Unchanged by the catalogue split; still what `/report/history` and `/product/:id` take                                                                                                         |
-| `productId` (uuid)          | the **bottling** this row is an offer of. Rows from different stores sharing it are the same whisky: that is how `best` groups them, and an edit through any of them applies to all                                                     |
-| `storeName`                 |                                                                                                                                                                                                                                               |
-| `storeSlug`                 |                                                                                                                                                                                                                                               |
-| `sku`                       |                                                                                                                                                                                                                                               |
-| `name`                      | the product alone — brand + expression (see the note below the table); **nullable** — `null` when cleaning left nothing, fall back to `nameOrig`                                                                                              |
-| `nameOrig`                  | raw scraped name, always present; the display fallback for `name` and the value shown (read-only) in the edit modal                                                                                                                     |
-| `url`                       |                                                                                                                                                                                                                                               |
-| `price`                     |                                                                                                                                                                                                                                               |
-| `previousPrice`             | price of the immediately previous snapshot                                                                                                                                                                                                    |
-| `referencePrice`            | the value the discount is measured against (previous observed price / window max / competing offer); report-specific, always from our own price history, never `oldPrice`                                                                     |
-| `oldPrice`                  | store strike-through price from the latest snapshot                                                                                                                                                                                           |
-| `discountPct`               |                                                                                                                                                                                                                                               |
-| `age`                       |                                                                                                                                                                                                                                               |
-| `abv`                       |                                                                                                                                                                                                                                               |
-| `volumeMl`                  |                                                                                                                                                                                                                                               |
-| `type`                      |                                                                                                                                                                                                                                               |
-| `brand`                     |                                                                                                                                                                                                                                               |
-| `countryName`               |                                                                                                                                                                                                                                               |
-| `countryCode`               |                                                                                                                                                                                                                                               |
-| `countryIcon`               |                                                                                                                                                                                                                                               |
-| `currency`                  |                                                                                                                                                                                                                                               |
+| Field                       | Notes                                                                                                                                                                                                                     |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id` (uuid)                 | the **store offer** — one row per store × SKU. Unchanged by the catalogue split; still what `/report/history` and `/product/:id` take                                                                                     |
+| `productId` (uuid)          | the **bottling** this row is an offer of. Rows from different stores sharing it are the same whisky: that is how `best` groups them, and an edit through any of them applies to all                                       |
+| `storeName`                 |                                                                                                                                                                                                                           |
+| `storeSlug`                 |                                                                                                                                                                                                                           |
+| `sku`                       |                                                                                                                                                                                                                           |
+| `name`                      | the product alone — brand + expression (see the note below the table); **nullable** — `null` when cleaning left nothing, fall back to `nameOrig`                                                                          |
+| `nameOrig`                  | raw scraped name, always present; the display fallback for `name` and the value shown (read-only) in the edit modal                                                                                                       |
+| `url`                       |                                                                                                                                                                                                                           |
+| `price`                     |                                                                                                                                                                                                                           |
+| `previousPrice`             | price of the immediately previous snapshot                                                                                                                                                                                |
+| `referencePrice`            | the value the discount is measured against (previous observed price / window max / competing offer); report-specific, always from our own price history, never `oldPrice`                                                 |
+| `oldPrice`                  | store strike-through price from the latest snapshot                                                                                                                                                                       |
+| `discountPct`               |                                                                                                                                                                                                                           |
+| `age`                       |                                                                                                                                                                                                                           |
+| `abv`                       |                                                                                                                                                                                                                           |
+| `volumeMl`                  |                                                                                                                                                                                                                           |
+| `type`                      |                                                                                                                                                                                                                           |
+| `brand`                     |                                                                                                                                                                                                                           |
+| `countryName`               |                                                                                                                                                                                                                           |
+| `countryCode`               |                                                                                                                                                                                                                           |
+| `countryIcon`               |                                                                                                                                                                                                                           |
+| `currency`                  |                                                                                                                                                                                                                           |
 | `inStock`, `promo`          | `promo` comes from the latest snapshot. `inStock` is the offer's current availability: list endpoints only ever return `true` (out-of-stock products are filtered out, not deleted), `/report/history` can return `false` |
-| `flavors` (string[])        |                                                                                                                                                                                                                                               |
-| `firstSeen`, `capturedDate` | `YYYY-MM-DD`                                                                                                                                                                                                                                  |
-| `isNew`                     |                                                                                                                                                                                                                                               |
-| `daysNew`                   |                                                                                                                                                                                                                                               |
-| `daysDiscount`              | days the current price has held (days since it was last higher); `drops` only, null elsewhere                                                                                                                                                  |
+| `flavors` (string[])        |                                                                                                                                                                                                                           |
+| `firstSeen`, `capturedDate` | `YYYY-MM-DD`                                                                                                                                                                                                              |
+| `isNew`                     |                                                                                                                                                                                                                           |
+| `daysNew`                   |                                                                                                                                                                                                                           |
+| `daysDiscount`              | days the current price has held (days since it was last higher); `drops` only, null elsewhere                                                                                                                             |
 
 **`name` holds the product alone.** The category prefix, age, ABV, volume,
 packaging and bundle descriptors are stripped at scrape/import time, so the
@@ -1693,7 +1732,7 @@ Four things are easy to get wrong:
   `400`. An empty `productIds` on the favorites endpoints is a documented
   no-op, so a client may post whatever selection it holds.
 - **Adding a product to the blacklist removes it from the favorites**, in one
-  transaction. Blacklisting a *brand* does not: the report hides such a
+  transaction. Blacklisting a _brand_ does not: the report hides such a
   favorite while the rule stands, so lifting the rule restores it.
 
 The blacklist filters every report kind, for that user, in SQL. Products whose
@@ -1741,13 +1780,13 @@ Web-push digests of price drops on favorited whiskies, sent right after a sync
 run. The contract the pieces rely on:
 
 - **A "drop" is observed history, never marketing.** Today's
-  `price_snapshot.price` must be lower than the offer's previous *existing*
+  `price_snapshot.price` must be lower than the offer's previous _existing_
   snapshot (out-of-stock gaps are looked across, up to
   `PUSH_MAX_PREVIOUS_GAP_DAYS = 30`; beyond that a returning listing is a new
   price, not a discount). The store's advertised `oldPrice` is never read —
   the same rule as `/report/drops`. Note the deliberate difference from that
-  page: the digest compares against the *previous* price ("cheaper than
-  yesterday?"), the page against the *window maximum* ("how good is this
+  page: the digest compares against the _previous_ price ("cheaper than
+  yesterday?"), the page against the _window maximum_ ("how good is this
   price?"), so their percentages may legitimately differ.
 - **One digest per user per dispatch**, covering all their favorites that
   dropped: best percentage per bottling across stores, at most 5 named plus
@@ -1757,11 +1796,11 @@ run. The contract the pieces rely on:
 - **Dedup is a claimed log**, `push_digest_log (userId, storeProductId,
   capturedOn)`: a dispatch atomically claims drops it is about to announce
   (`INSERT … ON CONFLICT DO NOTHING RETURNING`), so a second dispatch the same
-  day sends only *newly found* drops and concurrent dispatches split the work
+  day sends only _newly found_ drops and concurrent dispatches split the work
   instead of duplicating it. Rows are pruned after
   `PUSH_LOG_RETENTION_DAYS = 30`.
 - **Dispatch triggers**: the end of `runFullSync()` (once per run, not per
-  store) and the completion of a *manual* single-store sync. `POST
+  store) and the completion of a _manual_ single-store sync. `POST
   /push/digest` runs the same pass by hand — being idempotent per day, it is
   safe to call any time.
 - **Subscriptions are per browser, unique on `endpoint`**; a re-subscribe (or
@@ -1826,7 +1865,7 @@ overhaul).
 
 ## Current state / known gaps
 
-The project builds, `tsc`/`eslint` are clean, and 461 unit tests (36 suites)
+The project builds, `tsc`/`eslint` are clean, and 681 unit tests (53 suites)
 plus 25 integration tests (3 suites, live Postgres) pass. Done:
 
 - **Auth works end-to-end.** `domain/auth` (login/refresh/logout/me/sessions)
@@ -2016,13 +2055,13 @@ Pre-existing bugs fixed while wiring auth (context for future changes):
   definition, dedup claim, endpoints, env) lives under "API contract" →
   "Push notifications". The load-bearing decisions:
   - **The claim is one CTE statement** (`PushRepository.claimDrops`): detect
-    drops against the previous *existing* snapshot, join favorites minus
+    drops against the previous _existing_ snapshot, join favorites minus
     blacklists, and atomically claim per `(userId, storeProductId,
     capturedOn)` into `push_digest_log` with `ON CONFLICT DO NOTHING
     RETURNING` — which is what makes a dispatch idempotent per day and lets
     concurrent dispatches split rather than duplicate the work.
   - **Hooks live in the orchestrator**: awaited at the end of `runFullSync()`
-    (once per run), fire-and-forget after a *manual* `startStoreSync` — never
+    (once per run), fire-and-forget after a _manual_ `startStoreSync` — never
     inside `runStoreSync`, or a full sync would push once per store. Nothing
     in the dispatch is `@Transactional()` (the background-run ALS caveat), and
     `dispatchAfterSync()` swallows every failure — a sync never pays for
@@ -2077,10 +2116,13 @@ networks, `maudau`, `okwine`, `winewine`, `wine-point`, `goodwine`, `rozetka`,
 JSON API — no Python counterpart ever ran it in production), `bayadera`
 (added 2026-08-10, also TS-only — a brand-new store with no legacy history),
 `fozzy` (added 2026-08-10, TS-only as well — fozzyshop.ua, SSR HTML;
-first fill via `pnpm backfill --store fozzy`, see the migration list), and
+first fill via `pnpm backfill --store fozzy`, see the migration list),
 `alcomag` (added 2026-08-10, TS-only as well — Bitrix SSR, see "Adapters";
 its first full detail sweep exceeds `SYNC_STORE_TIMEOUT_MS` too, so seed the
-fields with `pnpm backfill --store alcomag` once after deploy) —
+fields with `pnpm backfill --store alcomag` once after deploy), and
+`winebutik` (added 2026-08-26, TS-only too — Drupal Commerce SSR with an
+availability-sorted listing the walk stops at, see "Adapters"; seed the
+fields with `pnpm backfill --store winebutik` once after deploy) —
 with golden tests and the parity harness, and the internal daily cron — which **ships disabled**
 (`SYNC_CRON_ENABLED` unset), so the Python system cron still owns the schedule.
 Pending: the web "Sync" button and the Python decommission. **The cutover is

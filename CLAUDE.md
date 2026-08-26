@@ -2052,8 +2052,15 @@ web frontend generates its client by fetching `/docs-json` over HTTP at deploy
 (`../web/scripts/deploy.sh`), so **prod must run with `SWAGGER_ENABLED=true`** (the
 route is gated by that flag — see `main.ts` — and blocked publicly by nginx +
 iptables). `pnpm openapi` (server up) still snapshots it to a git-ignored local
-`./openapi.json` for manual inspection. `@fastify/helmet` is registered in `main.ts` (its CSP is relaxed
-for the Swagger UI; the SPA's own CSP belongs on the reverse proxy). No global
+`./openapi.json` for manual inspection. `@fastify/helmet` is registered in `main.ts`, but with
+`contentSecurityPolicy` / `strictTransportSecurity` / `xFrameOptions` /
+`xContentTypeOptions` / `referrerPolicy` **disabled**: the reverse proxy
+sets all five with `always`, and `location /api/` inherits them, so
+helmet only appended a second copy (with a conflicting
+`X-Frame-Options`). Helmet still owns what nginx does not send -- the
+cross-origin isolation pair, `Origin-Agent-Cluster` and the legacy `X-*`
+headers. Reaching the API without the proxy (dev via the Vite proxy, or
+Swagger UI on 127.0.0.1) therefore gets none of the five. No global
 route prefix is used — the SPA reaches the API same-origin via a `/api` proxy
 that strips the prefix.
 

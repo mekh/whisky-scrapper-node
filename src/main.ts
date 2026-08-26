@@ -39,18 +39,32 @@ const run = async (): Promise<void> => {
   // cookie on the auth endpoints.
   await app.register(cookie);
 
-  // Security headers (HSTS, X-Frame-Options, Referrer-Policy, noSniff, ...).
-  // The CSP is relaxed just enough for the Swagger UI at /docs to keep working;
-  // the SPA's own CSP is set by the reverse proxy that serves the built app.
+  /**
+   * Security headers are owned by the reverse proxy. It sets CSP, HSTS,
+   * X-Frame-Options, X-Content-Type-Options and Referrer-Policy with
+   * `always` on every response, the API's included: `location /api/`
+   * carries no `add_header` of its own and so inherits the server-level
+   * ones. nginx *appends* rather than replaces, so leaving those five
+   * enabled here sent each of them twice and made X-Frame-Options
+   * self-contradictory (helmet's SAMEORIGIN beside nginx's DENY, which
+   * some browsers resolve by honouring neither).
+   *
+   * What stays on is exactly what nginx does not send: the cross-origin
+   * isolation pair, Origin-Agent-Cluster and the legacy X-* hardening
+   * headers.
+   *
+   * The consequence to keep in mind: those five headers are absent
+   * whenever the API is reached without the proxy — dev through the Vite
+   * proxy, and the Swagger UI on 127.0.0.1, which is also what lets
+   * /docs render now that no CSP reaches it. A new deployment topology
+   * must set them at its own edge.
+   */
   await app.register(helmet, {
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'"],
-        styleSrc: ["'self'", "'unsafe-inline'", 'https:'],
-        imgSrc: ["'self'", 'data:', 'https:'],
-      },
-    },
+    contentSecurityPolicy: false,
+    referrerPolicy: false,
+    strictTransportSecurity: false,
+    xContentTypeOptions: false,
+    xFrameOptions: false,
   });
 
   /**

@@ -11,6 +11,7 @@ export * from './permission.interfaces';
 export * from './preference.interfaces';
 export * from './product.interfaces';
 export * from './push.interfaces';
+export * from './quick-filter.interfaces';
 export * from './report.interfaces';
 export * from './rest.interfaces';
 export * from './scrape.interfaces';

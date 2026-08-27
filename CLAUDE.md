@@ -1464,6 +1464,11 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 | `DELETE /push/subscription` `{endpoint}` — drop this browser's subscription (body on DELETE)                                                                                                                                                                                                                | any logged-in user                           |
 | `POST /push/test` — send a test notification to every device of the caller                                                                                                                                                                                                                                  | any logged-in user                           |
 | `POST /push/digest` `{capturedOn?}` — manually run the price-drop digest dispatch (idempotent per day)                                                                                                                                                                                                      | `store:sync`                                 |
+| `GET /quick-filter` — the caller's own saved filter sets (see "Quick filters")                                                                                                                                                                                                                              | any logged-in user                           |
+| `GET /quick-filter/user/{userId}` — another user's saved filter sets                                                                                                                                                                                                                                        | `quick_filter:read` or self (admin bypasses) |
+| `POST /quick-filter` `{name, filters}` — save a new set, `200` + the caller's fresh list                                                                                                                                                                                                                    | any logged-in user                           |
+| `PATCH /quick-filter/{id}` `{name?, filters?}` — rename and/or replace the filters; an absent field is left alone                                                                                                                                                                                           | any logged-in user                           |
+| `DELETE /quick-filter/{id}` — delete one of the caller's sets                                                                                                                                                                                                                                               | any logged-in user                           |
 | `GET /product/search?q=&limit=` — lightweight autocomplete over the whole catalogue, one item per bottling; **ignores the caller's blacklist** (see "Catalogue search")                                                                                                                                     | any logged-in user                           |
 | `GET /brand/search?q=&limit=` — lightweight autocomplete over brand names (see "Catalogue search")                                                                                                                                                                                                          | any logged-in user                           |
 
@@ -1816,6 +1821,57 @@ run. The contract the pieces rely on:
   `{enabled: false}` and the client renders its switch disabled. Rotating the
   public key invalidates every stored subscription.
 
+### Quick filters (2026-08-27)
+
+Per-user **named saved filter sets** for the catalogue. `GET /quick-filter`
+answers a flat array of `{ id, name, filters, createdAt, updatedAt }`, ordered
+case-insensitively by name, and **so does every mutation** — the client
+replaces its cached copy from the response and needs no follow-up read (the
+`/preference` convention). Both reads are `private, no-cache`.
+
+The one thing a client must not guess:
+
+- **`filters` is an opaque object the backend never interprets.** Its keys are
+  the client's own filter dimensions; unknown keys are stored and returned
+  **verbatim**. This is the whole point of the design: shipping a new filter
+  dimension (Scotland regions, distilleries, a peat scalar) needs no backend
+  change, an older backend still accepts a newer client's payload instead of
+  answering 400, and an older client reading a newer set does not destroy what
+  it cannot parse. The backend validates only the payload's *shape* — at most
+  32 top-level keys, values are scalars or **flat** arrays of scalars (≤200
+  elements, strings ≤256 chars), no nesting, ≤4096 bytes serialized. Per-
+  dimension semantics are validated by `/report/{kind}`, on the request that
+  actually consumes them.
+- **A rename must send `name` alone.** `PATCH` treats an absent field as
+  absent (`exposeUnsetFields: false`), so a client that cannot parse a newer
+  dimension can safely rename a set; sending `filters` replaces the payload
+  wholesale, which is correct for an explicit "overwrite" but destructive for
+  a rename.
+- **Names are unique per user**, compared case-insensitively and stored
+  whitespace-normalized (`trim`, internal runs collapsed). A collision is
+  `409` naming the existing set; a race that slips past the check is caught by
+  the `quick_filter_user_name_uindex` index and answers `409` too, never 500.
+  Two different users may hold the same name.
+- **A set id belonging to another user is `404`, not `403`** — ownership is a
+  `WHERE` clause, so nothing confirms the set exists. An unknown `userId` on
+  the admin read is `404` as well, rather than a plausible empty list.
+- **Cap: 20 sets per user**, enforced inside the write transaction; the 21st
+  is a `400` naming the cap. Name length ≤64. An **empty** payload is valid —
+  "show everything" is a legitimate set.
+- Deleting a user cascades their sets.
+- Permission for the admin read is `quick_filter:read` (a new `Resource`, so
+  it appears in the permissions matrix on its own); the own routes are plain
+  `Resource.AUTHENTICATED`.
+
+Storage note: `quick_filter.filters` is the schema's **first `jsonb` column**.
+The payload is read whole and never queried into, and future dimensions are not
+uniformly arrays of strings, so a normalized child table would have rebuilt
+JSON relationally. `jsonb` (not `json`/`text`) also means a future key rename is
+one `WHERE filters ? 'oldKey'` data migration — which is why there is no
+`version` column. If the client ever renders its filter panel generically, the
+natural next step is a `meta.filterDefinitions` payload served from a backend
+code registry; with the payload stored as `jsonb` that is purely additive.
+
 ### Catalogue search (2026-08-22)
 
 `GET /product/search?q=&limit=` and `GET /brand/search?q=&limit=` are the
@@ -1865,8 +1921,8 @@ overhaul).
 
 ## Current state / known gaps
 
-The project builds, `tsc`/`eslint` are clean, and 681 unit tests (53 suites)
-plus 25 integration tests (3 suites, live Postgres) pass. Done:
+The project builds, `tsc`/`eslint` are clean, and 711 unit tests (56 suites)
+plus 115 integration tests (12 suites, live Postgres) pass. Done:
 
 - **Auth works end-to-end.** `domain/auth` (login/refresh/logout/me/sessions)
   is fully implemented with Valkey-backed sessions and a self-describing
@@ -2077,6 +2133,34 @@ Pre-existing bugs fixed while wiring auth (context for future changes):
     actually happen** (`WebPushService.enabled`), so the client switch and the
     key can never disagree; a missing/rejected key degrades to "push off" at
     boot instead of failing it.
+
+- **Saved filter sets are built** (`core/quick-filter`, `domain/quick-filter`,
+  2026-08-27): named per-user catalogue filter sets with CRUD, five endpoints
+  under `/quick-filter` (contract in "API contract" → "Quick filters"). The
+  load-bearing decisions:
+  - **The payload is opaque and stays that way.** `filters` is a `jsonb`
+    column — the schema's first — and `FilterPayload` (`~decorators/fields`,
+    the codebase's first `ValidatorConstraint`) validates only its shape. It is
+    deliberately a **leaf** class-validator property on both the request DTO
+    and the response type: `@IsObject()` with no `@ValidateNested()`, so
+    neither the incoming pipe's `forbidNonWhitelisted` nor the outgoing
+    `ValidationInterceptor`'s `whitelist` ever enumerates the payload's keys.
+    Declaring a typed payload class would silently break both halves and
+    delete a newer client's dimensions on the way through.
+  - **Adding a filter dimension therefore touches zero code here**, which is
+    the requirement the feature exists to satisfy. The one manual
+    `@ApiProperty({ type: 'object', additionalProperties: true })` in the
+    codebase lives on that decorator, because the Swagger CLI plugin cannot
+    infer a schema for an index-signature type and the generated client would
+    otherwise type the field `unknown`.
+  - **Uniqueness and the cap are transactional.** `uniqueFields` on
+    `CoreBaseService` is left empty on purpose — it enforces *global*
+    uniqueness while a set's name is unique only per user. The service does a
+    case-insensitive pre-check for the message the client shows, the
+    `quick_filter_user_name_uindex` index catches the race, and `23505` is
+    re-thrown as `DuplicateError` so a second tab gets 409 rather than 500.
+  - **Ownership is a `WHERE` clause, not a check**, so a foreign id matches no
+    row and answers 404 — nothing confirms the set exists.
 
 The endpoint inventory and every field map live in **"API contract"** above —
 update that section alongside any API contract change; `../web` reads it as the

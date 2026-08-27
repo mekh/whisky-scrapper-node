@@ -321,6 +321,27 @@ export interface EntityPushDigestLog {
   createdAt: Date;
 }
 
+/**
+ * One user's named, saved catalogue filter set.
+ */
+export interface EntityQuickFilter extends EntityBaseRich {
+  /**
+   * The owning user. Sets are strictly private — nothing shares them.
+   */
+  userId: ID;
+
+  /**
+   * The user-chosen name, unique per user (case-insensitively).
+   */
+  name: string;
+
+  /**
+   * The saved filters, stored as `jsonb` and never interpreted here. See
+   * `QuickFilterPayload` for why the backend stays blind to its keys.
+   */
+  filters: Record<string, unknown>;
+}
+
 export interface EntitySyncLog extends EntityBaseRich {
   storeId: ID;
   added: number;

@@ -23,6 +23,7 @@ import { DomainMetaModule } from '~domain/meta';
 import { DomainPreferenceModule } from '~domain/preference';
 import { DomainProductModule } from '~domain/product';
 import { DomainPushModule } from '~domain/push';
+import { DomainQuickFilterModule } from '~domain/quick-filter';
 import { DomainReportModule } from '~domain/report';
 import { DomainStoreModule } from '~domain/store';
 import { DomainUserModule } from '~domain/user';
@@ -95,6 +96,7 @@ import { LogInterceptor, ValidationInterceptor } from './interceptors';
     DomainProductModule,
     DomainPreferenceModule,
     DomainPushModule,
+    DomainQuickFilterModule,
     ScrapeModule,
   ],
   providers: [

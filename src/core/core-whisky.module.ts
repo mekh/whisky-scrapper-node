@@ -7,6 +7,7 @@ import { CorePreferenceModule } from './preference';
 import { CorePriceSnapshotModule } from './price-snapshot';
 import { CoreProductModule } from './product';
 import { CorePushModule } from './push';
+import { CoreQuickFilterModule } from './quick-filter';
 import { CoreStoreModule } from './store';
 import { CoreStoreConfigModule } from './store-config';
 import { CoreStoreProductModule } from './store-product';
@@ -27,6 +28,7 @@ import { CoreTypeModule } from './type';
     CorePriceSnapshotModule,
     CoreProductModule,
     CorePushModule,
+    CoreQuickFilterModule,
     CoreStoreModule,
     CoreStoreConfigModule,
     CoreStoreProductModule,
@@ -41,6 +43,7 @@ import { CoreTypeModule } from './type';
     CorePriceSnapshotModule,
     CoreProductModule,
     CorePushModule,
+    CoreQuickFilterModule,
     CoreStoreModule,
     CoreStoreConfigModule,
     CoreStoreProductModule,

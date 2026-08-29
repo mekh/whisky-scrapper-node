@@ -1,0 +1,58 @@
+Yoichi	yoichi	any	
+Miyagikyo	miyagikyo	any	
+Highland Park	highland-park	any	
+Sir Edwards	sir-edwards	any	spelling as it appears in this catalogue's samples (no apostrophe)
+Sir Edward's	sir-edwards	any	canonical spelling
+Glen Clan	glen-clan	any	
+Glen Turner	glen-turner	any	
+Highland Baron	highland-baron	any	
+Edderwick	edderwick	any	
+Barclays	barclays	any	
+Charlie Parry's Mallows	charlie-parrys-mallows	any	
+Gelston's	gelstons	any	
+Gelstons	gelstons	any	no-apostrophe variant
+Muirhead's	muirheads	any	
+Muirhead's Blue Seal	muirheads	any	
+Restless Pony	restless-pony	any	
+Shamrose	shamrose	any	
+Stag Hunter	stag-hunter	any	
+36 South	36-south	any	
+Aberargie	aberargie	any	
+Bart's	barts	any	judgement call: short (6 chars incl apostrophe) but this exact string is one of this batch's own samples and is needed for it to resolve at all
+Bart's XS Edition	barts	any	
+Beara	beara	any	
+Bell Rock	bell-rock	any	
+Big Moustache	big-moustache	any	
+Billy Bong	billy-bong	any	
+Blairfindy	blairfindy	any	
+Blue	blue	brand	too short/generic (4 chars, under the 5-char floor) to match safely in-name; this product will NOT resolve via this alias -- honest outcome per the brief
+Virginia Distillery Company	virginia-distillery-company	any	
+Courage & Conviction	courage-conviction	any	
+Courage and Conviction	courage-conviction	any	defensive spelling variant, not directly observed in samples
+Bold Thady	bold-thady	any	
+Bouteille	bouteille	brand	generic French word for "bottle"; unsafe for in-name matching, kept brand-scope only -- this product will likely NOT resolve, flagged for human review as possibly a scraping artifact
+Brora	brora	any	
+Cameronbridge	cameronbridge	any	
+Cameron Bridge	cameronbridge	any	spelling as it appears in this catalogue's sample (two words)
+Canadian Mist	canadian-mist	any	
+Chieftain's	chieftains	any	
+Chieftains	chieftains	any	no-apostrophe variant
+Crazy Charley	crazy-charley	any	
+Cumberland Falls	cumberland-falls	any	
+The Dubliner	dubliner	any	
+Dubliner	dubliner	brand	bare demonym (also a cheese brand); kept brand-scope only to avoid unrelated in-name collisions
+Early Times	early-times	any	
+Element	element	brand	documented catalogue collision risk: this project's own be/CLAUDE.md names "Elements of Islay", "M&H Elements" and "Glenmorangie Elementa" as real unrelated products in this exact catalogue; any-scope would mis-fire on all three. "Element Fusion"/"Element Lore" will NOT resolve via this alias -- honest outcome
+Redwood Empire	redwood-empire	any	
+Filey Bay	filey-bay	any	
+Spirit of Yorkshire	filey-bay	any	
+Filliers	filliers	any	
+Fillers	filliers	any	misspelling (missing one 'l') seen directly in this batch's own samples
+Finity	finity	brand	substring collision risk: "Finity" is contained inside the unrelated word/brand "Infinity"; kept brand-scope only
+Forty Creek	forty-creek	any	
+Glencoe	glencoe	any	
+Glenfiddich	glenfiddich	any	
+Glenmorangie	glenmorangie	any	
+Glenturret	glenturret	any	
+Gravediggers	gravediggers	any	
+Haran	haran	any	

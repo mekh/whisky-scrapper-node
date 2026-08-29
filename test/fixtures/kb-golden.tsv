@@ -1,0 +1,209 @@
+# kb-golden.tsv — the regression gate for the knowledge base.
+#
+# Every row is a real (name, brand) pair from the production catalogue, and
+# every expectation was reviewed by hand against the seeded knowledge base. It
+# is asserted by test/scrape/kb-golden.integration.spec.ts, which is what any
+# later change to the seed, the resolver or the prompts has to survive.
+#
+# An empty `producer` is a deliberate expectation, not a gap: an undisclosed
+# label must never be guessed, and a producer the auto-gate withheld is
+# invisible to the resolver until a reviewer promotes it. Both are recorded
+# here so that a change which starts resolving them shows up as a diff to read
+# rather than a silent shift.
+#
+# name	brand	producer	bottler	region	peat	type	country
+Achill Island Distillers Peated	Achill Island	achill-island			medium		IE
+Alchemist Tobermory	Alchemist	tobermory	alchemist	islands	none	single malt	GB-SCT
+Allt-a-Bhainne - Old Malt Cask	Allt A Bhainne	allt-a-bhainne	old-malt-cask	speyside	none	single malt	GB-SCT
+Amrut Lightly Peated	Amrut	amrut			light	single malt	IN
+Amrut Peated	Amrut	amrut			medium	single malt	IN
+Amrut Port Pipe Peated	Amrut	amrut			medium	single malt	IN
+AnCnoc Sherry Peated	AnCnoc	ancnoc		highland	medium	single malt	GB-SCT
+An Orkney	An Orkney				unknown		
+Ardbeg Monster of Smoke Ten Years Old + Ardbeg Monster of Smoke An Oa + Ardbeg Monster of Smoke Wee Beastie	Ardbeg	ardbeg		islay	heavy	single malt	GB-SCT
+Ardbeg Wee Beastie	Ardbeg	ardbeg		islay	heavy	single malt	GB-SCT
+Arran Orkney Bere Barley Limited Edition	Arran	arran		islands	none	single malt	GB-SCT
+Artist Bunnahabhain Moine Artist #15 2011	Artist	bunnahabhain	artist	islay	heavy	single malt	GB-SCT
+Artist Collective Ben Nevis Peated Artist Collective 2016	Artist Collective	ben-nevis	artist-collective	highland	heavy	single malt	GB-SCT
+Ben Nevis Traditional Peated Malt	Ben Nevis	ben-nevis		highland	heavy	single malt	GB-SCT
+Benriach	BenRiach	benriach		speyside	none	single malt	GB-SCT
+BenRiach	BenRiach	benriach		speyside	none	single malt	GB-SCT
+BenRiach Authenticus	BenRiach	benriach		speyside	heavy	single malt	GB-SCT
+Benriach Batch 2 Malting Season Second Edition	BenRiach	benriach		speyside	none	single malt	GB-SCT
+BenRiach + BenRiach The Smoky + BenRiach	BenRiach	benriach		speyside	heavy	single malt	GB-SCT
+BenRiach Curiositas	BenRiach	benriach		speyside	heavy	single malt	GB-SCT
+BenRiach The Smoky	BenRiach	benriach		speyside	heavy	single malt	GB-SCT
+Benromach	Benromach				unknown		
+Benromach Cask Strength	Benromach				unknown		
+Benromach Heritage	Benromach				unknown		
+Benromach Peat Smoke	Benromach				heavy		
+Benromach Unpeated	Benromach				none		
+Big Peat	Douglas Laing	big-peat	douglas-laing	islay	heavy	blend	GB-SCT
+Big Peat Douglas Laing	Douglas Laing	big-peat	douglas-laing	islay	heavy	blend	GB-SCT
+Big Peat Small Batch	Big Peat	big-peat		islay	heavy	blend	GB-SCT
+Black Bull Peated Finish	Black Bull				heavy		
+Boulder Peated Malt	Boulder				heavy		
+Bowmore 1989 XOP Xtra Old Particular	Douglas Laing	bowmore	douglas-laing	islay	medium	single malt	GB-SCT
+Bowmore Elements Of Islay BW8 (Elixir Distillers)	Elements of Islay		elixir-distillers		unknown		
+Braeval 1997 The Old Malt Cask (Hunter Laing)	Old Malt Cask		hunter-laing		unknown		
+Bruichladdich Moine Mhor 3D Second Edition	Bruichladdich	bruichladdich		islay	none	single malt	GB-SCT
+Bruichladdich Octomore 12.2	Bruichladdich	octomore		islay	heavy	single malt	GB-SCT
+Bruichladdich Octomore 15.1	Bruichladdich	octomore		islay	heavy	single malt	GB-SCT
+Bruichladdich Octomore 16.1	Bruichladdich	octomore		islay	heavy	single malt	GB-SCT
+Bruichladdich Port Charlotte	Bruichladdich	port-charlotte		islay	heavy	single malt	GB-SCT
+Bruichladdich Port Charlotte	Port Charlotte	port-charlotte		islay	heavy	single malt	GB-SCT
+Bruichladdich Port Charlotte Islay Barley	Bruichladdich	port-charlotte		islay	heavy	single malt	GB-SCT
+Bruichladdich Port Charlotte Islay Barley	Port Charlotte	port-charlotte		islay	heavy	single malt	GB-SCT
+Bruichladdich Port Charlotte Islay Barley 2011/2012	Port Charlotte	port-charlotte		islay	heavy	single malt	GB-SCT
+Bruichladdich Super Heavily Peated	Bruichladdich	bruichladdich		islay	heavy	single malt	GB-SCT
+Bunnahabhain	Bunnahabhain	bunnahabhain		islay	none	single malt	GB-SCT
+Bunnahabhain 1976 Finest Collection	Hart Brothers	bunnahabhain	hart-brothers	islay	none	single malt	GB-SCT
+Bunnahabhain 1976 Mission (Murray McDavid)	Murray Mcdavid	bunnahabhain	murray-mcdavid	islay	none	single malt	GB-SCT
+Bunnahabhain 1987 - Old & Rare	Bunnahabhain	bunnahabhain	old-rare	islay	none	single malt	GB-SCT
+Bunnahabhain 1988 Artist #3 (La Maison du)	Bunnahabhain	bunnahabhain		islay	none	single malt	GB-SCT
+Bunnahabhain 1989 - Old & Rare	Bunnahabhain	bunnahabhain	old-rare	islay	none	single malt	GB-SCT
+Bunnahabhain 1991 Barrel Selection (Wilson & Morgan)	Wilson & Morgan	bunnahabhain	wilson-morgan	islay	none	single malt	GB-SCT
+Bunnahabhain An Cladach	Bunnahabhain	bunnahabhain		islay	none	single malt	GB-SCT
+Bunnahabhain Moine	Bunnahabhain	bunnahabhain		islay	heavy	single malt	GB-SCT
+Cadenhead Benriach	Cadenhead	benriach	cadenhead	speyside	none	single malt	GB-SCT
+Cadenhead Burnside	Cadenhead		cadenhead		unknown		
+Cambus 1988 Clan Denny (Douglas Laing)	Douglas Laing		douglas-laing		unknown		
+Caperdonich Peated	Caperdonich	caperdonich		speyside	heavy	single malt	GB-SCT
+Cask Orkney	Cask Orkney				unknown		
+Chivas Royal Salute Peated Blend	Royal Salute	royal-salute			medium	blend	GB-SCT
+Clan Denny Highland	Clan Denny				unknown		
+Clan Denny Islay	Clan Denny				unknown		
+Clan Denny Speyside	Clan Denny				unknown		
+Connemara Distillers Edition Peated	Connemara	connemara			heavy	single malt	IE
+Connemara Original (Peated)	Connemara	connemara			heavy	single malt	IE
+Connemara Peated	Connemara	connemara			heavy	single malt	IE
+Deanston Old Malt Cask	Deanston	deanston	old-malt-cask	highland	none	single malt	GB-SCT
+Douglas Laing Beastie	Douglas Laing		douglas-laing		unknown		
+Douglas Laing Big Peat	Douglas Laing	big-peat	douglas-laing	islay	heavy	blend	GB-SCT
+Douglas Laing Bunnahabhain	Douglas Laing	bunnahabhain	douglas-laing	islay	none	single malt	GB-SCT
+Douglas Laing Bunnahabhain Sherry Cask	Douglas Laing	bunnahabhain	douglas-laing	islay	none	single malt	GB-SCT
+Douglas Laing & Co Old Particular Probably Orkney's Finest	Douglas Laing		douglas-laing		unknown		
+Douglas Laing's Timorous Beastie	Douglas Laing		douglas-laing		unknown		
+Douglas Laing Timorous Beastie	Douglas Laing		douglas-laing		unknown		
+Douglas Laing Tobermory	Douglas Laing	tobermory	douglas-laing	islands	none	single malt	GB-SCT
+Douglas Laing Tomintoul	Douglas Laing	tomintoul	douglas-laing	speyside	none	single malt	GB-SCT
+Douglas Laing XOP Macallan 1990	Douglas Laing	macallan	douglas-laing	speyside	none	single malt	GB-SCT
+Douglas Laing XOP Speyside Finest 1967	Douglas Laing		douglas-laing		unknown		
+Dunville's Three Crowns Peated	Dunville's	dunvilles			heavy		IE
+Elements of Islay	Elements of Islay		elements-of-islay		unknown		
+Elements of Islay Bourbon Cask	Elements of Islay		elements-of-islay		unknown		
+Elements Peated Malt M&H Distillery	M H	m-h			medium	single malt	IL
+Elements Pomegranate Wine Cask M&H Distillery	M H	m-h			none	single malt	IL
+Elements Red Wine Cask M&H Distillery	M H	m-h			none	single malt	IL
+Elements Sherry Cask M&H Distillery	M H	m-h			none	single malt	IL
+Finlaggan Eilean Mor	Finlaggan				unknown		
+Finlaggan Original Peaty	Finlaggan				heavy		
+Glendalough Pot Still Peated	Glendalough	glendalough			medium		IE
+GlenDronach Peated	Glendronach	glendronach		highland	medium	single malt	GB-SCT
+Glengoyne - Hepburn's Choice	Glengoyne	glengoyne	hunter-laing	highland	none	single malt	GB-SCT
+Glenmorangie Elementa	Glenmorangie	glenmorangie		highland	none	single malt	GB-SCT
+Glenmorangie The Elementa New Charred Oak Cask Finish	Glenmorangie	glenmorangie		highland	none	single malt	GB-SCT
+Glenmorangie The Elementa & Virgin Charred Oak Casks	Glenmorangie	glenmorangie		highland	none	single malt	GB-SCT
+Glen Moray Elgin Classic Peated	Glen Moray	glen-moray		speyside	medium	single malt	GB-SCT
+Glen Moray - Old Malt Cask	Glen Moray	glen-moray	old-malt-cask	speyside	none	single malt	GB-SCT
+Glen Moray Peated	Glen Moray	glen-moray		speyside	medium	single malt	GB-SCT
+Glen Moray Peated Rioja Cask Finish	Glen Moray	glen-moray		speyside	medium	single malt	GB-SCT
+Glen Scotia Unpeated Fino Sherry Finish	Glen Scotia				none		
+Glenturret Peated		glenturret		highland	heavy	single malt	GB-SCT
+Gordon & MacPhail Bunnahabhain Connoisseurs Choice	Gordon & MacPhail	bunnahabhain	gordon-macphail	islay	none	single malt	GB-SCT
+Gordon & MacPhail Bunnahabhain Connoisseurs Choice 1989	Gordon & MacPhail	bunnahabhain	gordon-macphail	islay	none	single malt	GB-SCT
+Gordon & MacPhail Bunnahabhain Connoisseurs Choice 2007	Gordon & MacPhail	bunnahabhain	gordon-macphail	islay	none	single malt	GB-SCT
+Gordon & MacPhail Ledaig Discovery	Gordon & MacPhail	ledaig	gordon-macphail	islands	heavy	single malt	GB-SCT
+Grant's Triple Wood Smoky	Grant's	grants			none	blend	GB-SCT
+Hart Brothers Benriach	Hart Brothers	benriach	hart-brothers	speyside	none	single malt	GB-SCT
+Hart Brothers Glen Scotia Vintage	Hart Brothers		hart-brothers		unknown		
+Hart Brothers Islay Peated	Hart Brothers		hart-brothers		heavy		
+Hart Brothers Tobermory Vintage	Hart Brothers	tobermory	hart-brothers	islands	none	single malt	GB-SCT
+Hepburn's Choice Benrinnes	Benrinnes	benrinnes	hunter-laing	speyside	none	single malt	GB-SCT
+Hinch Peated	Hinch	hinch			medium		IE
+Hyde No.11 1949 Peated	Hyde		hyde		heavy		
+Hyde №11 1949 Peated	Hyde		hyde		heavy		
+Hyde №11 Peated Bourbon Finish	Hyde		hyde		heavy		
+Jack Daniels	Jack Daniel's	jack-daniels			none	tennessee	US
+Jack Daniel's Blackberry	Jack Daniel's	jack-daniels			none	tennessee	US
+Jack Daniel's Bold&Spicy	Jack Daniel's	jack-daniels			none	tennessee	US
+Johnny Smoking Gun	Johnny Smoking Gun	johnny-smoking-gun			none	blend	US
+Kilkerran Heavily Peated	Kilkerran	kilkerran		campbeltown	heavy	single malt	GB-SCT
+Ledaig	Ledaig	ledaig		islands	heavy	single malt	GB-SCT
+Ledaig Fill Oloroso	Ledaig	ledaig		islands	heavy	single malt	GB-SCT
+Ledaig Hebridean Moon	Ledaig	ledaig		islands	heavy	single malt	GB-SCT
+Ledaig Oloroso Sherry	Ledaig	ledaig		islands	heavy	single malt	GB-SCT
+Loch Lomond Peated	Loch Lomond	loch-lomond		highland	heavy	single malt	GB-SCT
+Loch Lomond Peated Rioja Cask	Loch Lomond	loch-lomond		highland	heavy	single malt	GB-SCT
+Mac-Talla Flora Lightly Peated Morrison	Mac Talla				light		
+Matsui The Peated	Matsui	matsui			medium	single malt	JP
+Matsui The Peated	The Matsui	matsui			medium	single malt	JP
+M&H Elements Peated Malt	M&h Elements	m-h			medium	single malt	IL
+Miltonduff 1995 The Old Malt Cask (Hunter Laing)	Old Malt Cask		hunter-laing		unknown		
+Monologue Tomintoul	Tomintoul	tomintoul		speyside	none	single malt	GB-SCT
+Octomore 13.3	Bruichladdich	octomore		islay	heavy	single malt	GB-SCT
+Old Malt Cask Auchentoshan	Old Malt Cask	auchentoshan	old-malt-cask	lowland	none	single malt	GB-SCT
+Old Malt Cask Blair Athol	Old Malt Cask	blair-athol	old-malt-cask	highland	none	single malt	GB-SCT
+Old Malt Cask Jura	Old Malt Cask		old-malt-cask		unknown		
+Old & Rare Bunnahabhain	Old & Rare	bunnahabhain	old-rare	islay	none	single malt	GB-SCT
+Paul John Peated	Paul John	paul-john			heavy	single malt	IN
+Peat's Beast Cask Strength	Peat's Beast	peats-beast		islay	heavy		GB-SCT
+Peat's Beast PX Sherry	Peat's Beast	peats-beast		islay	heavy		GB-SCT
+Peat's Beast Unchillfiltered	Peat's Beast	peats-beast		islay	heavy		GB-SCT
+Penderyn Peated	Penderyn	penderyn			medium	single malt	GB-WLS
+Penderyn Peated Wales	Penderyn	penderyn			medium	single malt	GB-WLS
+Royal Salute Peated Blend	Royal Salute	royal-salute			medium	blend	GB-SCT
+Scyfion Ardmore Peated Tokaji wine cask	Scyfion	ardmore	scyfion	highland	heavy	single malt	GB-SCT
+Scyfion Benriach 2008 Vin Santo Cask Finished	Scyfion	benriach	scyfion	speyside	none	single malt	GB-SCT
+Scyfion Burnside 1999 Oksamyt of Ukraine Cask Finished	Scyfion		scyfion		unknown		
+Scyfion Tobermory 2008 Bastardo Cask Finished	Scyfion	tobermory	scyfion	islands	none	single malt	GB-SCT
+Signatory Ben Nevis 100 Proof Heavily Peated	Signatory	ben-nevis	signatory	highland	heavy	single malt	GB-SCT
+Signatory Benriach Cask Strength	Signatory	benriach	signatory	speyside	none	single malt	GB-SCT
+Signatory Benriach Cask Strength 2015	Signatory	benriach	signatory	speyside	none	single malt	GB-SCT
+Signatory Bunnahabhain Cask Strength	Signatory	bunnahabhain	signatory	islay	none	single malt	GB-SCT
+Signatory Ledaig 100 Proof	Signatory	ledaig	signatory	islands	heavy	single malt	GB-SCT
+Signatory Ledaig Cask Strength	Signatory	ledaig	signatory	islands	heavy	single malt	GB-SCT
+Signatory Orkney Cask Strength	Signatory		signatory		unknown		
+Signatory Orkney (HP) 100 Proof	Signatory		signatory		unknown		
+Signatory Unnamed Orkney	Signatory		signatory		unknown		
+Smokehead	Smokehead	smokehead		islay	heavy	single malt	GB-SCT
+Smokehead High Voltage	Smokehead	smokehead		islay	heavy	single malt	GB-SCT
+Smokehead Rum Cask Rebel	Smokehead	smokehead		islay	heavy	single malt	GB-SCT
+Smoky Black The Famous Grouse	Famous Grouse				unknown		
+Starward Peated Finish	Starward	starward			medium	single malt	AU
+TBWC Ledaig Batch 12	TBWC	ledaig	tbwc	islands	heavy	single malt	GB-SCT
+The Glenturret Peated Edition	The Glenturret	glenturret		highland	heavy	single malt	GB-SCT
+The Kinship Bunnahabhain	The Kinship	bunnahabhain	the-kinship	islay	none	single malt	GB-SCT
+Tobermory	Tobermory	tobermory		islands	none	single malt	GB-SCT
+Tobermory 1st Fill Allier	Tobermory	tobermory		islands	none	single malt	GB-SCT
+Tobermory Core Range	Tobermory	tobermory		islands	none	single malt	GB-SCT
+Tobermory Fill Allier Cask	Tobermory	tobermory		islands	none	single malt	GB-SCT
+Tomintoul	Tomintoul	tomintoul		speyside	none	single malt	GB-SCT
+Tomintoul Cognac Cask Finish 2009	Tomintoul	tomintoul		speyside	none	single malt	GB-SCT
+Tomintoul Peaty	Tomintoul	tomintoul		speyside	medium	single malt	GB-SCT
+Ардбег	Ardbeg	ardbeg		islay	heavy	single malt	GB-SCT
+Хайленд Парк	Highland Park				unknown		
+Bushmills Original	Bushmills	bushmills			none		IE
+Glenfarclas	Glenfarclas	glenfarclas		speyside	none	single malt	GB-SCT
+Grant's Triple Wood	Grant's	grants			none	blend	GB-SCT
+Glenfiddich	Glenfiddich	glenfiddich		speyside	none	single malt	GB-SCT
+Jim Beam White	Jim Beam	jim-beam			none	bourbon	US
+Jameson	Jameson	jameson			none	blend	IE
+Chivas Regal	Chivas Regal	chivas-regal			light	blend	GB-SCT
+Glengoyne	Glengoyne	glengoyne		highland	none	single malt	GB-SCT
+Glen Grant	Glen Grant	glen-grant		speyside	none	single malt	GB-SCT
+Tullamore Dew	Tullamore Dew	tullamore-dew			none		IE
+Bowmore	Bowmore	bowmore		islay	medium	single malt	GB-SCT
+GlenAllachie	Glenallachie	glenallachie		speyside	none	single malt	GB-SCT
+Dalmore	Dalmore	dalmore		highland	none	single malt	GB-SCT
+Four Roses	Four Roses	four-roses			none	bourbon	US
+Wild Turkey	Wild Turkey	wild-turkey			none		US
+Aberlour	Aberlour	aberlour		speyside	none	single malt	GB-SCT
+Loch Lomond	Loch Lomond	loch-lomond		highland	none	single malt	GB-SCT
+Macallan Fine Oak	Macallan	macallan		speyside	none	single malt	GB-SCT
+Talisker	Talisker	talisker		islands	medium	single malt	GB-SCT
+The Glenlivet	The Glenlivet	glenlivet		speyside	none	single malt	GB-SCT
+Balblair	Balblair	balblair		highland	none	single malt	GB-SCT
+Bladnoch	Bladnoch	bladnoch		lowland	none	single malt	GB-SCT
+Blair Athol	Blair Athol	blair-athol		highland	none	single malt	GB-SCT
+Glencadam	Glencadam	glencadam		highland	none	single malt	GB-SCT

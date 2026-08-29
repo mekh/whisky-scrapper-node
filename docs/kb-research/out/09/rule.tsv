@@ -1,0 +1,4 @@
+paul-john	Peated	word			heavy	60	https://en.wikipedia.org/wiki/Paul_John_(whisky)	Peated Select Cask line uses imported Islay and Aberdeen peat, distinct from the unpeated core range (Brilliance/Edited/Nirvana/Classic)
+teeling	Blackpitts	word			heavy	60	https://www.teelingwhiskey.com/	officially branded 'Blackpitts Peated Single Malt' on teelingwhiskey.com; exact ppm not stated, heavy is a judgment call given it is marketed as the house's dedicated peated expression
+monkey-shoulder	Smokey	word			medium	60	https://en.wikipedia.org/wiki/Monkey_Shoulder	Wikipedia: 'Smokey Monkey Batch 9, a blend that includes Islay whiskies' - medium rather than heavy since Islay malt is blended with the usual unpeated Speyside malts, not the whole content
+hakushu	Heavily Peated	word			heavy	60	https://en.wikipedia.org/wiki/Hakushu_distillery	2013 limited series explicitly named 'Heavily Peated', distinct from the core range (see producer.tsv note, peatProfile=light there)

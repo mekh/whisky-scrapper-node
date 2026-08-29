@@ -1,0 +1,69 @@
+Jim Beam	jim-beam	any	
+Bruichladdich	bruichladdich	any	
+Octomore	octomore	any	seen in Bruichladdich's own sample product names
+Port Charlotte	port-charlotte	any	sibling brand, not in this batch's samples
+Balvenie	balvenie	any	
+The Balvenie	balvenie	any	official full name
+Glen Grant	glen-grant	any	
+Tullibardine	tullibardine	any	
+Arlett	arlett	any	
+Ezra Brooks	ezra-brooks	any	
+Koval	koval	any	
+Connemara	connemara	any	
+AnCnoc	ancnoc	any	exact input spelling
+anCnoc	ancnoc	any	spelling used in this batch's sample product names
+Knockdhu	ancnoc	any	distillery's own name
+Kingsbarns	kingsbarns	any	
+Ardnahoe	ardnahoe	any	
+Fuyu	fuyu	brand	short/generic, unidentified brand
+Spicebox	spicebox	any	
+Glen Angel	glen-angel	any	
+M&h Elements	m-h	brand	exact input spelling
+M&H Elements	m-h	brand	capitalization used in sample product names
+M&H	m-h	brand	short/ambiguous, brand-value match only
+Teaninich	teaninich	any	
+Clan Denny	clan-denny	any	
+Glen Garioch	glen-garioch	any	
+Lagg	lagg	brand	short (4 chars)
+River Proof Series	river-proof-series	any	
+Whisky of Voodoo	spirit-of-voodoo	any	exact input spelling; brand column disagrees with the samples' actual product name
+Spirit of Voodoo	spirit-of-voodoo	any	actual name used in every sampled product
+Berry Bros.	berry-bros-rudd	any	exact input spelling
+Berry Bros	berry-bros-rudd	any	no-period variant
+Berry Bros and Rudd	berry-bros-rudd	any	seen in sample product name
+Berrys'	berry-bros-rudd	any	seen in sample product name
+David Nicholson	david-nicholson	any	
+Greenbar	greenbar	any	
+Kilkerran	kilkerran	any	
+Noble Rebel	noble-rebel	any	
+Scottish Deer	scottish-deer	any	
+Tokinoka	tokinoka	any	
+Aber Falls	aber-falls	any	
+Big Peat	big-peat	any	
+Deep River	deep-river	any	
+Glen Barley	glen-barley	any	
+Hinotori	hinotori	any	
+Kentucky Vintage	kentucky-vintage	any	
+Mccarthy's	mccarthys	any	exact input spelling
+McCarthy's	mccarthys	any	standard capitalization, seen in sample product name
+Noah's Mill	noahs-mill	any	
+Parker's Heritage	parkers-heritage	any	
+Parker's Heritage Collection	parkers-heritage	any	full official name
+Rock Island	rock-island	any	
+Rock Oyster	rock-island	any	former name of this Douglas Laing range
+Smokey Joe	smokey-joe	any	
+The Hakushu	hakushu	any	exact input spelling
+Hakushu	hakushu	any	bare form
+Waterproof	waterproof	brand	generic English word as brand name
+Willett	willett	any	
+Cooley	cooley	any	
+Longmorn	longmorn	any	
+Heaven Hill	heaven-hill	any	
+Clear Creek	clear-creek	any	
+Clear Creek Distillery	clear-creek	any	
+Eigashima	eigashima	any	
+Eigashima Shuzo	eigashima	any	
+Lux Row Distillers	lux-row-distillers	any	
+Lux Row	lux-row-distillers	any	
+Douglas Laing	douglas-laing	any	
+Douglas Laing & Co	douglas-laing	any	

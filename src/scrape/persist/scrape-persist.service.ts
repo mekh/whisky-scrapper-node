@@ -1,23 +1,29 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Transactional } from 'typeorm-transactional';
 
-import { PERSIST_SWEEP_GUARD_RATIO } from '~constants';
+import { ABV_TOLERANCE, PERSIST_SWEEP_GUARD_RATIO } from '~constants';
 import { CoreBrandService } from '~core/brand';
 import { CoreCountryService } from '~core/country';
 import { CoreFlavorService } from '~core/flavor';
 import { CorePriceSnapshotService } from '~core/price-snapshot';
+import { CoreProducerService } from '~core/producer';
 import { CoreProductService } from '~core/product';
 import { CoreStoreProductService } from '~core/store-product';
 import { CoreTypeService } from '~core/type';
+import { FactSource, ProductFactField } from '~enums';
 import { ProductMatchUtils, ProductNameUtils } from '~utils';
+
+import { KbApplyService } from '../kb/kb-apply.service';
 
 import type {
   ID,
   ListingResult,
   ProductCanonicalInput,
+  ProductFactConflictInput,
   ProductFillInput,
   ProductScrapeFlavorLink,
   ProductSnapshot,
+  ProductStoredFactsRow,
   ScrapeProgressReporter,
   StoreProductUpsertResult,
 } from '~types';
@@ -81,6 +87,10 @@ export class ScrapePersistService {
 
   private readonly snapshots: CorePriceSnapshotService;
 
+  private readonly producers: CoreProducerService;
+
+  private readonly kb: KbApplyService;
+
   public constructor(
     brands: CoreBrandService,
     types: CoreTypeService,
@@ -89,6 +99,8 @@ export class ScrapePersistService {
     products: CoreProductService,
     storeProducts: CoreStoreProductService,
     snapshots: CorePriceSnapshotService,
+    producers: CoreProducerService,
+    kb: KbApplyService,
   ) {
     this.brands = brands;
     this.types = types;
@@ -97,6 +109,8 @@ export class ScrapePersistService {
     this.products = products;
     this.storeProducts = storeProducts;
     this.snapshots = snapshots;
+    this.producers = producers;
+    this.kb = kb;
   }
 
   /**
@@ -177,6 +191,10 @@ export class ScrapePersistService {
           brandId: this.brandId(snap, lookups.brandIds),
           typeId: this.typeId(snap, lookups.typeIds),
           countryId: this.countryId(snap, lookups.countryIds),
+          abvSource: this.factSource(snap, ProductFactField.ABV),
+          brandSource: this.factSource(snap, ProductFactField.BRAND),
+          typeSource: this.factSource(snap, ProductFactField.TYPE),
+          countrySource: this.factSource(snap, ProductFactField.COUNTRY),
         });
       }
 
@@ -205,8 +223,10 @@ export class ScrapePersistService {
       }
     }
 
+    await this.logConflicts(storeId, [...fills.values()]);
     await this.products.fillMissing([...fills.values()]);
     await this.products.addScrapeFlavors(this.orderLinks(links));
+    await this.applyKb([...fills.keys()], reporter);
 
     const removed = await this.flagOutOfStock(
       storeId,
@@ -363,6 +383,7 @@ export class ScrapePersistService {
       age: snap.ageYears,
       abv: snap.abv,
       volumeMl: snap.volumeMl,
+      factSources: snap.factSources,
     };
   }
 
@@ -472,6 +493,231 @@ export class ScrapePersistService {
   }
 
   /**
+   * Applies the knowledge base to the bottlings this run touched.
+   *
+   * Position in `persist` is the whole design. It runs **after**
+   * `writeLlmFlavors`, which happens inside the upsert loop, so it can strip a
+   * peat tag the model just wrote — before this hook existed, every sync
+   * quietly re-created the errors the reconciliation pass had corrected, and
+   * the catalogue only stayed right until the next cron. It runs after
+   * `addScrapeFlavors` for the same reason.
+   *
+   * It is scoped to the run's own bottlings rather than the catalogue: a sync
+   * is not the place to rewrite four thousand rows, and anything it misses is
+   * `pnpm reconcile-flavors`'s job.
+   *
+   * Unresolved bottlings are not a failure and are not queued anywhere. The
+   * queue is derivable at any time — a brand key with no alias match — so a
+   * table for it would be a second copy of a fact the aliases already state.
+   * A count goes to the log instead.
+   *
+   * Best-effort: a knowledge-base failure must not lose a scrape that
+   * succeeded.
+   *
+   * @param productIds - The bottlings this run wrote.
+   * @param reporter - Optional progress reporter.
+   * @returns Resolves once the writes are done, or immediately on failure.
+   */
+  private async applyKb(
+    productIds: ID[],
+    reporter?: ScrapeProgressReporter,
+  ): Promise<void> {
+    if (!productIds.length) {
+      return;
+    }
+
+    try {
+      const index = await this.producers.loadIndex();
+
+      if (!index.aliases.length) {
+        return;
+      }
+
+      const rows = await this.products.findKbReconcileCandidates(
+        undefined,
+        undefined,
+        productIds,
+      );
+
+      const typeIds = await this.producers.resolveTypeIds(
+        [
+          ...new Set(
+            index.aliases
+              .map((alias) => alias.producer.defaultTypeName)
+              .filter((name): name is string => Boolean(name)),
+          ),
+        ],
+      );
+
+      const plan = this.kb.plan(rows, index, typeIds);
+
+      await this.products.setProducers(plan.producers);
+      await this.products.applyKbFacts(plan.facts);
+
+      await this.products.applyKbFlavors(
+        plan.flavors.filter((write) =>
+          write.insertFlavorIds.length || write.deleteFlavorIds.length
+        ),
+      );
+
+      const unresolved = plan.resolutions
+        .filter((one) => !one.producer).length;
+
+      if (unresolved) {
+        this.logger.warn(
+          '%d of %d name groups resolved to no producer',
+          unresolved,
+          plan.groups.length,
+        );
+      }
+
+      reporter?.({
+        kind: 'kb-applied',
+        groups: plan.groups.length,
+        unresolved,
+      });
+    } catch (error) {
+      this.logger.warn('Knowledge base pass failed: %o', error);
+    }
+  }
+
+  /**
+   * Records the store claims that contradict what the catalogue already holds.
+   *
+   * It runs immediately **before** `fillMissing`, and that position is the
+   * whole design. `fillMissing` is where a claim is silently discarded — the
+   * rank-aware write keeps the better-sourced value and says nothing about the
+   * one it dropped — and `rawAttrs` is never persisted, so this is the last
+   * moment at which the live claim and the stored value exist together. A
+   * later script could not reconstruct either.
+   *
+   * `age` and `volumeMl` are never compared. Both are components of the frozen
+   * match key, so a store stating a different one is describing a *different
+   * bottling*; comparing them produced ~376 structural false positives that
+   * buried every real finding.
+   *
+   * The whole thing is best-effort: a sync must not fail because a QA log
+   * could not be written.
+   *
+   * @param storeId - The store being synced.
+   * @param fills - The claims this run is about to write, one per bottling.
+   * @returns Resolves once the log is written, or immediately on failure.
+   */
+  private async logConflicts(
+    storeId: ID,
+    fills: ProductFillInput[],
+  ): Promise<void> {
+    if (!fills.length) {
+      return;
+    }
+
+    try {
+      const stored = await this.products.findFactsByIds(
+        fills.map((fill) => fill.id),
+      );
+
+      const byId = new Map(stored.map((row) => [row.id, row]));
+      const conflicts: ProductFactConflictInput[] = [];
+
+      fills.forEach((fill) => {
+        const row = byId.get(fill.id);
+
+        if (row) {
+          conflicts.push(...this.compareFacts(storeId, fill, row));
+        }
+      });
+
+      /**
+       * Lock order. Two stores syncing concurrently touch overlapping
+       * bottlings, and the upsert takes a row lock per key; ascending
+       * `(productId, storeId, attribute)` is the order both agree on.
+       */
+      conflicts.sort((left, right) =>
+        left.productId.localeCompare(right.productId)
+        || left.storeId.localeCompare(right.storeId)
+        || left.attribute.localeCompare(right.attribute)
+      );
+
+      await this.products.logFactConflicts(conflicts);
+    } catch (error) {
+      this.logger.debug('Fact conflict logging failed: %o', error);
+    }
+  }
+
+  /**
+   * Compares one store's claim against the stored facts.
+   *
+   * A claim only counts as a contradiction when both sides state something:
+   * a store that says nothing has not disagreed, and a stored null is a gap
+   * that `fillMissing` is about to close rather than a conflict.
+   *
+   * @param storeId - The store making the claim.
+   * @param fill - The claim.
+   * @param row - The stored facts and their provenance.
+   * @returns One entry per contradicted attribute.
+   */
+  private compareFacts(
+    storeId: ID,
+    fill: ProductFillInput,
+    row: ProductStoredFactsRow,
+  ): ProductFactConflictInput[] {
+    const out: ProductFactConflictInput[] = [];
+
+    const add = (
+      attribute: ProductFactField,
+      storedValue: string,
+      claimedValue: string,
+      storedSource: FactSource | null,
+    ): void => {
+      out.push({
+        productId: fill.id,
+        storeId,
+        attribute,
+        storedValue,
+        claimedValue,
+        storedSource: storedSource ?? FactSource.LEGACY,
+      });
+    };
+
+    if (fill.brandId && row.brandId && fill.brandId !== row.brandId) {
+      add(ProductFactField.BRAND, row.brandId, fill.brandId, row.brandSource);
+    }
+
+    if (fill.typeId && row.typeId && fill.typeId !== row.typeId) {
+      add(ProductFactField.TYPE, row.typeId, fill.typeId, row.typeSource);
+    }
+
+    if (fill.countryId && row.countryId && fill.countryId !== row.countryId) {
+      add(
+        ProductFactField.COUNTRY,
+        row.countryId,
+        fill.countryId,
+        row.countrySource,
+      );
+    }
+
+    /**
+     * ABV is compared with a tolerance because the same bottling is genuinely
+     * listed at 40 % by one shop and 43 % by another — `Balvenie DoubleWood`
+     * is the standing example — while a 0.05 rounding difference is noise.
+     */
+    if (
+      fill.abv !== null && fill.abv !== undefined
+      && row.abv !== null
+      && Math.abs(Number(fill.abv) - Number(row.abv)) > ABV_TOLERANCE
+    ) {
+      add(
+        ProductFactField.ABV,
+        String(row.abv),
+        String(fill.abv),
+        row.abvSource,
+      );
+    }
+
+    return out;
+  }
+
+  /**
    * Resolves a snapshot's brand to an id.
    *
    * @param snap - The snapshot.
@@ -505,6 +751,25 @@ export class ScrapePersistService {
     return snap.country
       ? ids.get(snap.country.trim().toLowerCase()) ?? null
       : null;
+  }
+
+  /**
+   * Where a snapshot's fact came from.
+   *
+   * Falls back to `store` rather than to `legacy`: everything reaching persist
+   * has been through normalization, which stamps every fact it sees, so an
+   * unstamped one can only be a value written after that pass — and the only
+   * writer there is the store's own detail data.
+   *
+   * @param snap - The snapshot.
+   * @param field - The fact field.
+   * @returns The recorded source, or `store`.
+   */
+  private factSource(
+    snap: ProductSnapshot,
+    field: ProductFactField,
+  ): FactSource {
+    return snap.factSources[field] ?? FactSource.STORE;
   }
 
   /**

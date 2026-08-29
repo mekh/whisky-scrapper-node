@@ -21,10 +21,17 @@
     "clean-names": "ts-node -r tsconfig-paths/register ./scripts/clean-product-names.ts",
     "backfill": "ts-node -r tsconfig-paths/register ./scripts/backfill-nulls.ts",
     "enrich-flavors": "ts-node -r tsconfig-paths/register ./scripts/enrich-flavors.ts",
+    "kb-merge": "ts-node -r tsconfig-paths/register ./scripts/kb-merge.ts",
     "openapi": "ts-node ./scripts/emit-openapi.ts",
     "test": "jest",
     "test:cov": "jest --coverage",
-    "test:integration": "jest -c jest.integration.config.ts --runInBand"
+    "test:integration": "jest -c jest.integration.config.ts --runInBand",
+    "reconcile-flavors": "ts-node -r tsconfig-paths/register ./scripts/reconcile-flavors.ts",
+    "fact-conflicts": "ts-node -r tsconfig-paths/register ./scripts/fact-conflicts.ts",
+    "rederive-name-facts": "ts-node -r tsconfig-paths/register ./scripts/rederive-name-facts.ts",
+    "research-brands": "ts-node -r tsconfig-paths/register ./scripts/research-brands.ts",
+    "kb-export": "ts-node -r tsconfig-paths/register ./scripts/kb-export.ts",
+    "restore-flavor-import": "ts-node -r tsconfig-paths/register ./scripts/restore-flavor-import.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

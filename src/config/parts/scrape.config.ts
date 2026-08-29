@@ -103,6 +103,25 @@ export class ScrapeConfig extends BaseConfig {
     ?? this.llmReasoning;
 
   /**
+   * Model for researching a brand the knowledge base has never seen, defaulting
+   * to {@link llmModel}.
+   *
+   * It is separate for the same reason the flavor model is, only more so. This
+   * pass asks a model to state a distillery's country, region and peat level —
+   * facts that go straight into the curated database and are then trusted by
+   * every filter. It is the one call where a weak slug does not merely produce
+   * a poor answer but poisons the source of truth, so it is worth pointing at
+   * the strongest model available and worth running rarely.
+   *
+   * Not an enable switch: like every pass it stays off until `LLM_API_KEY` and
+   * `LLM_MODEL` are both set.
+   */
+  @IsString()
+  @IsOptional()
+  public readonly llmResearchModel = this.asString('LLM_RESEARCH_MODEL')
+    ?? this.llmModel;
+
+  /**
    * How many batches of one pass may be in flight at once. Sending them one at
    * a time is what used to time a sync out: a store with ~800 pending items is
    * twenty batches, and the provider sat idle between every one of them.

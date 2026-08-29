@@ -3,6 +3,7 @@ import {
   IsBoolean,
   IsInt,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
 } from 'class-validator';
@@ -124,4 +125,40 @@ export class ReportRowType implements ReportRow {
 
   @IsString()
   public capturedDate!: string;
+
+  /**
+   * The resolved distillery, or null when the knowledge base could not place
+   * the bottling. Null is a real answer, not a gap: an undisclosed label is
+   * never guessed at.
+   */
+  @IsOptional()
+  @IsString()
+  public distillery!: string | null;
+
+  /**
+   * The distillery's region by the market convention, which is what shops and
+   * drinkers use — Talisker reads `islands` here and is legally Highland.
+   */
+  @IsOptional()
+  @IsString()
+  public region!: string | null;
+
+  /**
+   * The independent bottler, when there is one. A non-null value **is** the IB
+   * flag; there is no separate boolean.
+   */
+  @IsOptional()
+  @IsString()
+  public bottler!: string | null;
+
+  /**
+   * Where each of the bottling's facts came from, keyed by field name.
+   *
+   * The client needs it to mark an unverified value rather than presenting a
+   * model's guess as fact — and since `llm` and `legacy` values are excluded
+   * from the type and country filters, without this the UI could not explain
+   * why a whisky it displays as Scotch does not appear under Scotland.
+   */
+  @IsObject()
+  public factSources!: Record<string, string | null>;
 }

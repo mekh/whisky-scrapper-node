@@ -37,6 +37,7 @@ function snap(
     country: null,
     flavorTags: [],
     rawAttrs: {},
+    factSources: {},
     ...over,
   };
 }

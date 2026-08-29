@@ -1,0 +1,45 @@
+ardbeg	maritime	baseline	high	https://en.wikipedia.org/wiki/Ardbeg_distillery	Coastal Islay character noted alongside its heavy peat/smoke.
+ardmore	fruity	baseline	high	https://www.ardmorewhisky.com/	same official-site description as vanilla/honey/spicy above
+ardmore	honey	baseline	high	https://www.ardmorewhisky.com/	Legacy expression explicitly 'balanced by honey and spice flavors' per official site
+ardmore	spicy	baseline	high	https://www.ardmorewhisky.com/	paired with the honey note on Legacy per official site
+ardmore	vanilla	baseline	high	https://www.ardmorewhisky.com/	official site: range paired with vanilla, honey, spice and fruit notes for complexity
+ballantines-brasil	citrus	require	high	https://www.ballantines.com/en/range/ballantines-brasil/ https://www.masterofmalt.com/spirit/ballantines/ballantines-brasil-spirit/	Lime infusion is this product's defining flavour
+ballantines-brasil	vanilla	baseline	high	https://www.ballantines.com/en/range/ballantines-brasil/	Bottled with added vanilla extract
+black-bottle	honey	baseline	low	https://scotchwhisky.com/whiskypedia/2323/black-bottle/	scotchwhisky.com tasting-note summary lists "honey" among the current blend's flavours.
+black-bottle	oak	baseline	low	https://scotchwhisky.com/whiskypedia/2323/black-bottle/	Same source lists "floral and oak aromas" for the current blend.
+bunnahabhain	sherry	baseline	high	https://topwhiskies.com/blogs/distilleries/bunnahabhain-distillery	Distillery 'often favours different sherry maturations'.
+chita	citrus	baseline	high	https://en.wikipedia.org/wiki/Chita_distillery	Official infobox states "Citrus notes" as a taste characteristic.
+chivas-regal	sherry	baseline	high	https://thewhiskeyjug.com/scotch-whiskey/chivas-regal-12-years-review/	Reviews consistently describe a sherried nose (sherry, cola, apples).
+chivas-regal	vanilla	baseline	high	https://thewhiskeyjug.com/scotch-whiskey/chivas-regal-12-years-review/	Palate described as malty/creamy with vanilla sweetness.
+clydeside	fruity	baseline	high	https://www.theclydeside.com/our-whisky/our-whiskies/	Producer describes the core Lowland style as 'light, fruity and elegant'.
+dufftown	fruity	baseline	high	https://en.wikipedia.org/wiki/Dufftown_distillery	Described as a sweet, fruity malt.
+fireball	spicy	require	high	https://en.wikipedia.org/wiki/Fireball_Cinnamon_Whisky	Artificial cinnamon (Atomic Fireball candy) flavouring defines every bottling, not a natural cask characteristic.
+gladstone-axe	caramel	baseline	high	https://www.drinkhacker.com/2022/07/31/review-the-gladstone-axe-blended-scotch-american-oak-and-black-axe/ https://www.totalwine.com/spirits/scotch/blended-scotch/the-gladstone-axe-blended-malt-scotch-american-oak/p/242206750	
+gladstone-axe	vanilla	baseline	high	https://www.drinkhacker.com/2022/07/31/review-the-gladstone-axe-blended-scotch-american-oak-and-black-axe/ https://www.totalwine.com/spirits/scotch/blended-scotch/the-gladstone-axe-blended-malt-scotch-american-oak/p/242206750	
+glen-moray	bourbon-cask	baseline	low	https://en.wikipedia.org/wiki/Glen_Moray_distillery	Infobox lists cask_1 = 'American oak' for the core range; read as conventional ex-bourbon barrels, standard for Speyside, but the infobox does not use the word bourbon explicitly, hence low confidence.
+glenallachie	fruity	baseline	high	https://en.wikipedia.org/wiki/GlenAllachie_distillery	Wikipedia: relaunched 2017 as known for its fruity single malt expressions.
+glendronach	sherry	baseline	high	https://en.wikipedia.org/wiki/Glendronach_distillery	Core range matured in ex-oloroso/PX sherry casks per Wikipedia; not universal (e.g. the Peated NAS uses Oloroso too, but other cask types exist), hence baseline not require.
+glenfarclas	sherry	baseline	high	https://en.wikipedia.org/wiki/Glenfarclas_distillery	Wikipedia: produces a traditional Highland malt with a heavy sherry influence.
+glenlivet	citrus	baseline	high	https://www.thesinglecask.co.uk/blogs/distilleries/the-glenlivet	Citrus blossom and green apple notes cited alongside honey.
+glenlivet	honey	baseline	high	https://www.thesinglecask.co.uk/blogs/distilleries/the-glenlivet	Classic Glenlivet profile: pear, apple, honey, citrus blossom, vanilla.
+glenlivet	vanilla	baseline	high	https://www.thesinglecask.co.uk/blogs/distilleries/the-glenlivet	Vanilla noted alongside honey and citrus.
+glenrothes	sherry	baseline	high	https://en.wikipedia.org/wiki/The_Glenrothes_distillery	Everything matures in sherry-seasoned oak sourced from Jerez.
+grants	vanilla	baseline	low	https://en.wikipedia.org/wiki/Grant%27s	Vanilla notes recur across multiple official variant descriptions (Rum Cask Finish, Sherry Cask Finish).
+highland-park	sherry	baseline	high	https://en.wikipedia.org/wiki/Highland_Park_distillery	Whole range matured in sherry casks (American/European oak) from Oloroso producers per the distillery's own Wikipedia profile -- a genuine house-style signature, not a per-bottling variation.
+johnny-smoking-gun	smoky	require	high	https://twojames.com/our-spirits/johnny-smoking-gun/	Smoke is tea-maceration-derived (proprietary Asian tea blend), explicitly NOT peat -- analogous to Jack Daniel's charcoal mellowing.
+kavalan	floral	baseline	high	https://en.wikipedia.org/wiki/Kavalan_Distillery	Same source describes a floral character alongside fruitiness.
+kavalan	fruity	baseline	high	https://en.wikipedia.org/wiki/Kavalan_Distillery	House style described as fruity, floral, subtly spicy from unpeated malt.
+kilbeggan	bourbon-cask	baseline	high	https://en.wikipedia.org/wiki/Cooley_Distillery	Infobox: 'Kilbeggan Blend ... Fresh Bourbon Casks, small portion in 2nd and 3rd'.
+macallan	sherry	baseline	high	https://en.wikipedia.org/wiki/The_Macallan_distillery	Historically matured only in sherry-seasoned oak from Jerez; today's range (Triple Cask/Double Cask) also uses bourbon casks, so "baseline" rather than "require".
+naked-grouse	sherry	require	high	https://uk.edrington.com/our-brands/scotch-whisky/naked-malt/	First-fill Oloroso sherry-cask extra-maturation for at least six months is the defining production step.
+old-pulteney	maritime	baseline	high	https://oldpulteney.com/pages/our-craft	Marketed as 'The Genuine Maritime Malt'.
+pulteney	maritime	baseline	high	https://en.wikipedia.org/wiki/Old_Pulteney_distillery	Marketed as 'The Genuine Maritime Malt'; same fact already recorded on the existing old-pulteney row (out/02/flavor.tsv) for the identical distillery.
+rosebank	floral	baseline	high	https://en.wikipedia.org/wiki/Rosebank_distillery	Wikipedia: character 'associated with fruits, grasses, and particularly flowers'.
+rosebank	fruity	baseline	high	https://en.wikipedia.org/wiki/Rosebank_distillery	Wikipedia: character 'associated with fruits, grasses, and particularly flowers'.
+royal-salute	citrus	baseline	high	https://whiskyforeveryone.com/review-royal-salute-21-years-old-the-signature-blend/	Tasting notes cite sweet oranges.
+royal-salute	fruity	baseline	high	https://whiskyforeveryone.com/review-royal-salute-21-years-old-the-signature-blend/	Tasting notes cite peaches alongside citrus.
+tamdhu	sherry	require	high	https://glassandnote.com/beer/tamdhu-unveils-its-cigar-malt-iii-single-malt	Every drop exclusively aged in Oloroso sherry-seasoned oak per the distillery's own account -- sherry-only maturation, no bourbon-cask expressions in the core range.
+the-hive	honey	baseline	high	https://scotchwhisky.com/whiskypedia/2821/the-hive/	House style built explicitly around honeyed character; product name references it directly.
+tincup	spicy	baseline	high	https://www.prnewswire.com/news-releases/introducing-tincup-american-whiskey-a-rugged-rocky-mountain-take-on-whiskey-from-jess-graber-offering-bourbon-lovers-a-bolder-spicier-option-240859401.html	Rye-forward mash; launch press release positions it explicitly as 'bolder, spicier'.
+whyte-mackay	sherry	baseline	high	https://scotchwhisky.com/whiskypedia/2553/whyte-mackay/	Triple maturation process finishes with an ex-sherry-cask marrying stage.
+yellow-spot	sherry	baseline	high	https://en.wikipedia.org/wiki/Green_Spot_(whiskey)	Matured partly in sherry butts (alongside Malaga wine casks and bourbon barrels) per company records.

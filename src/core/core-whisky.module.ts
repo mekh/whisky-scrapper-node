@@ -5,6 +5,7 @@ import { CoreCountryModule } from './country';
 import { CoreFlavorModule } from './flavor';
 import { CorePreferenceModule } from './preference';
 import { CorePriceSnapshotModule } from './price-snapshot';
+import { CoreProducerModule } from './producer';
 import { CoreProductModule } from './product';
 import { CorePushModule } from './push';
 import { CoreQuickFilterModule } from './quick-filter';
@@ -26,6 +27,7 @@ import { CoreTypeModule } from './type';
     CoreFlavorModule,
     CorePreferenceModule,
     CorePriceSnapshotModule,
+    CoreProducerModule,
     CoreProductModule,
     CorePushModule,
     CoreQuickFilterModule,
@@ -41,6 +43,7 @@ import { CoreTypeModule } from './type';
     CoreFlavorModule,
     CorePreferenceModule,
     CorePriceSnapshotModule,
+    CoreProducerModule,
     CoreProductModule,
     CorePushModule,
     CoreQuickFilterModule,

@@ -1,0 +1,92 @@
+	non peated	word			none	100		
+	not peated	word			none	100		
+	unpeated	word			none	100		
+	неторф	prefix			none	100		Ukrainian negation, inflected
+benriach	authenticus	word			heavy	60	https://escapementmagazine.com/articles/benriach-speyside-single-malt-scotch-whisky/	25yo peated expression.
+benriach	birnie moss	word			heavy	60	https://www.benriachdistillery.com/our-whiskies/birnie-moss/	"Intensely Peated" NAS expression.
+teeling	blackpitts	word			heavy	60	https://www.teelingwhiskey.com/	officially branded 'Blackpitts Peated Single Malt' on teelingwhiskey.com; exact ppm not stated, heavy is a judgment call given it is marketed as the house's dedicated peated expression
+paul-john	bold	word			medium	60	https://www.pauljohnwhisky.com/bold.php	Confirmed peated to about 25ppm.
+penderyn	celt	word			medium	60	https://en.wikipedia.org/wiki/Penderyn_(whisky)	Wikipedia: 'the Dragon range comprising Legend (Madeira finish), Myth (Bourbon finish) and Celt (Peated)' -- Celt is Penderyn's peated Dragon-range expression; Legend/Myth are not peated so no rule needed for them.
+benriach	curiositas	word			heavy	60	https://thewhiskeyjug.com/scotch-whisky/benriach-curiositas-peated-malt-10-years-review/	10yo peated expression (heavily peated malt).
+paul-john	edited	word			light	60	https://maltmileage.wordpress.com/2016/12/20/paul-john-indian-single-malt-whisky-brilliance-classic-edited-bold-and-peated/	Described as mildly peated, lighter than Bold.
+clydeside	fortnight	word			heavy	60	https://www.theclydeside.com/our-whisky/our-whiskies/ https://en.wikipedia.org/wiki/Clydeside_Distillery	'Fortnight' is a heavily peated (54ppm) once-a-year release, distinct from the unpeated core Stobcross/Napier range.
+speyside-distillery	fumare	word			heavy	60	https://www.masterofmalt.com/whiskies/speyside/spey-fumare-whisky/ https://www.htfw.com/speyside-distillery-spey-fumare-peated-single-malt-scotch-whisky	Spey Fumare (2016) was explicitly 'the first ever peated whisky from the Speyside distillery'; core range stays none.
+amrut	fusion	word			light	60	https://cellarbration.com.sg/amrut-fusion-single-malt-whisky.html https://theliquorbarn.com/products/amrut-fusion-750ml	25% peated Scottish malt / 75% unpeated Indian malt; described as "gentle peat presence"
+	heavily peated	word			heavy	60		
+kilkerran	heavily peated	word			heavy	60	https://kilkerran.scot/kilkerran-bottlings/heavily-peated/	Distillery's own product page: 'A departure from our typically lightly peated single malt, our Heavily Peated Kilkerran is released twice per year at cask strength and around 45PPM.' Supersedes out/08/rule.tsv's same-pattern row, which had no citation.
+hakushu	heavily peated	word			heavy	60	https://en.wikipedia.org/wiki/Hakushu_distillery	2013 limited series explicitly named 'Heavily Peated', distinct from the core range (see producer.tsv note, peatProfile=light there)
+clan-denny	islay	word			heavy	60	https://www.masterofmalt.com/whiskies/douglas-laing/clan-denny-islay-blended-malt-whisky/	Clan Denny Islay blended malt vats Ardbeg, Bowmore, Bruichladdich, Bunnahabhain, Caol Ila and 2 undisclosed Islay distilleries - described as having phenolic/smoked character. Highland and Speyside editions are NOT covered by this rule and fall back to the producer row's own unpeated baseline.
+	lightly peated	word			light	60		
+arran	machrie moor	word			medium	60	https://en.wikipedia.org/wiki/Isle_of_Arran_Distillery	Arran's peated expression line (first released 8 Dec 2010 per Wikipedia); core Arran is unpeated. No specific ppm source found, recorded as medium.
+bunnahabhain	moine	word			heavy	60		Bunnahabhain's core range is unpeated but its Mòine range is heavily peated. This exact pairing is stated in this research task's own brief as a known sibling case; not independently re-verified via an opened source, so sourceUrls is left empty per the "never invent a citation" rule even though the note is confident.
+wolfburn	morven	word			light	60	https://www.wolfburn.com/	Morven is Wolfburn's one peated expression ("a delicate touch of peat"); the rest of the core range including this batch's sample Langskip is unpeated (see producer row).
+elements-of-islay	peat	word			heavy	60	https://scotchwhisky.com/whiskypedia/2029/elements-of-islay/	Permanent no-age-statement expression named simply 'Peat', introduced 2016; treated as heavy given the Islay peated-malt convention.
+hyde	peat	word			heavy	60	https://www.homeofmalts.com/en/20535/hyde-no.-11-the-peat-cask	"Hyde No. 11 The Peat Cask" and similar releases are heavily peated; base range otherwise mixed/unpeated. Pattern may not catch every peated release name in the full 23-product catalogue.
+slyrs	peat	word			heavy	60	https://slyrs.com/shop/SLYRS-Single-Malt-Whisky-Bavarian-PEAT/150100/	Dedicated "Bavarian PEAT" expression; core range is unpeated.
+balvenie	peat	word			heavy	60	https://scotchwhisky.com/magazine/latest-news/15878/balvenie-peat-week-details-revealed/	Covers "Peat Week" / "Week of Peat" release names.
+compass-box	peat monster	word			heavy	60	https://en.wikipedia.org/wiki/Compass_Box	Marketed/named as a fully peated blended malt; not observed in this batch's samples (Hedonism, Nectarosity, Artist Blend, Crimson Cask, Glasgow Blend, Orchard House) but added defensively since it is a well-known Compass Box line
+kyro	peat smoke	word			heavy	60	https://kyrodistillery.com/products/kyro-peat-smoke-whisky-700ml	100% Finnish rye malt smoked 24h with Finnish freshwater peat in a traditional Riihi barn
+benromach	peat smoke	word			heavy	60	https://en.wikipedia.org/wiki/Benromach_distillery	Matches brief's own worked example verbatim: distinct heavily-peated bottling alongside the lightly-peated core range.
+amrut	peated	word			medium	60	https://thewhiskeyjug.com/indian-whisky/amrut-peated-indian-single-malt-review/ https://amrutdistilleries.com/amrut-peated-indian-single-malt-whisky-cask-strength-62-8-duplicate/	~23-24ppm phenol - moderate/mid-range peat, comparable to Bowmore rather than Islay's heaviest
+wilton-house	peated	word			heavy	60	https://www.spiritradar.com/whisky-db/wilton-house-speyside-single-malt-scotch-whisky-peated-cmi-94227-charenton-france-40-percent-700ml/	Explicit "Speyside Single Malt Scotch Whisky Peated" bottling under this range; base range peat level otherwise unknown
+achill-island	peated	word			medium	60	https://www.irishmalts.com/single-malt-irish-whiskey/achill-island-peated-cask-strength/ https://www.celticwhiskeyshop.com/achill-island-peated-cask-strength	Explicit 'Peated Single Malt' release, described as gentle/delicate smokiness rather than an extreme Islay-style peating - medium rather than heavy.
+paul-john	peated	word			heavy	60	https://en.wikipedia.org/wiki/Paul_John_(whisky)	Peated Select Cask line uses imported Islay and Aberdeen peat, distinct from the unpeated core range (Brilliance/Edited/Nirvana/Classic)
+royal-salute	peated	word			medium	60	https://www.masterofmalt.com/whiskies/royal-salute/royal-salute-21-year-old-the-peated-blend-whisky/	"21 Year Old The Peated Blend" incorporates peated malts; described as adding "subtle smokiness", not extreme.
+starward	peated	word			medium	60	https://starward.com.au/products/peated-finish	"Peated Finish" is red-wine-cask spirit finished about 18 months in peated Islay casks; rated medium since it is a cask finish rather than primary peated-malt maturation.
+matsui	peated	word			medium	60	https://www.thecampfiredram.com/the-campfire-dram/review-kurayoshi-distillerys-matsui-single-malt-collection-sakura-mizunara-the-peated-exploring-japanese-whisky	"The Peated" NAS expression; specific ppm not published so rated medium.
+bank-note	peated	word			medium	60	https://www.caskers.com/bank-note-5-year-old-peated-reserve-blended-scotch-whisky/	"Peated Reserve" variant exists; intensity not detailed so rated medium conservatively.
+bankhall	peated	word			medium	60	https://www.thespiritsbusiness.com/2023/05/bankhall-distillery-unveils-debut-single-malt-whisky/	Distillery also produces "Peated English Malt" / "Peated Black Malt" spirit; ppm not published so rated medium. Exact bottling name carrying "Peated" not confirmed.
+togouchi	peated	word			medium	60	https://midorinoshima.com/en/828-whisky-togouchi-peated-cask-finish.html	Togouchi Peated Cask Finish: bourbon-cask matured then finished in ex-Islay casks, non-chill-filtered, explicitly smoky/peaty on the mid-palate; exact ppm not published so kept medium rather than heavy.
+evade	peated	word			medium	60	https://www.platinaliquor.com/liquor/evade-peated-french-single-malt-whisky/5688	Separate 'Evade Peated' / 'Evade Peated Wine Cask Finish' single malt expression exists alongside the unpeated base and other cask finishes; exact ppm not published.
+glasgow-1770	peated	word			medium	60	https://www.glasgowdistillery.com/our-spirits/1770-whisky	Third member of the Signature Range alongside The Original and Triple Distilled, described as 'rich and smoky'; exact ppm not published so kept medium.
+glendronach	peated	word			medium	60	https://en.wikipedia.org/wiki/Glendronach_distillery	Explicit NAS "Peated" expression (Oloroso sherry casks, 54%+ ABV per Wikipedia); core GlenDronach is unpeated. No specific ppm/intensity source found, so recorded as medium rather than heavy.
+glendalough	peated	word			medium	60	https://glendaloughdistillery.com/	"Glendalough Pot Still Peated" is an explicit peated expression (Gold Global Irish Whiskey Masters per their site); the core range (Double Barrel, single malt, single grain) is unpeated. No specific intensity source found, recorded as medium.
+westland	peated	word			heavy	60		No citation opened for this specific release this session (see producer note); rule written directly from this batch's own sample product name ("Westland Peated"). Exact intensity not independently confirmed -- a reviewer may want to downgrade to medium.
+glenturret	peated	word			heavy	60		Matches this batch's own sample "Glenturret Peated" and existing precedent in this project's batch 07 rule.tsv. See the producer row's note for the fuller, genuinely complicated peat history (traditional peat-smoke kilning, a "Peat Smoked" range, and a Nov-2024 announcement to remove peat from 2025) that this rule is deliberately not trying to resolve at the producer-default level.
+balvenie	peated	word			heavy	60	https://scotchwhisky.com/magazine/latest-news/15878/balvenie-peat-week-details-revealed/	Covers "Peated Triple Cask" release name.
+ancnoc	peated	word			medium	60	https://www.ancnoc.com/blog/112-ancnoc-unveils-two-new-additions-to-popular-peated-range https://thewhiskeyjug.com/scotch-news/ancnoc-cutter-released-to-the-usa-as-the-latest-addition-to-ancnocs-peated-whisky-range/	Peaty Collection / Peated Edition releases, ~20ppm; matches this batch's own sample "AnCnoc Sherry Peated".
+m-h	peated	word			medium	60	https://www.masterofmalt.com/whiskies/milk-and-honey/milk-honey-elements-series-peated-cask-whisky/ https://wordsofwhisky.com/mh-elements-peated-2022/	Elements Peated Cask edition; smokiness is cask-derived from ex-Islay casks rather than peated malt, but is consistently reviewed and marketed as a peated dram.
+hinch	peated	word			medium	60	https://hinchdistillery.com/	Hinch's own site lists a "Peated Single Malt" and "Peated Small Batch" alongside its unpeated core range. Exact ppm/phenol level not found; medium is an estimate based on the typical style of Irish peated single malt (cf. Connemara) rather than Islay-heavy peating, so treat with caution.
+black-bull	peated	word			medium	60	https://en.wikipedia.org/wiki/Duncan_Taylor_(company)	Sample "Black Bull Peated Finish" implies a peat-finished variant distinct from the unpeated core blend. The cited source confirms the company/brand only, not the specific peat level — medium is an unverified estimate for a cask-finish treatment rather than a fully peated malt; flagged for reviewer.
+glen-moray	peated	word			medium	60	https://scotchwhisky.com/whiskypedia/1846/glen-moray/	'Glen Moray Classic Peated' launched 2015 per scotchwhisky.com whiskypedia; exact ppm/intensity not stated there, medium is an estimate (not Islay-extreme, marketed as an accessible classic-peated style).
+penderyn	peated	word			medium	60	https://en.wikipedia.org/wiki/Penderyn_(whisky)	Wikipedia infobox lists 'Penderyn Peated' (Single Malt, cask: Bourbon, Peated) as one of the three core brand expressions; intensity not ppm-stated, medium is an estimate.
+glen-clan	peated	word			heavy	60		This batch's only sample, "Glen Clan Smoky Peated Blend", states both descriptors directly in the product name -- treated as heavy given the explicit double emphasis ("Smoky" and "Peated" together).
+prologue	peated	word			medium	60		Evidenced directly by this batch's own product name ('Prologue Peated Small Batch No.2'), not an external source -- no citable URL found for the Prologue brand itself. Kept at medium (clearly peated but intensity unconfirmed) rather than heavy.
+kavalan	peatist	word			light	60	https://www.masterofmalt.com/whiskies/kavalan/kavalan-solist-peaty-cask-whisky/	Peatist Series uses lightly peated malt sourced from Europe.
+kavalan	peaty	word			light	60	https://www.masterofmalt.com/whiskies/kavalan/kavalan-solist-peaty-cask-whisky/	Solist Peaty Cask uses lightly peated malt.
+tomintoul	peaty	word			medium	60	https://en.wikipedia.org/wiki/Tomintoul_distillery	Distillery bottles a distinct "Peaty Tang" expression alongside its unpeated core range.
+jura	prophecy	word			heavy	60	https://www.whiskysaga.com/blog/jura-prophecy	35ppm phenol special edition, well above the light core range; not observed in this batch's samples (all bare 'Jura') but added defensively
+teerenpeli	savu	word			light	60	https://www.whiskyrant.com/teerenpeli-savu-single-malt-review/	Peated to ~5ppm - Teerenpeli's dedicated "smoke" single malt. Not itself present in this batch's samples, added defensively for future catalogue entries
+benriach	septendecim	word			heavy	60	https://escapementmagazine.com/articles/benriach-speyside-single-malt-scotch-whisky/	17yo peated expression.
+monkey-shoulder	smokey	word			medium	60	https://en.wikipedia.org/wiki/Monkey_Shoulder	Wikipedia: 'Smokey Monkey Batch 9, a blend that includes Islay whiskies' - medium rather than heavy since Islay malt is blended with the usual unpeated Speyside malts, not the whole content
+famous-grouse	smoky	word			medium	60	https://en.wikipedia.org/wiki/The_Famous_Grouse	"The Famous Grouse Smoky Black" (renamed from "The Black Grouse" in 2015) is a peated variant; the core Famous Grouse blend is unpeated.
+benriach	smoky	word			heavy	60	https://en.wikipedia.org/wiki/BenRiach_distillery	Distillery's unpeated-core range carries a separately named peated line (The Smoky Ten / The Smoky Twelve); matches the brief's own worked example.
+grants	smoky	word	smoky	require		60	https://en.wikipedia.org/wiki/Grant%27s	"Grant's Triple Wood Smoky" variant is described as finishing with smoke (cask-derived, non-peat); core range and this row's peatProfile stay "none".
+glen-moray	smoky	word			medium	60	https://scotchwhisky.com/whiskypedia/1846/glen-moray/	Catalogue sample 'Glen Moray Smoky' is presumed to be the same Peated expression under an alternate market name; same intensity estimate as the Peated rule.
+sir-edwards	smoky	word			medium	60	https://www.siredwards.com/	Sir Edward's own site lists a distinct 'Smoky' variant in its range alongside Finest/Beer Reserve/Aged 12 Years. Not in this batch's samples (which are 'Finest', the base unpeated blend) but recorded so a future Smoky bottling does not inherit Finest's unpeated profile. Exact ppm/intensity not stated, kept at medium rather than heavy.
+mackmyra	svensk rok	word			heavy	60	https://www.masterofmalt.com/whiskies/mackmyra/mackmyra-svensk-rok-swedish-smoke-whisky/	~70% peated malt; Mackmyra's dedicated smoky release, distinct from the (assumed) unpeated core range. Not itself present in this batch's samples, added defensively for future catalogue entries
+rozelieures	tourbe	word			medium	60	https://highburyvintners.co.uk/products/rozelieures-tourbe-peated-french-single-malt-46-70cl	Barley peated to 30ppm for the Tourbe (Tourbe) collection; pattern written unaccented, matching layer folds accents.
+arlett	tourbe	word			medium	60	https://arlett-whisky.com/en/distillerie-tessendier/	"Tourbe" = French for peat; distillery site lists a "Peated" expression (URL slug "troube") as a distinct product from "Original". Exact ppm/intensity not confirmed - medium is a conservative estimate, flagged for reviewer.
+caol-ila	unpeated	word			none	60	https://en.wikipedia.org/wiki/Caol_Ila_distillery	Wiki: "Since 1999, the distillery has also produced a non-peated 'highland spirit'", occasionally released as Diageo Special Releases labelled "Unpeated"; the core range is peated (medium, see producer row).
+kyro	wood smoke	word	smoky	require		60	https://kyrodistillery.com/products/kyro-wood-smoke-whisky-700ml https://www.masterofmalt.com/whiskies/kyro-distillery-company/kyro-wood-smoke-malt-rye-whisky/	Alder-wood smoked, explicitly NOT peat - "flavour doesn't come from traditional peating"
+	peat	word			heavy	50		
+	peated	word			heavy	50		
+	peaty	word			heavy	50		
+	торф	prefix			heavy	50		Ukrainian for peated, inflected
+	smoke	word	smoky	require		40		
+	smokey	word	smoky	require		40		
+	smoky	word	smoky	require		40		
+	димн	prefix	smoky	require		40		Ukrainian for smoky, inflected
+	amontillado	word	sherry	require		20		
+	bourbon barrel	word	bourbon-cask	require		20		
+	bourbon cask	word	bourbon-cask	require		20		
+	bourbon casks	word	bourbon-cask	require		20		
+	charred oak	word	oak	require		20		
+	ex bourbon	word	bourbon-cask	require		20		
+	oloroso	word	sherry	require		20		
+	pedro ximenez	word	sherry	require		20		
+	sherry cask	word	sherry	require		20		
+	sherry casks	word	sherry	require		20		
+	sherry finish	word	sherry	require		20		
+	sherry wood	word	sherry	require		20		
+	virgin oak	word	oak	require		20		

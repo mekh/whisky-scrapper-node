@@ -1,6 +1,7 @@
 import { TypeormRepository } from '@toxicoder/nestjs-typeorm-repository';
 
 import { BaseRepository } from '~core/_common';
+import { TRUSTED_FACT_SOURCES } from '~enums';
 import {
   DashboardLifecycleGroupRow,
   DashboardLifecycleRow,
@@ -74,7 +75,19 @@ const CURRENT_SQL = `
            FROM product_flavor pf
            JOIN flavor f ON f.id = pf."flavorId"
            WHERE pf."productId" = p.id
-         ), '{}') AS flavors
+         ), '{}') AS flavors,
+         pr.name AS distillery, pr.region AS region,
+         bo.name AS bottler,
+         json_build_object(
+           'name', p."nameSource",
+           'type', p."typeSource",
+           'country', p."countrySource",
+           'brand', p."brandSource",
+           'abv', p."abvSource",
+           'age', p."ageSource",
+           'volume', p."volumeSource",
+           'producer', p."producerSource"
+         ) AS "factSources"
   FROM ranked r
   JOIN store_product sp ON sp.id = r."storeProductId"
   JOIN product p ON p.id = sp."productId"
@@ -82,6 +95,8 @@ const CURRENT_SQL = `
   LEFT JOIN brand b ON b.id = p."brandId"
   LEFT JOIN type t ON t.id = p."typeId"
   LEFT JOIN country c ON c.id = p."countryId"
+  LEFT JOIN producer pr ON pr.id = p."producerId"
+  LEFT JOIN producer bo ON bo.id = p."bottlerId"
   WHERE r.rn = 1
 `;
 
@@ -274,6 +289,14 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
   ): Promise<ReportCurrentRow[]> {
     const types = filter.types?.filter((name) => name !== 'unknown') ?? null;
     const hasUnknownType = filter.types?.includes('unknown') ?? false;
+
+    const countries = filter.countries
+      ?.filter((code) => code.toLowerCase() !== 'unknown')
+      .map((code) => code.toLowerCase()) ?? null;
+
+    const hasUnknownCountry = filter.countries
+      ?.some((code) => code.toLowerCase() === 'unknown') ?? false;
+
     const aged = SearchTermUtils.splitAge(filter.name);
 
     const params = [
@@ -282,9 +305,7 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
       filter.maxPrice ?? null,
       filter.minVolume ?? null,
       filter.maxVolume ?? null,
-      filter.countries?.length
-        ? filter.countries.map((code) => code.toLowerCase())
-        : null,
+      filter.countries?.length ? countries : null,
       filter.name ?? null,
       filter.types?.length ? types : null,
       hasUnknownType,
@@ -294,6 +315,11 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
       aged?.age ?? null,
       filter.userId,
       filter.favoritesOnly ?? null,
+      TRUSTED_FACT_SOURCES,
+      hasUnknownCountry,
+      filter.regions?.length ? filter.regions : null,
+      filter.excludeRegions?.length ? filter.excludeRegions : null,
+      filter.verifiedFacts ?? null,
     ];
 
     const sql = `${CURRENT_SQL}
@@ -303,14 +329,22 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
       AND ($3::float8 IS NULL OR r.price <= $3)
       AND ($4::int IS NULL OR p."volumeMl" >= $4)
       AND ($5::int IS NULL OR p."volumeMl" <= $5)
-      AND ($6::text[] IS NULL OR lower(c.code) = ANY($6))
+      AND ($6::text[] IS NULL
+           OR (lower(c.code) = ANY($6)
+               AND p."countrySource" = ANY($16::text[]))
+           OR ($17 AND (p."countryId" IS NULL
+                        OR p."countrySource" IS NULL
+                        OR NOT (p."countrySource" = ANY($16::text[])))))
       AND ($7::text IS NULL OR p.name ILIKE '%' || $7 || '%'
            OR sp."nameOrig" ILIKE '%' || $7 || '%'
            OR ($12::text IS NOT NULL AND p.age = $13::int
                AND (p.name ILIKE '%' || $12 || '%'
                     OR sp."nameOrig" ILIKE '%' || $12 || '%')))
-      AND ($8::text[] IS NULL OR t.name = ANY($8)
-           OR ($9 AND p."typeId" IS NULL))
+      AND ($8::text[] IS NULL
+           OR (t.name = ANY($8) AND p."typeSource" = ANY($16::text[]))
+           OR ($9 AND (p."typeId" IS NULL
+                       OR p."typeSource" IS NULL
+                       OR NOT (p."typeSource" = ANY($16::text[])))))
       AND ($10::text[] IS NULL OR EXISTS (
         SELECT 1 FROM product_flavor pf
         JOIN flavor f ON f.id = pf."flavorId"
@@ -325,6 +359,12 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
       AND NOT EXISTS (
         SELECT 1 FROM blacklist_brand bb
         WHERE bb."userId" = $14 AND bb."brandId" = p."brandId")
+      AND ($18::text[] IS NULL OR pr.region = ANY($18))
+      AND ($19::text[] IS NULL
+           OR pr.region IS NULL OR NOT (pr.region = ANY($19)))
+      AND ($20::boolean IS NOT TRUE
+           OR (p."typeSource" = ANY($16::text[])
+               AND p."countrySource" = ANY($16::text[])))
       AND ($15::boolean IS NOT TRUE OR EXISTS (
         SELECT 1 FROM favorite f
         WHERE f."userId" = $14 AND f."productId" = p.id))

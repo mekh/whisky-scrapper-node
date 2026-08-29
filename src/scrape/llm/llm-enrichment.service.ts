@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import { ScrapeConfig } from '~config';
+import { FactSource, ProductFactField } from '~enums';
 import type { ProductSnapshot } from '~types';
 
 import { LlmBatchRunner } from './llm-batch.runner';
@@ -130,6 +131,11 @@ export class LlmEnrichmentService {
   /**
    * Merges one LLM info object into a snapshot, filling only empty fields.
    *
+   * Every field this fills is stamped `llm`, which is the lowest-trusted live
+   * source: no store and no label stated it, the model recalled it. That stamp
+   * is what lets a later store's spec page correct the answer, and what lets
+   * the review screen list the facts nothing has ever confirmed.
+   *
    * @param snap - The snapshot to fill (mutated in place).
    * @param raw - The LLM info for this snapshot, if any.
    */
@@ -142,22 +148,27 @@ export class LlmEnrichmentService {
 
     if (snap.ageYears === null && typeof info.age_years === 'number') {
       snap.ageYears = Math.trunc(info.age_years);
+      snap.factSources[ProductFactField.AGE] = FactSource.LLM;
     }
 
     if (snap.abv === null && typeof info.abv === 'number') {
       snap.abv = info.abv;
+      snap.factSources[ProductFactField.ABV] = FactSource.LLM;
     }
 
     if (snap.volumeMl === null && typeof info.volume_ml === 'number') {
       snap.volumeMl = Math.trunc(info.volume_ml);
+      snap.factSources[ProductFactField.VOLUME] = FactSource.LLM;
     }
 
     if (snap.whiskyType === null && info.whisky_type) {
       snap.whiskyType = String(info.whisky_type).toLowerCase();
+      snap.factSources[ProductFactField.TYPE] = FactSource.LLM;
     }
 
     if (snap.country === null && info.country) {
       snap.country = String(info.country);
+      snap.factSources[ProductFactField.COUNTRY] = FactSource.LLM;
     }
   }
 }

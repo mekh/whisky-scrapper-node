@@ -38,6 +38,10 @@ const OPTIONS: ReportOptions = {
  */
 function makeRow(over: Partial<ReportCurrentRow>): ReportCurrentRow {
   return {
+    distillery: null,
+    region: null,
+    bottler: null,
+    factSources: {},
     id: 'p1' as ID,
     productId: 'b1' as ID,
     sku: 'sku-1',

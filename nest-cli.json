@@ -22,6 +22,11 @@
         "include": "../migrations/**/*.csv",
         "outDir": "dist/migrations",
         "watchAssets": false
+      },
+      {
+        "include": "../migrations/**/*.tsv",
+        "outDir": "dist/migrations",
+        "watchAssets": false
       }
     ]
   }

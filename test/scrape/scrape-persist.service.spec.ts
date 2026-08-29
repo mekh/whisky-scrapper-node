@@ -1,16 +1,20 @@
 import 'reflect-metadata';
 
+import { FactSource, ListingStop } from '~enums';
+
 import { ScrapePersistService } from '../../src/scrape/persist/scrape-persist.service';
 
 import type { CoreBrandService } from '~core/brand';
 import type { CoreCountryService } from '~core/country';
 import type { CoreFlavorService } from '~core/flavor';
 import type { CorePriceSnapshotService } from '~core/price-snapshot';
+import type { CoreProducerService } from '~core/producer';
 import type { CoreProductService } from '~core/product';
 import type { CoreStoreProductService } from '~core/store-product';
 import type { CoreTypeService } from '~core/type';
-import { ListingStop } from '~enums';
 import type { ListingResult, ProductSnapshot } from '~types';
+
+import type { KbApplyService } from '../../src/scrape/kb/kb-apply.service';
 
 /**
  * The persist path is exercised without a database: the transaction wrapper is
@@ -70,6 +74,7 @@ function snap(
     country: null,
     flavorTags: [],
     rawAttrs: {},
+    factSources: {},
     ...over,
   };
 }
@@ -80,6 +85,12 @@ interface ProductMocks {
   fillMissing: jest.Mock;
   addScrapeFlavors: jest.Mock;
   setLlmFlavors: jest.Mock;
+  findFactsByIds: jest.Mock;
+  logFactConflicts: jest.Mock;
+  findKbReconcileCandidates: jest.Mock;
+  setProducers: jest.Mock;
+  applyKbFacts: jest.Mock;
+  applyKbFlavors: jest.Mock;
 }
 
 interface OfferMocks {
@@ -90,8 +101,15 @@ interface OfferMocks {
   markOutOfStockBySkus: jest.Mock;
 }
 
+interface KbMocks {
+  loadIndex: jest.Mock;
+  resolveTypeIds: jest.Mock;
+  plan: jest.Mock;
+}
+
 interface Harness {
   service: ScrapePersistService;
+  kb: KbMocks;
   products: ProductMocks;
   offers: OfferMocks;
   snapshots: {
@@ -110,6 +128,26 @@ function makeService(
     resolveByNameUa: jest.fn().mockResolvedValue(new Map<string, string>()),
   };
 
+  const producers = {
+    loadIndex: jest.fn().mockResolvedValue({
+      aliases: [{ key: 'x', scope: 'any', producer: { id: 'p1' } }],
+      rules: [],
+      producerFlavors: new Map(),
+      peatFlavorIds: { peated: null, smoky: null },
+    }),
+    resolveTypeIds: jest.fn().mockResolvedValue(new Map<string, string>()),
+  };
+
+  const kbApply = {
+    plan: jest.fn().mockReturnValue({
+      groups: [],
+      resolutions: [],
+      producers: [],
+      facts: [],
+      flavors: [],
+    }),
+  };
+
   const products = {
     findOrCreateByMatchKeys: jest.fn().mockImplementation((inputs: {
       matchKey: string;
@@ -121,6 +159,12 @@ function makeService(
     fillMissing: jest.fn().mockResolvedValue(0),
     addScrapeFlavors: jest.fn().mockResolvedValue(undefined),
     setLlmFlavors: jest.fn().mockResolvedValue(undefined),
+    findFactsByIds: jest.fn().mockResolvedValue([]),
+    logFactConflicts: jest.fn().mockResolvedValue(undefined),
+    findKbReconcileCandidates: jest.fn().mockResolvedValue([]),
+    setProducers: jest.fn().mockResolvedValue(0),
+    applyKbFacts: jest.fn().mockResolvedValue(0),
+    applyKbFlavors: jest.fn().mockResolvedValue(undefined),
   };
 
   const offers = {
@@ -150,9 +194,17 @@ function makeService(
     products as unknown as CoreProductService,
     offers as unknown as CoreStoreProductService,
     snapshots as unknown as CorePriceSnapshotService,
+    producers as unknown as CoreProducerService,
+    kbApply as unknown as KbApplyService,
   );
 
-  return { service, products, offers, snapshots };
+  return {
+    service,
+    products,
+    offers,
+    snapshots,
+    kb: { ...producers, plan: kbApply.plan },
+  };
 }
 
 describe('ScrapePersistService — the out-of-stock sweep', () => {
@@ -466,7 +518,7 @@ describe('ScrapePersistService — resolving a bottling', () => {
 });
 
 describe('ScrapePersistService — what may be written to a bottling', () => {
-  it('offers only the fill-if-null fields, once per bottling', async () => {
+  it('offers only the fillable fields, once per bottling', async () => {
     const { service, products } = makeService(1);
 
     await service.persist(
@@ -480,12 +532,22 @@ describe('ScrapePersistService — what may be written to a bottling', () => {
       COMPLETE,
     );
 
+    /**
+     * Each value carries the source it came from, which is what decides
+     * whether it may correct a stored one rather than only fill a gap. These
+     * snapshots go through no normalization here, so persist falls back to
+     * `store` — the store is the only party that could have set them.
+     */
     expect(products.fillMissing).toHaveBeenCalledWith([{
       id: 'product-1',
       abv: 40,
       brandId: null,
       typeId: null,
       countryId: null,
+      abvSource: FactSource.STORE,
+      brandSource: FactSource.STORE,
+      typeSource: FactSource.STORE,
+      countrySource: FactSource.STORE,
     }]);
   });
 
@@ -577,5 +639,233 @@ describe('ScrapePersistService — what may be written to a bottling', () => {
       DAY,
       expect.objectContaining({ price: 999 }),
     );
+  });
+});
+
+/**
+ * The cross-shop contradiction log, written during the scrape.
+ *
+ * The log has to be written here and nowhere else: `fillMissing` is about to
+ * discard whichever value ranks lower and say nothing about it, and `rawAttrs`
+ * is never persisted, so this is the last moment at which the stored value and
+ * the live claim exist together.
+ */
+describe('ScrapePersistService: the fact conflict log', () => {
+  it('logs a claim that contradicts a stored fact', async () => {
+    const { service, products } = makeService(1);
+
+    products.findFactsByIds.mockResolvedValue([{
+      id: 'product-1',
+      brandId: null,
+      typeId: null,
+      countryId: null,
+      abv: 40,
+      brandSource: null,
+      typeSource: null,
+      countrySource: null,
+      abvSource: 'store',
+    }]);
+
+    await service.persist(
+      STORE_ID,
+      [snap('a', { abv: 43 })],
+      [],
+      DAY,
+      COMPLETE,
+    );
+
+    expect(products.logFactConflicts).toHaveBeenCalledWith([{
+      productId: 'product-1',
+      storeId: STORE_ID,
+      attribute: 'abv',
+      storedValue: '40',
+      claimedValue: '43',
+      storedSource: 'store',
+    }]);
+  });
+
+  it('ignores a strength difference inside the tolerance', async () => {
+    const { service, products } = makeService(1);
+
+    products.findFactsByIds.mockResolvedValue([{
+      id: 'product-1',
+      brandId: null,
+      typeId: null,
+      countryId: null,
+      abv: 40,
+      brandSource: null,
+      typeSource: null,
+      countrySource: null,
+      abvSource: 'store',
+    }]);
+
+    await service.persist(
+      STORE_ID,
+      [snap('a', { abv: 40.05 })],
+      [],
+      DAY,
+      COMPLETE,
+    );
+
+    expect(products.logFactConflicts).toHaveBeenCalledWith([]);
+  });
+
+  it('does not treat a stored gap as a disagreement', async () => {
+    const { service, products } = makeService(1);
+
+    products.findFactsByIds.mockResolvedValue([{
+      id: 'product-1',
+      brandId: null,
+      typeId: null,
+      countryId: null,
+      abv: null,
+      brandSource: null,
+      typeSource: null,
+      countrySource: null,
+      abvSource: null,
+    }]);
+
+    await service.persist(
+      STORE_ID,
+      [snap('a', { abv: 43 })],
+      [],
+      DAY,
+      COMPLETE,
+    );
+
+    expect(products.logFactConflicts).toHaveBeenCalledWith([]);
+  });
+
+  it('logs before the value that loses is discarded', async () => {
+    const { service, products } = makeService(1);
+
+    const order: string[] = [];
+
+    products.logFactConflicts.mockImplementation(() => {
+      order.push('log');
+
+      return Promise.resolve();
+    });
+
+    products.fillMissing.mockImplementation(() => {
+      order.push('fill');
+
+      return Promise.resolve(0);
+    });
+
+    await service.persist(STORE_ID, [snap('a')], [], DAY, COMPLETE);
+
+    expect(order).toEqual(['log', 'fill']);
+  });
+
+  it('never fails a sync because the log could not be written', async () => {
+    const { service, products } = makeService(1);
+
+    products.findFactsByIds.mockRejectedValue(new Error('log is down'));
+
+    await expect(
+      service.persist(STORE_ID, [snap('a')], [], DAY, COMPLETE),
+    ).resolves.toMatchObject({ stored: 1 });
+  });
+});
+
+/**
+ * The knowledge-base pass inside a sync.
+ *
+ * Without it the catalogue is only right until the next cron: every sync
+ * re-derives tags from listings and model answers, quietly re-creating the
+ * errors the reconciliation pass corrected. Its position in `persist` is what
+ * makes the repair durable, so the order is asserted rather than assumed.
+ */
+describe('ScrapePersistService: the knowledge-base pass', () => {
+  it('runs after the scrape and LLM flavors are written', async () => {
+    const { service, products, kb } = makeService(1);
+
+    const order: string[] = [];
+
+    products.setLlmFlavors.mockImplementation(() => {
+      order.push('llm');
+
+      return Promise.resolve();
+    });
+
+    products.addScrapeFlavors.mockImplementation(() => {
+      order.push('scrape');
+
+      return Promise.resolve();
+    });
+
+    kb.plan.mockImplementation(() => {
+      order.push('kb');
+
+      return {
+        groups: [],
+        resolutions: [],
+        producers: [],
+        facts: [],
+        flavors: [],
+      };
+    });
+
+    await service.persist(
+      STORE_ID,
+      [snap('a', { llmFlavorTags: ['sherry'], llmFlavorChecked: true })],
+      [],
+      DAY,
+      COMPLETE,
+    );
+
+    expect(order).toEqual(['llm', 'scrape', 'kb']);
+  });
+
+  it('applies the plan to the bottlings the run touched', async () => {
+    const { service, products, kb } = makeService(1);
+
+    kb.plan.mockReturnValue({
+      groups: [{ key: 'x', name: 'X', rows: [] }],
+      resolutions: [{ producer: null }],
+      producers: [{ productId: 'product-1' }],
+      facts: [{ productId: 'product-1' }],
+      flavors: [{
+        productId: 'product-1',
+        insertFlavorIds: ['flavor-1'],
+        deleteFlavorIds: [],
+      }],
+    });
+
+    await service.persist(STORE_ID, [snap('a')], [], DAY, COMPLETE);
+
+    expect(products.setProducers).toHaveBeenCalled();
+    expect(products.applyKbFacts).toHaveBeenCalled();
+    expect(products.applyKbFlavors).toHaveBeenCalledWith([{
+      productId: 'product-1',
+      insertFlavorIds: ['flavor-1'],
+      deleteFlavorIds: [],
+    }]);
+  });
+
+  it('skips the pass entirely when the knowledge base is empty', async () => {
+    const { service, products, kb } = makeService(1);
+
+    kb.loadIndex.mockResolvedValue({
+      aliases: [],
+      rules: [],
+      producerFlavors: new Map(),
+      peatFlavorIds: { peated: null, smoky: null },
+    });
+
+    await service.persist(STORE_ID, [snap('a')], [], DAY, COMPLETE);
+
+    expect(products.setProducers).not.toHaveBeenCalled();
+  });
+
+  it('never fails a sync because the knowledge base failed', async () => {
+    const { service, kb } = makeService(1);
+
+    kb.loadIndex.mockRejectedValue(new Error('knowledge base is down'));
+
+    await expect(
+      service.persist(STORE_ID, [snap('a')], [], DAY, COMPLETE),
+    ).resolves.toMatchObject({ stored: 1 });
   });
 });

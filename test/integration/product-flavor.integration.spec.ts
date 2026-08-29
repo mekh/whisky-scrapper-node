@@ -84,6 +84,7 @@ describe('product flavor links (integration)', () => {
 
   beforeEach(async () => {
     productId = await products.createUnmatched({
+      factSources: {},
       matchKey: null,
       name: 'Sample',
       brandId: null,
@@ -235,5 +236,28 @@ describe('product flavor links (integration)', () => {
      * about this bottling again, and the answer is dropped either way.
      */
     expect(await stamp()).not.toBeNull();
+  });
+
+  /**
+   * The guard that keeps the peat invariant true between reconciliation runs.
+   *
+   * Without it the model would repossess a knowledge-base tag one product at a
+   * time, on whichever sync happened to re-ask — and the breakage would be
+   * silent, because the tag itself does not change, only who owns it. The
+   * invariant is stated on the source column, so ownership *is* the fact.
+   */
+  it('never lets the LLM pass take over a knowledge-base link', async () => {
+    await dataSource.query(
+      `INSERT INTO product_flavor ("productId", "flavorId", source)
+       VALUES ($1, $2, 'kb')`,
+      [productId, peatedId],
+    );
+
+    await products.setLlmFlavors(productId, [peatedId, sherryId]);
+
+    expect(await links()).toEqual([
+      { name: 'peated', source: 'kb' },
+      { name: 'sherry', source: 'llm' },
+    ]);
   });
 });

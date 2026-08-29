@@ -149,6 +149,7 @@ describe('preference filtering over the live report query', () => {
   const makeBottling = async (key: string, brand: ID | null): Promise<ID> => {
     const { ids } = await products.findOrCreateByMatchKeys([
       {
+        factSources: {},
         matchKey: `${TOKEN}-${key}`,
         name: `${key} ${TOKEN} 0.7l`,
         brandId: brand,

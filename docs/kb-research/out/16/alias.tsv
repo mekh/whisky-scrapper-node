@@ -1,0 +1,60 @@
+Glen Moray	glen-moray	any	
+Highland Park	highland-park	any	
+Хайленд Парк	highland-park	any	Cyrillic spelling seen in catalogue sample
+Royal Salute	royal-salute	any	
+Akashi	akashi	any	
+Deanston	deanston	any	
+Penderyn	penderyn	any	
+Auchentoshan	auchentoshan	any	
+The Irishman	the-irishman	any	
+Maker's Mark	makers-mark	any	
+Makers Mark	makers-mark	any	no-apostrophe variant
+Fauconnier	fauconnier	any	
+O'Brian Fauconnier	fauconnier	name	compound name seen in samples
+Pokeno	pokeno	any	
+Caperdonich	caperdonich	any	
+Kentucky	kentucky	brand	generic word -- brand-value match only, would otherwise collide with unrelated 'Kentucky straight bourbon' style descriptors
+Cattos	cattos	any	
+Catto's	cattos	any	canonical apostrophe spelling seen in sample 'Catto's Deluxe'
+Kura	kura	brand	short/generic word, 4 chars
+Rest&be Thankful	rest-and-be-thankful	any	exact catalogue brand spelling
+Rest&Be Thankful	rest-and-be-thankful	any	capitalisation seen in samples
+Rest & Be Thankful	rest-and-be-thankful	any	canonical spaced spelling
+Willett	willett	any	
+Egan's	egans	any	
+Egans	egans	any	no-apostrophe variant
+Hellyers Road	hellyers-road	any	
+Old Ezra	old-ezra	any	
+The Charles House	the-charles-house	any	exact catalogue brand spelling
+Charles House	the-charles-house	any	spelling used in all 3 catalogue sample names
+Angel's Envy	angels-envy	any	
+Angels Envy	angels-envy	any	no-apostrophe variant
+Cardhu	cardhu	any	
+Glenlassie	glenlassie	any	
+Jefferson's Ocean	jeffersons-ocean	any	
+Jeffersons Ocean	jeffersons-ocean	any	no-apostrophe variant
+Lux Row	lux-row	any	
+Powers John's Lane	powers-johns-lane	any	
+Powers	powers-johns-lane	brand	short/generic surname-like word -- brand-value match only
+The Dead Rabbit	the-dead-rabbit	any	
+Wormtub	wormtub	any	
+Baker's	bakers	brand	short (6 chars) and a common English surname/word -- brand-value match only
+Bakers	bakers	brand	no-apostrophe variant
+Celtic Revival	celtic-revival	any	
+Fitzwilliam	fitzwilliam	any	
+Green River	green-river	any	
+James E.pepper	james-e-pepper	any	exact catalogue brand spelling
+James E.Pepper	james-e-pepper	any	capitalisation used in the sample name
+James E. Pepper	james-e-pepper	any	canonical spelling
+Littlemill	littlemill	any	
+Mizen Head	mizen-head	any	
+Old Overholt	old-overholt	any	
+Prohibido	prohibido	any	
+Ley Seca	prohibido	name	the brand's only product name; phrase is generic Spanish ('dry law') so restricted to in-name matching only
+Scottish Glory	scottish-glory	any	
+Talisman	talisman	brand	common English dictionary word -- brand-value match only
+Tomatin Talisman	talisman	name	compound name seen in the catalogue sample
+Thin Lizzy	thin-lizzy	any	
+Benrinnes	benrinnes	any	
+Bruichladdich	bruichladdich	any	
+Tomatin	tomatin	any	

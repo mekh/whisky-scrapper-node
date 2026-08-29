@@ -1,0 +1,70 @@
+Kimbland	kimbland	any	
+Kimbland distillery	kimbland	any	
+Kininvie	kininvie	any	
+Kininvie distillery	kininvie	any	
+Kythe	kythe	brand	Only 5 letters and could plausibly collide; kept to whole-brand match for safety.
+Kythe distillery	kythe	any	
+Laggan Bay	laggan-bay	any	
+Laggan Bay distillery	laggan-bay	any	
+Lerwick	lerwick	brand	Lerwick is also Shetland's capital town/port name, so restricted to whole-brand match to avoid false hits inside unrelated names.
+Lerwick distillery	lerwick	any	
+Leven	leven	brand	Common Scottish place/river name (Leven, Fife; Loch Leven); restricted to whole-brand match per this task's own collision-safety instruction.
+Leven distillery	leven	brand	Same collision concern as above.
+Lindores Abbey	lindores-abbey	any	
+Lindores Abbey distillery	lindores-abbey	any	
+Lindores	lindores-abbey	brand	Short-form; whole-brand match only for safety.
+Lochlea	lochlea	any	
+Lochlea distillery	lochlea	any	
+Lochranza	arran	any	Lochranza is the Isle of Arran distillery's own site name (the original distillery, as distinct from its 2019 sister site Lagg, where the peated Machrie Moor spirit is now made) - not a separate distillery. Wikipedia's 'Arran distillery' article is a #REDIRECT to 'Lochranza distillery'. producerSlug=arran is defined in out/02, out/03, out/06, out/13/producer.tsv (this batch did not duplicate it, per the merge-dedup instruction). See also the existing machrie-moor row (out/02, parentSlug=arran, peatProfile=medium), which already covers the peated line.
+Lochranza distillery	arran	any	See note on the 'Lochranza' alias above; producerSlug=arran is external to this batch.
+Moffat	moffat	brand	Moffat is a Dumfries and Galloway town name; restricted to whole-brand match for safety.
+Moffat distillery	moffat	any	
+North Point	north-point	any	
+North Point distillery	north-point	any	
+North Uist	north-uist	any	
+North Uist distillery	north-uist	any	
+Orkney	orkney	brand	The catalogue already contains 'An Orkney', 'Cask Orkney' and 'Probably Orkney's Finest', which are Highland Park or undisclosed - NOT the Orkney Distilling company. Restricted to whole-brand match per this task's own explicit instruction.
+Orkney Distilling	orkney	any	
+Fara	fara	brand	Only 4 letters; whole-brand match only.
+Rysa	rysa	brand	Only 4 letters; whole-brand match only.
+Port Ellen	port-ellen	any	
+Port Ellen distillery	port-ellen	any	
+Port of Leith	port-of-leith	any	
+Port of Leith distillery	port-of-leith	any	
+Pulteney	pulteney	any	
+Pulteney distillery	pulteney	any	
+Raasay	raasay	any	
+Isle of Raasay	raasay	any	
+Raasay distillery	raasay	any	
+Rosebank	rosebank	any	
+Rosebank distillery	rosebank	any	
+Saxa Vord	saxa-vord	any	
+Saxa Vord distillery	saxa-vord	any	
+Shetland Reel	saxa-vord	any	Consumer brand name for this producer's gin and its (possibly one-off, 2015) independently-sourced/finished Glenglassaugh-cask whisky. Pointed here rather than left unaliased so a 'Shetland Reel' whisky at least resolves to a row that honestly says peatProfile=unknown.
+Stannergill	stannergill	any	
+Stannergill distillery	stannergill	any	
+Stirling	stirling	brand	Stirling is a major Scottish city name; restricted to whole-brand match per this task's own explicit instruction.
+Stirling distillery	stirling	brand	Same collision concern as the bare name.
+Stirling Distillery	stirling	brand	Same collision concern as the bare name (official capitalisation).
+Strathearn	strathearn	any	
+Strathearn distillery	strathearn	any	
+Strathmill	strathmill	any	
+Strathmill distillery	strathmill	any	
+Tiree	tiree	brand	Tiree is an inhabited island name in everyday use; restricted to whole-brand match per this task's own explicit instruction.
+Isle of Tiree	tiree	any	
+Tiree distillery	tiree	brand	Same collision concern as the bare name.
+Toulvaddie	toulvaddie	any	
+Toulvaddie distillery	toulvaddie	any	
+Uile-bheist	uile-bheist	any	
+Uile-bheist distillery	uile-bheist	any	
+Uilebheist	uile-bheist	any	Unhyphenated spelling variant, in case a store drops diacritics/punctuation.
+8 Doors	8-doors	any	
+8 Doors distillery	8-doors	any	
+Invergordon	invergordon	any	
+Invergordon distillery	invergordon	any	
+Reivers	reivers	any	
+Reivers distillery	reivers	any	
+Starlaw	starlaw	any	
+Starlaw distillery	starlaw	any	
+Strathclyde	strathclyde	any	
+Strathclyde distillery	strathclyde	any	

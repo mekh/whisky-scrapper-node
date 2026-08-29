@@ -1,0 +1,85 @@
+Gordon & MacPhail	gordon-macphail	any	exact catalogue brand string
+Gordon and MacPhail	gordon-macphail	any	
+G&M	gordon-macphail	brand	short abbreviation
+Caol Ila	caol-ila	any	
+Strathisla	strathisla	any	
+Macallan	macallan	any	
+The Macallan	macallan	any	canonical full name
+Mortlach	mortlach	any	
+Glenrothes	glenrothes	any	
+The Glenrothes	glenrothes	any	
+Ardmore	ardmore	any	
+Speymalt	speymalt	any	
+Chivas Regal	chivas-regal	any	exact catalogue brand string
+Chivas	chivas-regal	brand	short form, could ambiguously reference Chivas Brothers the company
+Tullamore Dew	tullamore-dew	any	exact catalogue brand string
+Tullamore D.E.W.	tullamore-dew	any	canonical punctuated spelling
+Tullamore	tullamore-dew	brand	short, also a town name
+Mars	mars	brand	exact catalogue brand string; short/generic, must be brand-scoped
+Edradour	edradour	any	exact catalogue brand string
+Ballechin	ballechin	any	
+Tamdhu	tamdhu	any	exact catalogue brand string
+Whyte Mackay	whyte-mackay	any	exact catalogue brand string (missing ampersand)
+Whyte & Mackay	whyte-mackay	any	canonical spelling
+Whyte and Mackay	whyte-mackay	any	
+Coalition	coalition	brand	exact catalogue brand string; common English word, brand-scoped for safety
+Balblair	balblair	any	exact catalogue brand string
+Togouchi	togouchi	any	exact catalogue brand string
+Grace O Malley	grace-omalley	any	exact catalogue brand string (apostrophe stripped)
+Grace O'Malley	grace-omalley	any	canonical spelling, seen in samples
+Woodford Reserve	woodford-reserve	any	exact catalogue brand string
+Woodford	woodford-reserve	brand	short, also a place name
+Douglas Laingcompany	douglas-laing	any	exact catalogue brand string (mangled typo)
+Douglas Laing	douglas-laing	any	canonical short form
+Douglas Laing & Co	douglas-laing	any	
+Douglas Laing&Company	douglas-laing	any	seen in samples
+Jura	jura	brand	short, must be brand-scoped
+Isle of Jura	jura	any	
+Old Malt Cask	old-malt-cask	any	exact catalogue brand string
+Blair Athol	blair-athol	any	
+Auchentoshan	auchentoshan	any	
+Braeval	braeval	any	
+Miltonduff	miltonduff	any	
+Croithli	croithli	any	exact catalogue brand string (no fada)
+Croithlí	croithli	any	Irish-language spelling with fada
+MacArthur's	macarthurs	any	exact catalogue brand string
+MacArthurs	macarthurs	any	no-apostrophe variant
+Scarabus	scarabus	any	exact catalogue brand string
+Blood Oath	blood-oath	any	exact catalogue brand string
+Evade	evade	brand	exact catalogue brand string; common English word, brand-scoped for safety
+Évadé	evade	brand	canonical accented spelling
+Kentucky Jack	kentucky-jack	any	exact catalogue brand string
+Port Askaig	port-askaig	any	exact catalogue brand string
+Elixir Distillers	elixir-distillers	any	
+The Singleton	the-singleton	any	exact catalogue brand string
+Singleton	the-singleton	brand	short form seen in samples, common word
+Basil Hayden	basil-hayden	any	exact catalogue brand string
+Basil Hayden's	basil-hayden	any	canonical possessive spelling, seen in samples
+Copper Dog	copper-dog	any	exact catalogue brand string
+Grand Moldaviens	grand-moldaviens	any	exact catalogue brand string
+John Lee	john-lee	brand	exact catalogue brand string; common personal-name pair, brand-scoped for safety
+Matt D Arcy	matt-darcy	any	exact catalogue brand string (no apostrophe)
+Matt D'Arcy	matt-darcy	any	seen in samples
+Rozelieures	rozelieures	any	exact catalogue brand string
+The Speaker	the-speaker	any	exact catalogue brand string
+Speaker	the-speaker	brand	short form seen in samples, common word
+1770	glasgow-1770	brand	exact catalogue brand string; bare number, must be brand-scoped
+Glasgow 1770	glasgow-1770	any	canonical full name
+Beinn Dubh	beinn-dubh	any	exact catalogue brand string
+Cromwells Royal	cromwells-royal	any	exact catalogue brand string (no apostrophe)
+Cromwell's Royal	cromwells-royal	any	seen in samples
+Fuji	fuji	brand	exact catalogue brand string; short/generic (mountain name), brand-scoped
+Haig Club	haig-club	any	exact catalogue brand string
+Cameronbridge	cameronbridge	any	
+Johnny Smoking Gun	johnny-smoking-gun	any	exact catalogue brand string
+Manhattan	manhattan	brand	exact catalogue brand string; common word/place/cocktail name, brand-scoped
+Naked Grouse	naked-grouse	any	exact catalogue brand string
+The Naked Grouse	naked-grouse	any	canonical original name
+Naked Malt	naked-grouse	any	current rebrand name (2018)
+Old Tullymet	old-tullymet	any	exact catalogue brand string
+Rammstein	rammstein	any	exact catalogue brand string
+Shenk's	shenks	any	exact catalogue brand string
+Shenks	shenks	any	no-apostrophe variant
+The Famous Grouse	famous-grouse	any	exact catalogue brand string
+Famous Grouse	famous-grouse	any	without leading 'The'
+Umiki	umiki	any	exact catalogue brand string

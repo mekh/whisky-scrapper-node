@@ -1,0 +1,70 @@
+Harrison	harrison	any	exact catalogue product name
+Hiberum Saboga	hiberum	any	exact catalogue product name (minus year)
+Hiberum	hiberum	any	distinctive stem
+Highland Harvest	highland-harvest	any	distinctive 2-word brand name, safe unlike bare 'Highland'
+House of Maclair	house-of-maclair	any	exact catalogue product name (brand part)
+Hungry Hill	hungry-hill	any	distinctive 2-word brand name
+Inchmurrin	inchmurrin	any	distinctive distillery-brand name
+Isle of Skye	isle-of-skye	any	exact catalogue product name
+Jack Daniel's	jack-daniels	any	canonical spelling
+Jack Daniels	jack-daniels	any	no-apostrophe catalogue variant
+Johnnie Walker	johnnie-walker	any	canonical spelling
+John Walker & Sons	johnnie-walker	any	Diageo's premium packaging of the same Johnnie Walker family (Blue/Red/Gold/XR range in this batch); same producer, not a sibling brand
+Kurayoshi	kurayoshi	any	distinctive brand name
+London Square	london-square	any	exact catalogue product name
+Lost Monarch	lost-monarch	any	distinctive stem, drops the 'Redwood Empire' maker suffix
+Redwood Empire	redwood-empire	any	maker name, also appears in the Pipe Dream sample
+Pipe Dream	pipe-dream	any	distinctive stem, drops the 'Redwood Empire' maker suffix
+Lothaire	lothaire	any	distinctive brand name
+MacIntyre's Drop	macintyres-drop	any	exact catalogue product name
+MacIntyres Drop	macintyres-drop	any	no-apostrophe variant
+Masthouse	masthouse	any	distinctive brand name
+Morris	morris-rutherglen	any	common stem for all 6 catalogue rows (Muscat/Port/Sherry/Tokay/Smoked Barrel)
+Naked Malt	naked-grouse	any	market-specific alternate name for The Naked Grouse (Edrington's own URL slug confirms it)
+Nirasaki	nirasaki	any	distinctive brand name
+Nor'Loch	nor-loch	any	exact catalogue product name
+Nor Loch	nor-loch	any	no-apostrophe variant
+Ogilhinn Nessia	ogilhinn-nessia	any	shared stem of both catalogue rows
+Ogilhinn Nessia Highland Phantom Peak	ogilhinn-nessia	any	exact catalogue product name
+Ogilhinn Nessia Speyside Celestia Creek	ogilhinn-nessia	any	exact catalogue product name
+Old Angus	old-angus	any	exact catalogue product name
+Old Bardett	old-bardett	any	exact catalogue product name
+Old Crow	old-crow	any	distinctive brand name
+Old Glasgow	old-glasgow	any	exact catalogue product name
+O'Patrick	opatrick	any	exact catalogue product name
+OPatrick	opatrick	any	no-apostrophe variant
+Orphan Barrel	orphan-barrel	any	distinctive bottler/project name
+Orphan Barrel Rhetoric	orphan-barrel-rhetoric	any	exact catalogue product name
+Pig's Nose	pigs-nose	any	canonical spelling
+Pigs Nose	pigs-nose	any	no-apostrophe variant
+Poli Segretario	poli	any	distinctive multi-word stem; bare 'Poli' is only 4 chars (below the 5-char floor) and is also a generic surname, so the longer stem is used instead
+Prologue	prologue	any	distinctive brand name
+River Queen	river-queen	any	exact catalogue product name
+Royal Brackla	royal-brackla	any	distinctive distillery name
+Saint Bernard	saint-bernard	any	exact catalogue product name
+Scottish Hunter	scottish-hunter	any	distinctive stem
+Scottish Piper	scottish-piper	any	common stem for both catalogue rows of this name
+Sir Edwards Finests	sir-edwards	any	exact catalogue product name, including its typo ('Finests')
+Sir Edwards	sir-edwards	any	BRIEF.md's own worked example; distinctive stem, cannot collide
+Sir Edward's	sir-edwards	any	canonical apostrophe spelling
+Sir Park	sir-park	any	exact catalogue product name
+Speyside	speyside-distillery	brand	too generic for 'any' -- collides with the region name inside countless unrelated Speyside single malts (e.g. this same batch's own 'Speyside Distillery 1991 Carn Mor' row). Honest outcome: this null-brand product will NOT resolve via name matching.
+Speyside Distillery	speyside-distillery	any	distinctive 2-word compound, safe unlike bare 'Speyside'; resolves the batch's 1991 Carn Mor sample
+St. Magdalene	st-magdalene	any	exact catalogue spelling
+St Magdalene	st-magdalene	any	no-period variant
+Saint Magdalene	st-magdalene	any	expanded-abbreviation variant
+Taketsuru	taketsuru	any	distinctive brand name
+Takumi	takumi	brand	'Takumi' (Japanese for artisan/craftsman) is a generic marketing word also used by unrelated brands, too risky for 'any'. Honest outcome: this null-brand product will NOT resolve via name matching.
+Templeton	templeton-rye	any	distinctive brand name, resolves 'Templeton Fortitude'
+The Famous Grouse	famous-grouse	any	canonical spelling
+Famous Grouse	famous-grouse	any	common variant without 'The'
+The Grouse & Cola	famous-grouse	any	ready-mixed RTD of the same house blend
+The King of Scots	the-king-of-scots	any	exact catalogue product name
+King of Scots	the-king-of-scots	any	canonical range name without 'The'
+The Whistler	the-whistler	any	distinctive brand name
+Tottori	tottori	any	common stem for both catalogue rows ('Tottori' and 'Tottori Barell')
+Two Drams	two-drams	any	exact catalogue product name
+Wolfe Tone	wolfe-tone	any	common stem for both catalogue rows (Beara / Rich Blend Beara)
+Глен Таллок	glen-talloch	any	Cyrillic transliteration of Glen Talloch, as spelled in this batch's catalogue
+The Forge	the-forge	brand	too generic/common a phrase for 'any' (risk of colliding with unrelated names). Honest outcome: this null-brand product (catalogue row 'The Forge' alone) will NOT resolve via name matching.
+The Forge Hibernia Distillers	the-forge	any	full exact catalogue product name, safe and distinctive; resolves this specific row

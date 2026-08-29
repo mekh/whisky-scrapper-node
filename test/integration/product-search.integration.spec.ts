@@ -53,6 +53,7 @@ describe('product autocomplete search (integration)', () => {
     age: number | null = null,
   ): Promise<ID> => {
     return products.createUnmatched({
+      factSources: {},
       matchKey: null,
       name,
       brandId: null,

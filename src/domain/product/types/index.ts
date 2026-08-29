@@ -1,2 +1,12 @@
+export { KbReconcileSummaryType } from './kb-reconcile-summary.type.dto';
+export { ProducerChildType } from './producer-child.type.dto';
+export { ProducerDetailType } from './producer-detail.type.dto';
+export { ProducerPatchResultType } from './producer-patch-result.type.dto';
+export { ProducerReviewType } from './producer-review.type.dto';
+export { ProducerRuleType } from './producer-rule.type.dto';
+export { ProductFactReviewType } from './product-fact-review.type.dto';
+export { ProductReviewSummaryType } from './product-review-summary.type.dto';
 export { ProductSearchItemType } from './product-search-item.type.dto';
 export { ProductType } from './product.type.dto';
+export { ReviewConflictType } from './review-conflict.type.dto';
+export { ReviewStoreLinkType } from './review-store-link.type.dto';

@@ -551,6 +551,12 @@ export class SyncOrchestratorService implements OnModuleInit {
             + 'sweep ran — check the store if this was unexpected',
         );
         break;
+      case 'kb-applied':
+        writer.info(
+          `Knowledge base applied to ${event.groups} name group(s), `
+            + `${event.unresolved} matched no producer`,
+        );
+        break;
     }
   }
 

@@ -1,0 +1,65 @@
+Grant's	grants	any	exact input brand string
+Grants	grants	any	common no-apostrophe variant
+Aberlour	aberlour	any	exact input brand string
+Glen Scotia	glen-scotia	any	exact input brand string
+The Lost Distillery	lost-distillery	any	exact input brand string
+Lost Distillery	lost-distillery	any	common shortening
+Atom	atom	brand	exact input brand string, short/generic
+Macduff	macduff	any	source distillery named in Atom's samples
+Longmorn	longmorn	any	source distillery named in Atom's samples
+Heaven Hill	heaven-hill	any	source distillery named in Atom's samples
+M H	mh	brand	exact input brand string (the & appears stripped by catalogue import)
+M&H	mh	brand	canonical spelling, still short/ambiguous
+M&H Distillery	mh	any	full distinctive phrase seen in samples
+Templeton Rye	templeton-rye	any	exact input brand string
+Templeton	templeton-rye	brand	short form, place name/generic
+Suntory	suntory	brand	exact input brand string, ambiguous conglomerate name
+Hakushu	hakushu	any	distinct Suntory distillery named in samples
+Chita	chita	any	distinct Suntory distillery named in samples
+The Chita	chita	any	sample variant spelling
+Hibiki	hibiki	any	distinct Suntory blend named in samples
+Hibiki Harmony	hibiki	any	sample variant spelling
+Hunting Lodge	hunting-lodge	any	exact input brand string
+Dalwhinnie	dalwhinnie	any	exact input brand string
+Old Perth	old-perth	any	exact input brand string
+Blair Athol	blair-athol	any	exact input brand string
+Highiland Baron	highiland-baron	any	exact input brand string (typo preserved)
+Highland Baron	highiland-baron	any	correctly-spelled variant seen in samples
+Braes of Glenlivet	braeval	any	exact input brand string, historic distillery name
+Braeval	braeval	any	current distillery name
+Knob Creek	knob-creek	any	exact input brand string
+Powers	powers	brand	exact input brand string, common word
+Town Branch	town-branch	any	exact input brand string
+Drummers Reserve	drummers-reserve	any	exact input brand string
+Hardenberg	hardenberg	any	exact input brand string
+Meikle Toir	meikle-toir	any	exact input brand string
+Secret Orkney	secret-orkney	any	exact input brand string
+Aerstone	aerstone	any	exact input brand string
+Canada House	canada-house	any	exact input brand string
+Floki	floki	brand	exact input brand string, common Icelandic/Viking first name
+James Wyld	james-wyld	any	exact input brand string
+Lot No 40	lot-40	any	exact input brand string
+Lot No. 40	lot-40	any	canonical punctuation variant
+Lot 40	lot-40	any	common short variant
+Lot №40	lot-40	any	Cyrillic/Unicode № variant seen in samples
+Pike Creek	pike-creek	any	exact input brand string
+Terence Hill	terence-hill	any	exact input brand string
+Wilson	wilson	brand	exact input brand string, common surname
+Ardnamurchan	ardnamurchan	any	exact input brand string
+Cask Orkney	cask-orkney	any	exact input brand string
+Ecosse G	ecosse-g	brand	exact input brand string, short/ambiguous
+Grangestone	grangestone	any	exact input brand string
+Irishamerican	irishamerican	any	exact input brand string
+Lehmann	lehmann	brand	exact input brand string, common surname
+Minor Case	minor-case	any	exact input brand string
+Old Comber	old-comber	any	exact input brand string
+Comber	old-comber	brand	short place-name form
+Echlinville	echlinville	any	distillery name
+Platte Valley	platte-valley	any	exact input brand string
+Sakurao	sakurao	any	exact input brand string
+Syndicate 58/6	syndicate-58-6	any	exact input brand string
+The Wild North	the-wild-north	any	exact input brand string
+Wild North	the-wild-north	any	sample variant without "The"
+Yellow Spot	yellow-spot	any	exact input brand string
+Midleton	midleton	any	distillery name
+New Midleton Distillery	midleton	any	full name variant

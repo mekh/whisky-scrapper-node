@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
+import { FactSource, ProductFactField } from '~enums';
 import { BrandUtils, ProductMatchUtils, ProductNameUtils } from '~utils';
 
 import {
@@ -51,6 +52,25 @@ const BARE_NUMBER = /^\s*(\d+(?:[.,]\d+)?)\s*$/;
 
 // A field value that is purely a number with an optional unit.
 const NUMBER_WITH_UNIT = /\d{1,2}(?:[.,]\d)?/g;
+
+/**
+ * The snapshot facts that carry provenance, each paired with how to read it.
+ *
+ * One list drives both stamping sweeps — the "the store said this" pass before
+ * any derivation and the "this pass worked it out" one after — so a fact can
+ * never be added to the pipeline and silently left without a source.
+ */
+const STORE_FACT_FIELDS: [
+  ProductFactField,
+  (snap: ProductSnapshot) => unknown,
+][] = [
+  [ProductFactField.BRAND, (snap): unknown => snap.brand],
+  [ProductFactField.VOLUME, (snap): unknown => snap.volumeMl],
+  [ProductFactField.ABV, (snap): unknown => snap.abv],
+  [ProductFactField.AGE, (snap): unknown => snap.ageYears],
+  [ProductFactField.TYPE, (snap): unknown => snap.whiskyType],
+  [ProductFactField.COUNTRY, (snap): unknown => snap.country],
+];
 
 const ABV_MIN = 30;
 const ABV_MAX = 70;
@@ -443,10 +463,21 @@ export class NormalizeService {
     snap: ProductSnapshot,
     brandIndex: BrandMatchEntry[] = [],
   ): ProductSnapshot {
+    /**
+     * Taken before anything is derived: whatever the snapshot already carries
+     * at this point came from the store's listing or its detail page, because
+     * `enrichDetail` runs before this pass and the LLM one runs after. That
+     * ordering is what lets provenance be decided in one place instead of in
+     * every adapter.
+     */
+    this.stampStoreSources(snap);
+
     snap.brand = BrandUtils.canonical(snap.brand);
 
     if (snap.brand === null && brandIndex.length > 0) {
       snap.brand = this.detectBrandFromName(snap.name, brandIndex);
+
+      this.stamp(snap, ProductFactField.BRAND, snap.brand);
     }
 
     const haystack = this.haystack(snap);
@@ -465,6 +496,8 @@ export class NormalizeService {
       snap.country ??= detected.country;
       snap.whiskyType ??= detected.type;
     }
+
+    this.stampDerivedSources(snap);
 
     const flavors = new Set([
       ...snap.flavorTags,
@@ -517,6 +550,60 @@ export class NormalizeService {
    */
   public needsLlm(snap: ProductSnapshot): boolean {
     return snap.abv === null || snap.volumeMl === null;
+  }
+
+  /**
+   * Marks every fact the store itself supplied.
+   *
+   * Called before any derivation, so "already present" is an exact test:
+   * adapters and detail pages have run, this pass and the LLM one have not.
+   *
+   * @param snap - The snapshot to stamp (mutated in place, as the whole
+   *   pipeline is).
+   * @returns Nothing.
+   */
+  private stampStoreSources(snap: ProductSnapshot): void {
+    STORE_FACT_FIELDS.forEach(([field, read]) => {
+      if (read(snap) !== null && read(snap) !== undefined) {
+        snap.factSources[field] = FactSource.STORE;
+      }
+    });
+  }
+
+  /**
+   * Marks every fact this pass derived from the name or the description.
+   *
+   * Anything still unstamped but now filled was produced here, so one sweep
+   * after the derivations covers all of them without threading a stamp through
+   * each `??=`.
+   *
+   * @param snap - The snapshot to stamp (mutated in place).
+   * @returns Nothing.
+   */
+  private stampDerivedSources(snap: ProductSnapshot): void {
+    STORE_FACT_FIELDS.forEach(([field, read]) => {
+      this.stamp(snap, field, read(snap));
+    });
+  }
+
+  /**
+   * Stamps one fact as name-derived, unless it already has a source.
+   *
+   * @param snap - The snapshot to stamp (mutated in place).
+   * @param field - The fact field.
+   * @param value - The value now held, used only to skip empty facts.
+   * @returns Nothing.
+   */
+  private stamp(
+    snap: ProductSnapshot,
+    field: ProductFactField,
+    value: unknown,
+  ): void {
+    if (value === null || value === undefined) {
+      return;
+    }
+
+    snap.factSources[field] ??= FactSource.NAME;
   }
 
   /**

@@ -69,6 +69,24 @@ export interface Meta {
   countries: MetaCountry[];
 
   /**
+   * Scotland's regions, by the **market convention** — the six a shop and a
+   * drinker use, `islands` included. This is what a filter chip should offer.
+   *
+   * It is deliberately not the legal list: Talisker, Highland Park, Tobermory,
+   * Jura and Arran are all legally Highland and are listed by every shop as
+   * island malts, so a filter built on the legal five would answer a question
+   * nobody asked. The label the client renders has to say so — "region
+   * (common)" rather than a bare "region".
+   */
+  regions: string[];
+
+  /**
+   * The five protected SWA regions, for display and for anyone who wants the
+   * legal answer. `islands` is not among them and never can be.
+   */
+  legalRegions: string[];
+
+  /**
    * All countries (code + display), for edit dropdowns — a superset of
    * `countries`, which is limited to those referenced by a product.
    */

@@ -50,6 +50,27 @@ export class ReportQueryDto implements ReportQuery {
   @CsvArray()
   public countries?: string[];
 
+  /**
+   * Scotland regions to keep, by the market convention.
+   */
+  @CsvArray()
+  public regions?: string[];
+
+  /**
+   * Scotland regions to drop. The exclusion is the useful half — "everything
+   * except Islay" is how a peat-averse drinker shops.
+   */
+  @CsvArray()
+  public excludeRegions?: string[];
+
+  /**
+   * Show only bottlings whose type and country both come from a trusted
+   * source. Stricter than the default, which merely refuses to *match* an
+   * untrusted value.
+   */
+  @BoolQuery()
+  public verifiedFacts?: boolean;
+
   @IsOptional()
   @Type(() => Number)
   @IsNumber()

@@ -76,6 +76,7 @@ describe('preference details over the live query (integration)', () => {
     brand?: ID,
   ): Promise<ID> => {
     return products.createUnmatched({
+      factSources: {},
       matchKey: null,
       name,
       brandId: brand ?? null,

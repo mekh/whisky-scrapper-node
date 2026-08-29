@@ -503,13 +503,30 @@ describe('SilpoAdapter.enrichDetail', () => {
     const normalizer = new NormalizeService();
     const snap = await enrich(
       product(1, 'Віскі X'),
+      detail([attr('smakviski', 'Хересний, медовий')]),
+    );
+
+    normalizer.normalize(snap);
+
+    expect(snap.rawAttrs.smakviski).toBe('Хересний, медовий');
+    expect(snap.flavorTags).toEqual(['honey', 'sherry']);
+  });
+
+  /**
+   * The store states peat outright, and it is still stashed — but the keyword
+   * pass no longer turns it into a tag. Peat belongs to the knowledge base.
+   */
+  it('stashes a stated peat flavor without tagging it', async () => {
+    const normalizer = new NormalizeService();
+    const snap = await enrich(
+      product(1, 'Віскі X'),
       detail([attr('smakviski', "Димний, торф'яний")]),
     );
 
     normalizer.normalize(snap);
 
     expect(snap.rawAttrs.smakviski).toBe("Димний, торф'яний");
-    expect(snap.flavorTags).toEqual(['peated', 'smoky']);
+    expect(snap.flavorTags).toEqual([]);
   });
 
   it('stashes the description as text for the flavor passes', async () => {

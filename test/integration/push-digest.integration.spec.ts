@@ -76,6 +76,7 @@ describe('push digest claim (integration)', () => {
    */
   const makeBottling = async (): Promise<ID> => {
     return products.createUnmatched({
+      factSources: {},
       matchKey: null,
       name: `IT Push ${STAMP}`,
       brandId,

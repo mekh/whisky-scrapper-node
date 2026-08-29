@@ -1,0 +1,73 @@
+Glenmorangie	glenmorangie	any	
+Loch Lomond	loch-lomond	any	
+Talisker	talisker	any	
+Isle of Jura	jura	any	exact catalogue brand string
+Jura	jura	brand	
+Artist	artist	brand	exact catalogue brand string; generic word, brand-scope per brief's own example
+Old Pulteney	old-pulteney	any	
+Spey	spey	brand	exact catalogue brand string; brief's own example of a short/ambiguous alias
+Speyside Distillery	spey	any	
+Blanton's	blantons	any	exact catalogue brand string, apostrophe kept verbatim
+Blantons	blantons	any	common no-apostrophe variant
+William Peel	william-peel	any	
+Speyburn	speyburn	any	
+Fettercairn	fettercairn	any	
+Scots Gold	scots-gold	any	
+Clynelish	clynelish	any	
+Macduff	macduff	any	
+Claymore	claymore	brand	common English word (sword), used cautiously
+The Claymore	claymore	any	official product name
+Longmorn	longmorn	any	
+Rossville Union	rossville-union	any	
+Achill Island	achill-island	any	
+Elements of Islay	elements-of-islay	any	
+Journeyman Distillery	journeyman-distillery	any	
+Journeyman	journeyman-distillery	brand	shorter common-word variant
+Pearse	pearse	brand	short, could be a surname elsewhere
+Pearse Lyons Distillery	pearse	any	full official name
+The Kinship	the-kinship	any	
+Ballina	ballina	any	
+Clydeside	clydeside	any	
+Glen Ryan	glen-ryan	any	
+Jiu Hai Bu Gan	jiu-hai-bu-gan	any	
+Masahiro	masahiro	any	
+Rittenhouse	rittenhouse	any	
+The Hive	the-hive	brand	generic word (hive), used cautiously
+Yellow Edition	yellow-edition	brand	generic marketing phrase, another producer could reuse it
+Bandwagon	bandwagon	brand	common English word
+Crabbie&cree	crabbie	any	exact catalogue brand string, verbatim (garbled - see producer note)
+Crabbie	crabbie	any	canonical brand name
+John Crabbie	crabbie	any	full historic company name
+Flora&fauna,mannochmore	mannochmore	any	exact catalogue brand string, verbatim (mangled - see producer note)
+Mannochmore	mannochmore	any	
+Greign	greign	any	
+Johnny Drum	johnny-drum	any	
+Machrie Moor	machrie-moor	any	
+Morrison Mackay	morrison-mackay	any	exact catalogue brand string (no ampersand)
+Morrison & MacKay	morrison-mackay	any	canonical spelling
+Old Route 8	old-route-8	any	
+Pure Kentucky XO	pure-kentucky-xo	any	
+Pure Kentucky	pure-kentucky-xo	any	short-form variant
+Shackleton	shackleton	any	
+The Deacon	the-deacon	brand	common word (deacon), used cautiously
+Tincup	tincup	any	
+Buffalo Trace	buffalo-trace	any	
+MGP	mgp	brand	short abbreviation
+MGP Ingredients	mgp	any	
+Willett	willett	any	
+Heaven Hill	heaven-hill	any	
+Arran	arran	any	
+Isle of Arran	arran	any	full name variant
+Ardmore	ardmore	any	
+Karuizawa	karuizawa	any	
+Caol Ila	caol-ila	any	
+Macallan	macallan	any	
+The Macallan	macallan	any	official product name
+Bowmore	bowmore	any	
+Linkwood	linkwood	any	
+Bunnahabhain	bunnahabhain	any	
+Teaninich	teaninich	any	
+Blair Athol	blair-athol	any	
+Blair Atholl	blair-athol	any	common double-L variant spelling
+Wemyss Malts	wemyss-malts	any	
+Wemyss	wemyss-malts	brand	short surname, used cautiously

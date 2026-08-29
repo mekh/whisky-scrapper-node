@@ -198,6 +198,13 @@ export abstract class ScrapeAdapterBase implements ScrapeAdapter {
       country: null,
       flavorTags: [],
       rawAttrs: {},
+      /**
+       * Left empty here rather than filled per adapter. Whatever an adapter
+       * writes into the snapshot is by definition something the store stated,
+       * and normalization stamps exactly that when it runs — which is what
+       * keeps provenance out of all fourteen adapters.
+       */
+      factSources: {},
       ...input,
     };
   }

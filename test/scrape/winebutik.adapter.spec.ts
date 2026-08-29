@@ -285,6 +285,7 @@ function snapshot(over: Partial<ProductSnapshot> = {}): ProductSnapshot {
     country: null,
     flavorTags: [],
     rawAttrs: {},
+    factSources: {},
     ...over,
   };
 }

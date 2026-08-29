@@ -142,6 +142,347 @@ export interface EntityProduct extends EntityBaseRich {
    * keyword pass re-contributes whatever the listing still says.
    */
   flavorsCuratedAt?: Date;
+  /**
+   * The distillery or blender whose spirit this is, resolved from the
+   * knowledge base. For an independent bottling it is the **distillery named
+   * inside the product name**, not the bottler: `Gordon & MacPhail Caol Ila
+   * 12` resolves to Caol Ila.
+   *
+   * Null when no producer could be resolved, which is an explicit "we do not
+   * know" — undisclosed bottlings (`XOP Speyside Finest 1967`) are meant to
+   * stay null rather than be guessed at.
+   */
+  producerId?: ID;
+  /**
+   * The independent bottler, when the brand is one. A non-null value **is**
+   * the IB flag; there is no separate boolean to disagree with it.
+   */
+  bottlerId?: ID;
+  /**
+   * Where the cleaned `name` came from ({@link FactSource}).
+   */
+  nameSource?: string;
+  /**
+   * Where `typeId` came from. The knowledge base overwrites this wherever the
+   * resolved producer states a default type.
+   */
+  typeSource?: string;
+  /**
+   * Where `countryId` came from. The knowledge base overwrites this whenever a
+   * producer resolves — a distillery's country does not vary by bottling.
+   */
+  countrySource?: string;
+  /**
+   * Where `brandId` came from. The knowledge base never writes it: the brand
+   * is a display label and a component of the frozen match key.
+   */
+  brandSource?: string;
+  /**
+   * Where `abv` came from. Physical and per-bottling, so it is never
+   * knowledge-base-owned; disagreements between stores are logged to
+   * `product_fact_conflict` instead.
+   */
+  abvSource?: string;
+  /**
+   * Where `age` came from.
+   */
+  ageSource?: string;
+  /**
+   * Where `volumeMl` came from.
+   */
+  volumeSource?: string;
+  /**
+   * How `producerId` / `bottlerId` were decided — `kb` for the resolver's own
+   * answer, `manual` for a hand relink.
+   */
+  producerSource?: string;
+}
+
+/**
+ * A curated knowledge-base entry: a distillery, a named brand, a blend or an
+ * independent bottler, with the facts that are properties of the **producer**
+ * rather than of one bottling — country, region, house peat level, default
+ * type.
+ *
+ * This is the single source of truth the catalogue was missing. A store's
+ * listing and an LLM's answer are both evidence about a fact; this row states
+ * it. Rows are keyed by `slug` and reached through `EntityProducerAlias`, never
+ * by `brandId`, because the catalogue's brand names carry typos and duplicate
+ * spellings that must all resolve to one researched entry.
+ */
+export interface EntityProducer extends EntityBaseRich {
+  /**
+   * Stable identifier used by the seed files and by `flavor_rule`, e.g.
+   * `tobermory`, `ledaig`, `gordon-macphail`. Unique.
+   */
+  slug: string;
+  /**
+   * Display name.
+   */
+  name: string;
+  /**
+   * Which kind of entity this is ({@link ProducerKind}).
+   */
+  kind: string;
+  /**
+   * Country FK. Drives `product.countryId` for every bottling that resolves
+   * here.
+   */
+  countryId?: ID;
+  /**
+   * Region as the market uses it ({@link ScotlandRegion}), including
+   * `islands`. This is the value exposed for display and filtering. Null
+   * outside Scotland and for most blends.
+   */
+  region?: string;
+  /**
+   * The protected region under the Scotch Whisky Regulations
+   * ({@link ScotlandLegalRegion}), which does not recognise `islands` —
+   * Tobermory is legally Highland while every shop lists it as an island malt.
+   */
+  legalRegion?: string;
+  /**
+   * Current owner, for review and display.
+   */
+  owner?: string;
+  /**
+   * The distillery this brand belongs to, for a `brand`-kind row: `ledaig` ->
+   * `tobermory`, `williamson` -> `laphroaig`.
+   *
+   * The resolver **never follows this to inherit facts** — a sibling brand
+   * exists precisely because its facts differ from its parent's, which is the
+   * whole Tobermory/Ledaig bug. It is used for display, for review grouping,
+   * and to arbitrate when a name matches both the brand and its distillery.
+   */
+  parentId?: ID;
+  /**
+   * The bottler that owns this brand or range: `big-peat` ->
+   * `douglas-laing`. Lets a bottling resolve its bottler even when the brand
+   * value names the range rather than the company.
+   */
+  bottlerId?: ID;
+  /**
+   * Whisky type name written onto resolving bottlings. Must match a row in
+   * `type`. Null for bottlers and for brands spanning several types, where the
+   * store's or the name's value survives.
+   */
+  defaultTypeName?: string;
+  /**
+   * How peated the standard line is ({@link PeatProfile}). The only source the
+   * `peated` tag has.
+   */
+  peatProfile: string;
+  /**
+   * How far this row has been checked ({@link KbStatus}). Only `verified` and
+   * `auto` rows are loaded by the resolver.
+   */
+  status: string;
+  /**
+   * Confidence the research pass reported, kept for review triage.
+   */
+  confidence?: string;
+  /**
+   * Newline-separated citations. Required for a `verified` row.
+   */
+  sourceUrls?: string;
+  /**
+   * Reviewer notes, and the place a withheld research proposal is recorded
+   * (for example a peat level that failed the corroboration gate).
+   */
+  note?: string;
+  /**
+   * When a person confirmed this row. Set only by human review.
+   */
+  verifiedAt?: Date;
+}
+
+/**
+ * One spelling that resolves to a producer. The resolver's entire match index
+ * is built from this table, which is why it holds the catalogue's typos
+ * (`Isiay Mist`, `Douglas Laingcompany`) alongside canonical names.
+ */
+export interface EntityProducerAlias extends EntityBaseRich {
+  /**
+   * The normalized key (`KbKeyUtils.key`). Unique across all producers, so one
+   * spelling can never resolve two ways.
+   */
+  key: string;
+  /**
+   * The producer this spelling names.
+   */
+  producerId: ID;
+  /**
+   * Where this alias may be matched ({@link ProducerAliasScope}). A short or
+   * generic alias must stay `brand`-scoped, or it mis-fires as a substring of
+   * a product name.
+   */
+  scope: string;
+  /**
+   * Why this alias exists, when it is not obvious (a typo, a transliteration,
+   * a historical name).
+   */
+  note?: string;
+}
+
+/**
+ * A curated statement about a producer's house style, for the thirteen
+ * non-peat flavor tags.
+ *
+ * `peated` may never appear here: peat has exactly one source of truth
+ * (`producer.peatProfile` plus the peat rules), and a second one would
+ * reintroduce the disagreement this design removes. `smoky` **is** allowed,
+ * because non-peat smokiness is a real house characteristic — Jack Daniel's
+ * charcoal mellowing being the catalogue's clearest case.
+ */
+export interface EntityProducerFlavor {
+  /**
+   * The producer this statement is about.
+   */
+  producerId: ID;
+  /**
+   * The flavor tag.
+   */
+  flavorId: ID;
+  /**
+   * What the row asserts ({@link KbFlavorEffect}).
+   */
+  effect: string;
+  /**
+   * Confidence the research pass reported.
+   */
+  confidence?: string;
+  /**
+   * Newline-separated citations.
+   */
+  sourceUrls?: string;
+  /**
+   * Reviewer notes.
+   */
+  note?: string;
+  /**
+   * When the row was created.
+   */
+  createdAt: Date;
+}
+
+/**
+ * A deterministic rule keyed on a pattern in the product name, for the facts
+ * that vary between one producer's bottlings.
+ *
+ * This is what replaces the `variable` peat band: `Bruichladdich` is unpeated,
+ * and `Port Charlotte` / `Octomore` in the name make a bottling heavily
+ * peated. A rule is either a peat rule or a tag rule, never both — enforced by
+ * a CHECK constraint, so a row cannot half-state two different things.
+ */
+export interface EntityFlavorRule extends EntityBaseRich {
+  /**
+   * The producer this rule is scoped to, or null for a global rule
+   * (`unpeated`, `peated`, `торф`).
+   */
+  producerId?: ID;
+  /**
+   * The normalized pattern to look for in the product name. A plain string,
+   * never a regular expression — a rule has to be reviewable by someone who
+   * does not read regex.
+   */
+  pattern: string;
+  /**
+   * How the pattern is matched ({@link FlavorRuleMatchMode}).
+   */
+  matchMode: string;
+  /**
+   * The flavor tag this rule requires or forbids. Null on a peat rule.
+   */
+  flavorId?: ID;
+  /**
+   * Whether the tag is required or forbidden ({@link KbFlavorEffect}; only
+   * `require` and `forbid` are meaningful here). Null on a peat rule.
+   */
+  effect?: string;
+  /**
+   * The peat level this pattern implies ({@link PeatProfile}). Null on a tag
+   * rule.
+   */
+  peatProfile?: string;
+  /**
+   * Higher wins. Negations sit at 100 so `Benromach Unpeated` outranks both
+   * the producer's own light profile and any positive keyword; explicit
+   * qualifiers (`lightly peated`, `heavily peated`) sit above the bare
+   * `peated` keyword so a real catalogue row is not over-stated.
+   */
+  priority: number;
+  /**
+   * Newline-separated citations.
+   */
+  sourceUrls?: string;
+  /**
+   * Reviewer notes.
+   */
+  note?: string;
+}
+
+/**
+ * A recorded disagreement between what the catalogue holds for a bottling and
+ * what one store's listing claims.
+ *
+ * This is the log the "different sources of truth give different data" problem
+ * needs: the canonical write silently discards a store's value whenever the
+ * column is already filled, and this row is that discarded claim, kept so it
+ * can be reviewed instead of lost. One row per (product, store, attribute) —
+ * `seenCount` is bumped rather than a new row written, so a long-standing
+ * disagreement does not grow the table daily.
+ *
+ * `age` and `volumeMl` are deliberately never compared: both are components of
+ * the frozen match key, so a store that states a different one is describing a
+ * **different bottling**, which is a merge question rather than a fact
+ * conflict.
+ */
+export interface EntityProductFactConflict {
+  /**
+   * The bottling whose stored fact is disputed.
+   */
+  productId: ID;
+  /**
+   * The store making the conflicting claim.
+   */
+  storeId: ID;
+  /**
+   * Which fact is disputed ({@link ProductFactField}; one of `type`,
+   * `country`, `brand`, `abv`).
+   */
+  attribute: string;
+  /**
+   * The catalogue's value at the time the conflict was seen, rendered for
+   * reading.
+   */
+  storedValue?: string;
+  /**
+   * What this store's listing said instead.
+   */
+  claimedValue?: string;
+  /**
+   * The provenance of the stored value at the time — which is what tells a
+   * reviewer whether the claim is worth acting on. A store contradicting an
+   * `llm` value is a likely correction; one contradicting `kb` is a likely
+   * store error.
+   */
+  storedSource?: string;
+  /**
+   * How many syncs have seen this same disagreement.
+   */
+  seenCount: number;
+  /**
+   * When the disagreement was first recorded.
+   */
+  firstSeenAt: Date;
+  /**
+   * When it was last seen.
+   */
+  lastSeenAt: Date;
+  /**
+   * When it was settled, by a person or by a knowledge-base overwrite.
+   */
+  resolvedAt?: Date;
 }
 
 /**

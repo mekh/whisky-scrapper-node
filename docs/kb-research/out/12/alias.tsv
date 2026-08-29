@@ -1,0 +1,59 @@
+Tomatin	tomatin	any	
+Wild Turkey	wild-turkey	any	
+Tamnavulin	tamnavulin	any	
+Label 5	label-5	any	
+Highland Queen	highland-queen	any	
+Glen Turner	glen-turner	any	
+Michter's	michters	any	
+Redbreast	redbreast	any	
+Heaven Hill	heaven-hill	any	
+Cragganmore	cragganmore	any	
+Midleton	midleton-very-rare	any	exact catalogue brand string
+Beverbach	beverbach	any	
+Glen Silver's	glen-silvers	any	
+Ballechin	ballechin	any	
+Kilbeggan	kilbeggan	any	
+Oneills	oneills	any	exact catalogue brand string
+The Gospel	the-gospel	any	
+Dalmahoy	dalmahoy	any	
+Glentauchers	glentauchers	any	
+Macarthurs	macarthurs	any	exact catalogue brand string
+Samuel Gelston's	samuel-gelstons	any	exact catalogue brand string
+15 Stars	15-stars	any	
+Buffalo Trace	buffalo-trace	any	
+Fireball	fireball	any	
+Ichiros	ichiros	any	exact catalogue brand string
+Lighthouse	lighthouse	brand	common English word, restrict to whole-value match
+Old Smuggler	old-smuggler	any	
+Spey River	spey-river	any	
+White Heather	white-heather	any	
+Angel	glen-angel	brand	exact catalogue brand string; generic word AND collides with the real bourbon brand Angel's Envy, so brand-only match
+Bradan Orach	bradan-orach	any	
+Dublin's Own	dublins-own	any	
+Gouden Carolus	gouden-carolus	any	
+Imperial	imperial	brand	generic/ambiguous word, restrict to whole-value match
+Lambertus	lambertus	any	
+Mellow Corn	mellow-corn	any	
+Old Barny	old-barny	any	
+PennyPacker	pennypacker	any	exact catalogue brand string spelling
+Rowans Creek	rowans-creek	any	exact catalogue brand string
+Spice Monkey	spice-monkey	any	
+The Old Barrel	the-old-barrel	any	
+Woodford	woodford	brand	exact catalogue brand string; bare word is a common surname/place name, restrict to whole-value match
+Cu Bocan	cu-bocan	any	ASCII fallback of Cu Bocan
+Michters	michters	any	no-apostrophe variant
+Midleton Very Rare	midleton-very-rare	any	
+Speyburn Bradan Orach	bradan-orach	any	sample product name form
+Rowan's Creek	rowans-creek	any	sample product name spelling
+Ichiro's	ichiros	any	canonical spelling
+Ichiro's Malt	ichiros	any	principal brand name
+Woodford Reserve	woodford	any	canonical spelling
+Glen Silvers	glen-silvers	any	no-apostrophe variant
+MacArthur's	macarthurs	any	canonical spelling, sample form
+Samuel Gelston's	samuel-gelstons	any	canonical spelling
+Gelston's	samuel-gelstons	any	sample product name form
+Dublins Own	dublins-own	any	no-apostrophe variant
+Pennypacker	pennypacker	any	standard capitalisation
+Glen Angel	glen-angel	any	sample product name form
+O'Neills	oneills	any	sample product name spelling
+O'Neill's	oneills	any	alternate apostrophe placement

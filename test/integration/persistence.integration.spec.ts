@@ -6,10 +6,11 @@ import { CoreProductService } from '~core/product';
 import { CoreStoreProductService } from '~core/store-product';
 import { CoreSyncLogService } from '~core/sync-log';
 import { CoreTypeService } from '~core/type';
-import { SyncTrigger } from '~enums';
+import { FactSource, ProductFactField, SyncTrigger } from '~enums';
 import type {
   ID,
   ProductCanonicalInput,
+  ProductFillInput,
   StoreProductUpsertInput,
 } from '~types';
 
@@ -42,6 +43,7 @@ describe('persistence write path (integration)', () => {
   const bottling = (
     over: Partial<ProductCanonicalInput> = {},
   ): ProductCanonicalInput => ({
+    factSources: {},
     matchKey: `${SLUG}-key`,
     name: 'Sample 0.7l',
     brandId: null,
@@ -289,43 +291,127 @@ describe('persistence write path (integration)', () => {
     ]);
   });
 
-  it('fills a still-null field and never overwrites a stored one', async () => {
+  const fill = (
+    productId: ID,
+    over: Partial<ProductFillInput> = {},
+  ): ProductFillInput => ({
+    id: productId,
+    abv: null,
+    brandId: null,
+    typeId: null,
+    countryId: null,
+    abvSource: FactSource.STORE,
+    brandSource: FactSource.STORE,
+    typeSource: FactSource.STORE,
+    countrySource: FactSource.STORE,
+    ...over,
+  });
+
+  const factRow = async (productId: ID): Promise<Record<string, unknown>> => {
+    const rows = await dataSource.query(
+      `SELECT abv, "typeId", "countryId", "abvSource", "typeSource",
+              "countrySource"
+       FROM product WHERE id = $1`,
+      [productId],
+    ) as Record<string, unknown>[];
+
+    return rows[0];
+  };
+
+  it('fills a still-null field and holds against an equal source', async () => {
     const typeMap = await types.resolveByName(['single malt']);
     const typeId = typeMap.get('single malt') ?? null;
     const productId = await makeBottling({ abv: 40 });
 
-    const filled = await products.fillMissing([{
-      id: productId,
-      abv: 99,
-      brandId: null,
-      typeId,
-      countryId,
-    }]);
+    const filled = await products.fillMissing([
+      fill(productId, { abv: 99, typeId, countryId }),
+    ]);
 
     expect(filled).toBe(1);
 
-    const rows = await dataSource.query(
-      'SELECT abv, "typeId", "countryId" FROM product WHERE id = $1',
-      [productId],
-    ) as { abv: number; typeId: ID; countryId: ID }[];
+    const row = await factRow(productId);
 
-    expect(rows[0].abv).toBe(40);
-    expect(rows[0].typeId).toBe(typeId);
-    expect(rows[0].countryId).toBe(countryId);
+    /**
+     * The stored 40 came from the same kind of source as the incoming 99, so
+     * it stands: only a better-trusted source may overwrite, which is what
+     * stops two stores from fighting over one bottling every night.
+     */
+    expect(row.abv).toBe(40);
+    expect(row.typeId).toBe(typeId);
+    expect(row.countryId).toBe(countryId);
 
     /**
      * Nothing left to fill means no write at all, so a shared row is not
      * locked by every store that lists it.
      */
-    const again = await products.fillMissing([{
-      id: productId,
-      abv: 99,
-      brandId: null,
-      typeId,
-      countryId,
-    }]);
+    const again = await products.fillMissing([
+      fill(productId, { abv: 99, typeId, countryId }),
+    ]);
 
     expect(again).toBe(0);
+  });
+
+  it('lets a better-trusted source correct a stored value', async () => {
+    const productId = await makeBottling({
+      abv: 40,
+      factSources: { [ProductFactField.ABV]: FactSource.LLM },
+    });
+
+    const before = await factRow(productId);
+    expect(before.abvSource).toBe(FactSource.LLM);
+
+    const filled = await products.fillMissing([
+      fill(productId, { abv: 43, abvSource: FactSource.STORE }),
+    ]);
+
+    expect(filled).toBe(1);
+
+    const after = await factRow(productId);
+
+    /**
+     * The whole point of provenance: a value the model guessed on the day the
+     * bottling was discovered used to be permanent, because the write was
+     * fill-if-null. A store that states the strength on its spec page now
+     * corrects it.
+     */
+    expect(after.abv).toBe(43);
+    expect(after.abvSource).toBe(FactSource.STORE);
+  });
+
+  it('never lets an automatic source overwrite a manual one', async () => {
+    const productId = await makeBottling({ abv: 40 });
+
+    await dataSource.query(
+      'UPDATE product SET abv = 46, "abvSource" = $2 WHERE id = $1',
+      [productId, FactSource.MANUAL],
+    );
+
+    const filled = await products.fillMissing([
+      fill(productId, { abv: 43, abvSource: FactSource.STORE }),
+    ]);
+
+    expect(filled).toBe(0);
+
+    const row = await factRow(productId);
+
+    expect(row.abv).toBe(46);
+    expect(row.abvSource).toBe(FactSource.MANUAL);
+  });
+
+  it('stamps provenance when the bottling is created', async () => {
+    const productId = await makeBottling({
+      abv: 40,
+      factSources: { [ProductFactField.ABV]: FactSource.NAME },
+    });
+
+    const row = await factRow(productId);
+
+    /**
+     * A fact created without a source would rank below everything, so the very
+     * next sync would overwrite the values the row was created from.
+     */
+    expect(row.abvSource).toBe(FactSource.NAME);
+    expect(row.countrySource).toBeNull();
   });
 
   it('keeps one snapshot per offer per day under concurrency', async () => {

@@ -119,6 +119,7 @@ describe('report grouping over the live query (integration)', () => {
   ): Promise<ID> => {
     const { ids } = await products.findOrCreateByMatchKeys([
       {
+        factSources: {},
         matchKey: `${TOKEN}-${key}`,
         name,
         brandId: null,

@@ -318,12 +318,31 @@ export const BRAND_KEYS = [...BRAND_INFO.keys()].sort(
 );
 
 /**
+ * The two tags the knowledge base owns outright.
+ *
+ * Neither may be derived from a listing's wording or from a model's recall any
+ * more. A shop's description saying "smoky" is marketing copy about one
+ * bottling, and a model asked for a distillery's house style answers from the
+ * semantic neighbourhood of its name — which is exactly how `Tobermory`, an
+ * unpeated malt, acquired the smoke of `Ledaig`, its sibling brand from the
+ * same site. Both now come from `producer.peatProfile` and the peat rules, and
+ * from nowhere else.
+ */
+export const KB_FLAVOR_TAGS: string[] = ['peated', 'smoky'];
+
+/**
  * Flavor tag → keyword list (Ukrainian / English). Spaces inside keywords are
  * significant (`px `, `med `).
+ *
+ * **`peated` and `smoky` are deliberately absent.** They were the first two
+ * entries until the knowledge base took ownership of peat; leaving them here
+ * would have let every sync re-derive from a shop's prose the very tags the
+ * reconciliation pass had just corrected. The Ukrainian and English peat words
+ * still decide a bottling's peat level — but through `flavor_rule`, where the
+ * decision is reviewable and priorities settle `Benromach Unpeated` against
+ * Benromach's own light profile.
  */
 export const FLAVOR_KEYWORDS: [string, string[]][] = [
-  ['peated', ['peat', 'peated', 'торф', "торф'ян", 'торфян']],
-  ['smoky', ['smok', 'дим', 'димн']],
   ['sherry', ['sherry', 'хересн', 'херес', 'oloroso', 'px ', 'pedro ximenez']],
   ['bourbon-cask', ['bourbon cask', 'бурбонн', 'ex-bourbon']],
   ['vanilla', ['vanilla', 'ваніл']],
@@ -340,16 +359,26 @@ export const FLAVOR_KEYWORDS: [string, string[]][] = [
 ];
 
 /**
- * The closed flavor vocabulary, derived from {@link FLAVOR_KEYWORDS} so the
- * keyword pass and the LLM classification pass can never disagree on what a
- * valid tag is. `LlmFlavorService` filters the model's answer against this
- * list and silently drops anything else, which is what keeps the open
- * `flavor` lookup table (and the `/meta` filter chips built from it) free of
- * invented or translated tags. Adding a tag here is the only supported way to
- * extend the vocabulary — the prompt lists these values inline, so the two
- * must be edited together.
+ * The thirteen tags a language model may report.
+ *
+ * This is the list the flavour prompt states, and the list its answer is
+ * filtered against. It excludes the two the knowledge base owns, so the model
+ * cannot reintroduce a peat tag whatever it believes about a bottling.
  */
-export const FLAVOR_TAGS: string[] = FLAVOR_KEYWORDS.map(([tag]) => tag);
+export const LLM_FLAVOR_TAGS: string[] = FLAVOR_KEYWORDS.map(([tag]) => tag);
+
+/**
+ * The closed flavor vocabulary — all fifteen tags.
+ *
+ * It stays complete even though no single pass may write all of it, because it
+ * is what the `flavor` lookup table holds and what `/meta` builds its filter
+ * chips from. That contract is unchanged: a user still filters on `peated`,
+ * and the change is only in who is allowed to *state* it.
+ */
+export const FLAVOR_TAGS: string[] = [
+  ...KB_FLAVOR_TAGS,
+  ...LLM_FLAVOR_TAGS,
+];
 
 /**
  * Whisky type → keyword list. More specific types come first.

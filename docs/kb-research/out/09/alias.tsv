@@ -1,0 +1,68 @@
+TBWC	tbwc	brand	exact catalogue string
+That Boutique-y Whisky Company	tbwc	any	
+That Boutique-y Whisky Co	tbwc	any	common shortened variant
+FEW	few	brand	short and a common English word - brand scope only
+FEW Spirits	few	any	
+Puni	puni	brand	4 chars
+Helsinki	helsinki-distilling	brand	city name, exact TBWC sample string
+Helsinki Distilling Company	helsinki-distilling	any	
+Mackmyra	mackmyra	any	
+Paul John	paul-john	any	
+Dalmore	dalmore	any	exact catalogue string
+The Dalmore	dalmore	any	
+Glencadam	glencadam	any	exact catalogue string
+Teeling	teeling	any	exact catalogue string
+Teeling Whiskey	teeling	any	
+Teeling Distillery	teeling	any	
+& Whisky	and-whisky	brand	exact catalogue string; likely a data/category artifact, see producer.tsv note
+Black Ram	black-ram	any	exact catalogue string
+Glendale	glendale	brand	exact catalogue string; common place name, ambiguous
+Monkey Shoulder	monkey-shoulder	any	exact catalogue string
+Deveron	deveron	brand	exact catalogue string; also a Scottish river name, kept ambiguous
+The Deveron	deveron	any	
+Glen Deveron	deveron	any	
+Macduff	macduff	any	canonical distillery name; not itself a catalogue brand string in this batch
+Armorik	armorik	any	exact catalogue string
+Lakes	lakes	brand	exact catalogue string; generic word
+The Lakes	lakes	brand	still fairly generic
+The Lakes Distillery	lakes	any	
+Barry Bernard	barry-bernard	any	exact catalogue string
+Glen Keith	glen-keith	any	exact catalogue string
+The Yamazaki	yamazaki	any	exact catalogue string
+Yamazaki	yamazaki	any	
+Glen Elgin	glen-elgin	any	exact catalogue string
+Micil	micil	any	exact catalogue string; unusual/distinctive word
+The Ardmore	ardmore	any	exact catalogue string
+Ardmore	ardmore	any	
+Clonakilty	clonakilty	any	exact catalogue string
+Glenkinchie	glenkinchie	any	exact catalogue string
+Lauder's	lauders	any	exact catalogue string
+Lauders	lauders	any	apostrophe-stripped variant
+Royal Brackla	royal-brackla	any	exact catalogue string
+Whistlepig	whistlepig	any	exact catalogue string (lowercase p)
+WhistlePig	whistlepig	any	official spelling
+Boone County	boone-county	any	exact catalogue string
+De Danann	de-danann	any	exact catalogue string
+Hakushu	hakushu	any	exact catalogue string
+King Charles	king-charles	brand	exact catalogue string; a monarch's name, highly ambiguous
+Oakeshott	oakeshott	any	exact catalogue string
+Sexton	sexton	brand	exact catalogue string; common English word/surname
+The Sexton	sexton	any	common product-facing name
+Tormore	tormore	any	exact catalogue string
+Aikan	aikan	brand	exact catalogue string; 5 chars, unconfirmed brand
+Bomberger's	bombergers	any	exact catalogue string
+Bombergers	bombergers	any	apostrophe-stripped variant
+Dilmoor	dilmoor	any	exact catalogue string
+Glen Broch	glen-broch	any	exact catalogue string
+Hogs	hogs	brand	exact catalogue string; common English word
+Knappogue Castle	knappogue-castle	any	exact catalogue string
+McClelland's	mcclellands	any	exact catalogue string
+McClellands	mcclellands	any	apostrophe-stripped variant
+Nobushi	nobushi	any	exact catalogue string
+Passport Scotch	passport-scotch	any	exact catalogue string
+Passport	passport-scotch	brand	short generic English word alone
+Roe + Co	roe-co	any	exact catalogue string (uses a plus sign)
+Roe & Co	roe-co	any	official spelling
+Smooth Ambler	smooth-ambler	any	exact catalogue string
+The Highland Shepherd	the-highland-shepherd	any	exact catalogue string
+Wilderness Trail	wilderness-trail	any	exact catalogue string

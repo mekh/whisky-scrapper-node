@@ -1,0 +1,64 @@
+Bushmills	bushmills	any	
+Old Bushmills	bushmills	any	
+Bunnahabhain	bunnahabhain	any	
+Ballantine's	ballantines	any	exact catalogue spelling
+Ballantines	ballantines	any	
+Ballantine	ballantines	any	
+Caol Ila	caol-ila	any	
+Four Roses	four-roses	any	
+Glen Talloch	glen-talloch	any	
+Ledaig	ledaig	any	
+Oban	oban	brand	4 chars, under the 5-char any threshold
+Evan Williams	evan-williams	any	
+Canadian Club	canadian-club	any	
+Maison Des Futailles Spicebox	spicebox	any	exact catalogue spelling
+Maison des Futailles Spicebox	spicebox	any	
+Maison des Futailles	spicebox	any	
+Spicebox	spicebox	brand	generic dictionary word (a box for spices) outside this context
+Benrinnes	benrinnes	any	
+Glenshiel	glenshiel	any	
+Bagots	bagots	any	
+BAGOTS	bagots	any	catalogue product names use this all-caps form
+J&b	jb	brand	exact catalogue spelling, 3 chars
+J&B	jb	brand	
+J&B Rare	jb	any	
+New Riff	new-riff	any	
+The Glen Morris	glen-morris	any	exact catalogue spelling
+Glen Morris	glen-morris	any	
+Crown Royal	crown-royal	any	
+Glen Spey	glen-spey	any	
+Lord Elcho	lord-elcho	any	
+Ry3	ry3	brand	3 chars
+RY3	ry3	brand	
+Yakusun	yakusun	any	
+Bud Spencer	bud-spencer	any	
+Eagle Rare	eagle-rare	any	
+High Commissioner	high-commissioner	any	
+Lewis&clark	lewis-clark	any	exact catalogue spelling
+Lewis&Clark	lewis-clark	any	
+Lewis & Clark	lewis-clark	any	
+O.h. Ingram	oh-ingram	any	exact catalogue spelling
+O.H. Ingram	oh-ingram	any	
+Speaker	speaker	brand	common English word
+Vulson	vulson	any	
+Alchemist	alchemist	brand	generic English word (occupation/fantasy term) outside this context
+Boulevardier	boulevardier	brand	also a common cocktail/dictionary word
+Dry Fly	dry-fly	brand	"dry fly" is also a common fly-fishing term
+Glen Russell	glen-russell	any	
+Kyoda	kyoda	any	
+Mckintrye's Club & Casino	mckintyres	any	exact catalogue spelling (typo preserved)
+McKintyre's Club & Casino	mckintyres	any	likely intended spelling
+Old Ballantruan	old-ballantruan	any	
+Ballantruan	old-ballantruan	any	
+Peat Chimney	peat-chimney	any	
+Rowan's Creek	rowans-creek	any	
+Spice King	spice-king	brand	"spice"/"king" are both common words; kept to whole-value match
+The Kyoto	the-kyoto	brand	"Kyoto" is a common place name, restrict to whole brand value
+Wolfburn	wolfburn	any	
+Tobermory	tobermory	any	
+Tomintoul	tomintoul	any	
+Buffalo Trace	buffalo-trace	any	
+Willett	willett	any	
+Heaven Hill	heaven-hill	any	
+Wemyss Malts	wemyss-malts	any	
+Wemyss	wemyss-malts	brand	short/generic Scottish surname

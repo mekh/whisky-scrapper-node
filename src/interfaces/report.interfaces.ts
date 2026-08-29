@@ -227,6 +227,32 @@ export interface ReportFilter {
    * Glenfiddich). Both readings match; see `findCurrentRows`.
    */
   name?: string;
+
+  /**
+   * Keep only bottlings whose producer sits in one of these regions, by the
+   * market convention.
+   */
+  regions?: string[];
+
+  /**
+   * Drop bottlings whose producer sits in one of these regions.
+   *
+   * The exclusion is the useful half. "Everything except Islay" is how a
+   * peat-averse drinker actually shops, and it is the same shape as
+   * `excludeFlavors`, which exists for the same reason.
+   */
+  excludeRegions?: string[];
+
+  /**
+   * Keep only bottlings whose type **and** country both come from a source the
+   * filters trust.
+   *
+   * Opt-in, because it is stricter than the default: the default already
+   * refuses to *match* an untrusted value, while this refuses to show the
+   * bottling at all. It is for a user who would rather see a short, certain
+   * list than a long one with unverified entries in it.
+   */
+  verifiedFacts?: boolean;
 }
 
 export interface ReportCurrentRow {
@@ -359,6 +385,30 @@ export interface ReportCurrentRow {
    * Flavor names attached to the product (sorted, possibly empty).
    */
   flavors: string[];
+
+  /**
+   * The resolved distillery's display name, or null when the knowledge base
+   * could not place the bottling.
+   */
+  distillery: string | null;
+
+  /**
+   * The distillery's region, by the market convention rather than the legal
+   * one — Talisker reads `islands` here and is legally Highland.
+   */
+  region: string | null;
+
+  /**
+   * The independent bottler's name when there is one. A non-null value is the
+   * IB flag: there is no separate boolean.
+   */
+  bottler: string | null;
+
+  /**
+   * Where each of the bottling's facts came from, so the client can mark an
+   * unverified one instead of presenting a model's guess as fact.
+   */
+  factSources: Record<string, string | null>;
 }
 
 export interface ReportRow extends ReportCurrentRow {

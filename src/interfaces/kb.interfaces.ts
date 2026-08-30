@@ -613,6 +613,16 @@ export interface ProducerReviewRow {
   countryCode: string | null;
 
   /**
+   * The country's Ukrainian display name, for the flag tooltip.
+   */
+  countryName: string | null;
+
+  /**
+   * The country's flag emoji.
+   */
+  countryIcon: string | null;
+
+  /**
    * The parent distillery's slug, for a sibling brand.
    */
   parentSlug: string | null;
@@ -639,6 +649,34 @@ export interface ProducerReviewRow {
    * opposite of null: nothing would reach this row at all.
    */
   potentialReach: number | null;
+}
+
+/**
+ * One display name behind a producer row on the review screen — what expanding
+ * the row lists. For a live producer these are the bottlings that resolve to
+ * it today; for a withheld one, the bottlings that **would** resolve if it
+ * were promoted.
+ *
+ * Grouped by name rather than one row per bottling: the same whisky in three
+ * volumes is three bottlings, and the catalogue link is built from the name,
+ * so ungrouped rows were three identical links in a row.
+ */
+export interface ProducerProductRow {
+  /**
+   * The display name — canonical where one exists, otherwise the longest raw
+   * store name, which is also what the catalogue's search matches.
+   */
+  name: string | null;
+
+  /**
+   * How many distinct bottlings share the name (volumes, ages, gift boxes).
+   */
+  productCount: number;
+
+  /**
+   * Whether any store currently lists any of them in stock.
+   */
+  inStock: boolean;
 }
 
 /**
@@ -905,6 +943,12 @@ export interface ProducerChildRow {
  */
 export interface ProducerRuleRow {
   /**
+   * The rule's id — the handle a delete uses. Global rules carry one too, but
+   * no endpoint accepts it: they are migration-authored context.
+   */
+  id: ID;
+
+  /**
    * The normalized pattern matched against a bottling's name.
    */
   pattern: string;
@@ -942,6 +986,54 @@ export interface ProducerRuleRow {
 
   /**
    * Why the rule exists.
+   */
+  note: string | null;
+}
+
+/**
+ * A reviewer's new name-pattern rule for one producer, already validated and
+ * normalized by the domain layer: the pattern is a `KbKeyUtils.key`, and
+ * exactly one of the peat band or the tag claim is set.
+ */
+export interface ProducerRuleInput {
+  /**
+   * The producer the rule is scoped to. Global rules are migration-authored
+   * and cannot be created here.
+   */
+  producerId: ID;
+
+  /**
+   * The normalized pattern.
+   */
+  pattern: string;
+
+  /**
+   * `word` or `prefix`.
+   */
+  matchMode: FlavorRuleMatchMode;
+
+  /**
+   * The peat band, for a peat rule.
+   */
+  peatProfile: PeatProfile | null;
+
+  /**
+   * The flavour tag id, for a tag rule.
+   */
+  flavorId: ID | null;
+
+  /**
+   * What the rule asserts about the tag.
+   */
+  effect: KbFlavorEffect | null;
+
+  /**
+   * Higher wins; negations conventionally sit at 100.
+   */
+  priority: number;
+
+  /**
+   * Why the rule exists — the reviewer's own words.
    */
   note: string | null;
 }

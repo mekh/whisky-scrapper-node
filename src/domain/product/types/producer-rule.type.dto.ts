@@ -1,9 +1,12 @@
 import { IsInt, IsOptional, IsString } from 'class-validator';
 
 import type { FlavorRuleMatchMode, KbFlavorEffect, PeatProfile } from '~enums';
-import type { ProducerRuleRow } from '~types';
+import type { ID, ProducerRuleRow } from '~types';
 
 export class ProducerRuleType implements ProducerRuleRow {
+  @IsString()
+  public id!: ID;
+
   @IsString()
   public pattern!: string;
 

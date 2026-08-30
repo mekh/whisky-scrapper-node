@@ -15,6 +15,7 @@ import {
   KbFlavorWrite,
   KbProducerWrite,
   KbReconcileRow,
+  ProducerProductRow,
   ProductCanonicalInput,
   ProductFactConflictInput,
   ProductFactReviewRow,
@@ -282,6 +283,36 @@ const STORE_LINKS_SQL = `
     ORDER BY d."inStock" DESC, d.name
     LIMIT ${STORE_LINK_LIMIT}
   ) o
+`;
+
+/**
+ * Builds the producer-expansion read: the display names behind one producer
+ * row, **grouped by name**. One whisky in three volumes is three bottlings but
+ * one entry — the screen links into the catalogue by name, so ungrouped rows
+ * were identical links repeated. The display name falls back to the longest
+ * raw store name, as the facts queue picks it, and `inStock` is true when any
+ * grouped bottling has a stocked offer anywhere. Built by one function for
+ * both reads so the resolved and the what-if paths cannot drift apart in what
+ * they show.
+ *
+ * @param where - The predicate selecting the bottlings, over alias `p`.
+ * @returns The grouped, ordered query.
+ */
+const producerProductsSql = (where: string): string => `
+  SELECT x.label AS name, count(*)::int AS "productCount",
+         bool_or(x."inStock") AS "inStock"
+  FROM (
+    SELECT COALESCE(p.name, (
+             SELECT sp."nameOrig" FROM store_product sp
+             WHERE sp."productId" = p.id
+             ORDER BY length(sp."nameOrig") DESC LIMIT 1)) AS label,
+           EXISTS (SELECT 1 FROM store_product sp
+                   WHERE sp."productId" = p.id AND sp."inStock") AS "inStock"
+    FROM product p
+    WHERE ${where}
+  ) x
+  GROUP BY x.label
+  ORDER BY lower(x.label), x.label
 `;
 
 /**
@@ -1096,6 +1127,9 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
    * @param producer - `resolved` or `unresolved` to take one half of the
    *   queue; omit for both. The halves need different work, which is why the
    *   filter exists at all.
+   * @param search - Case-insensitive substring of the canonical name or any
+   *   store's raw name, or omit for all. Both columns, because the screen
+   *   falls back to the raw name where cleaning left nothing.
    * @returns The rows and the total matching count.
    */
   public async findUntrustedFacts(
@@ -1103,19 +1137,29 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
     limit = 50,
     offset = 0,
     producer?: string,
+    search?: string,
   ): Promise<{ rows: ProductFactReviewRow[]; total: number }> {
     const segment = FACT_QUEUE_SEGMENT[producer ?? ''] ?? '';
 
     const where = `(
-         ($1::text IS NULL OR $1 = 'type')
-         AND p."typeId" IS NOT NULL
-         AND (p."typeSource" IS NULL
-              OR NOT (p."typeSource" = ANY($2::text[])))
-       ) OR (
-         ($1::text IS NULL OR $1 = 'country')
-         AND p."countryId" IS NOT NULL
-         AND (p."countrySource" IS NULL
-              OR NOT (p."countrySource" = ANY($2::text[])))
+         (
+           ($1::text IS NULL OR $1 = 'type')
+           AND p."typeId" IS NOT NULL
+           AND (p."typeSource" IS NULL
+                OR NOT (p."typeSource" = ANY($2::text[])))
+         ) OR (
+           ($1::text IS NULL OR $1 = 'country')
+           AND p."countryId" IS NOT NULL
+           AND (p."countrySource" IS NULL
+                OR NOT (p."countrySource" = ANY($2::text[])))
+         )
+       ) AND (
+         $3::text IS NULL
+         OR p.name ILIKE '%' || $3 || '%'
+         OR EXISTS (
+           SELECT 1 FROM store_product snp
+           WHERE snp."productId" = p.id
+             AND snp."nameOrig" ILIKE '%' || $3 || '%')
        )`;
 
     const rows = await this.query(
@@ -1138,14 +1182,14 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
        WHERE (${where})${segment}
        ORDER BY (SELECT count(DISTINCT sp."storeId") FROM store_product sp
                  WHERE sp."productId" = p.id AND sp."inStock") DESC, p.id
-       LIMIT $3 OFFSET $4`,
-      [field ?? null, TRUSTED_FACT_SOURCES, limit, offset],
+       LIMIT $4 OFFSET $5`,
+      [field ?? null, TRUSTED_FACT_SOURCES, search ?? null, limit, offset],
     ) as ProductFactReviewRow[];
 
     const counted = await this.query(
       `SELECT count(*)::int AS total FROM product p
        WHERE (${where})${segment}`,
-      [field ?? null, TRUSTED_FACT_SOURCES],
+      [field ?? null, TRUSTED_FACT_SOURCES, search ?? null],
     ) as { total: number }[];
 
     return { rows, total: counted[0]?.total ?? 0 };
@@ -1179,6 +1223,8 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
    * @param store - Restrict to one shop's claims, by slug.
    * @param limit - Page size.
    * @param offset - Page offset.
+   * @param search - Case-insensitive substring of the bottling's canonical
+   *   name or any store's raw name, or omit for all.
    * @returns The rows and the total matching count.
    */
   public async findConflicts(
@@ -1186,13 +1232,21 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
     store?: string,
     limit = 50,
     offset = 0,
+    search?: string,
   ): Promise<{ rows: ReviewConflictRow[]; total: number }> {
+    const nameMatch = `($3::text IS NULL
+         OR p.name ILIKE '%' || $3 || '%'
+         OR EXISTS (
+           SELECT 1 FROM store_product snp
+           WHERE snp."productId" = p.id
+             AND snp."nameOrig" ILIKE '%' || $3 || '%'))`;
+
     const rows = await this.query(
       `WITH q AS (
          SELECT c.*,
-                CASE WHEN c."storedValue" ~ $5 THEN c."storedValue"::uuid END
+                CASE WHEN c."storedValue" ~ $6 THEN c."storedValue"::uuid END
                   AS "storedId",
-                CASE WHEN c."claimedValue" ~ $5 THEN c."claimedValue"::uuid END
+                CASE WHEN c."claimedValue" ~ $6 THEN c."claimedValue"::uuid END
                   AS "claimedId"
          FROM product_fact_conflict c
          WHERE c."resolvedAt" IS NULL
@@ -1215,19 +1269,29 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
        LEFT JOIN country cc ON cc.id = q."claimedId"
        WHERE ($1::text IS NULL OR q.attribute = $1)
          AND ($2::text IS NULL OR st.slug = $2)
+         AND ${nameMatch}
        ORDER BY q."seenCount" DESC, q."lastSeenAt" DESC
-       LIMIT $3 OFFSET $4`,
-      [attribute ?? null, store ?? null, limit, offset, UUID_SHAPE],
+       LIMIT $4 OFFSET $5`,
+      [
+        attribute ?? null,
+        store ?? null,
+        search ?? null,
+        limit,
+        offset,
+        UUID_SHAPE,
+      ],
     ) as ReviewConflictRow[];
 
     const counted = await this.query(
       `SELECT count(*)::int AS total
        FROM product_fact_conflict c
        JOIN store st ON st.id = c."storeId"
+       JOIN product p ON p.id = c."productId"
        WHERE c."resolvedAt" IS NULL
          AND ($1::text IS NULL OR c.attribute = $1)
-         AND ($2::text IS NULL OR st.slug = $2)`,
-      [attribute ?? null, store ?? null],
+         AND ($2::text IS NULL OR st.slug = $2)
+         AND ${nameMatch}`,
+      [attribute ?? null, store ?? null, search ?? null],
     ) as { total: number }[];
 
     return { rows, total: counted[0]?.total ?? 0 };
@@ -1254,6 +1318,45 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
        WHERE "productId" = $1 AND "storeId" = $2 AND attribute = $3`,
       [productId, storeId, attribute],
     );
+  }
+
+  /**
+   * Lists the display names resolved to a producer, in either slot: made by it
+   * or bottled by it. The bottler slot matters because a bottler's own
+   * `productCount` is structurally zero — the resolver refuses it the producer
+   * slot — so without it expanding a bottler row would always show nothing.
+   *
+   * @param producerId - The producer or bottler.
+   * @returns The grouped names, alphabetically, each with its bottling count.
+   */
+  public async findResolvedByProducer(
+    producerId: ID,
+  ): Promise<ProducerProductRow[]> {
+    return this.query(
+      producerProductsSql('p."producerId" = $1 OR p."bottlerId" = $1'),
+      [producerId],
+    ) as Promise<ProducerProductRow[]>;
+  }
+
+  /**
+   * Reads specific bottlings as producer-expansion rows — the withheld path,
+   * where the ids come from a what-if resolution rather than from a stored
+   * link.
+   *
+   * @param ids - The bottlings to read.
+   * @returns The grouped names, alphabetically, each with its bottling count.
+   */
+  public async findProducerProductsByIds(
+    ids: ID[],
+  ): Promise<ProducerProductRow[]> {
+    if (!ids.length) {
+      return [];
+    }
+
+    return this.query(
+      producerProductsSql('p.id = ANY($1::uuid[])'),
+      [ids],
+    ) as Promise<ProducerProductRow[]>;
   }
 
   /**

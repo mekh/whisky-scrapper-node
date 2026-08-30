@@ -66,6 +66,14 @@ export class ProducerReviewType implements ProducerReviewRow {
 
   @IsOptional()
   @IsString()
+  public countryName!: string | null;
+
+  @IsOptional()
+  @IsString()
+  public countryIcon!: string | null;
+
+  @IsOptional()
+  @IsString()
   public parentSlug!: string | null;
 
   @IsOptional()

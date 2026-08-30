@@ -1,20 +1,24 @@
 import { Injectable } from '@nestjs/common';
 
+import { CoreFlavorService } from '~core/flavor';
 import { CoreProducerService } from '~core/producer';
 import { CoreProductService } from '~core/product';
-import { KbStatus } from '~enums';
-import { NotFoundError } from '~errors';
+import { FlavorRuleMatchMode, KbStatus } from '~enums';
+import { BadRequestError, DuplicateError, NotFoundError } from '~errors';
 import type {
   ID,
   KbReconcileSummary,
   ProducerDetail,
   ProducerPatchResult,
+  ProducerProductRow,
   ProducerReviewRow,
+  ProducerRuleInput,
   ProductFactReviewRow,
   ProductReviewSummary,
   ReviewConflictRow,
   TypePaginated,
 } from '~types';
+import { KbKeyUtils } from '~utils';
 
 import { KbReconcileService } from '~scrape/kb';
 
@@ -22,6 +26,7 @@ import { ProducerReachService } from './producer-reach.service';
 
 import type {
   ProducerPatchInput,
+  ProducerRuleCreateInput,
   ReviewConflictQuery,
   ReviewFactQuery,
   ReviewProducerQuery,
@@ -31,6 +36,17 @@ import type {
  * Default page size for every review listing.
  */
 const PAGE_SIZE = 50;
+
+/**
+ * Default priority of a reviewer's rule — the producer-scoped convention the
+ * seeds use. Negations sit at 100 and beat it.
+ */
+const DEFAULT_RULE_PRIORITY = 60;
+
+/**
+ * Postgres unique-violation error code, mapped to a 409.
+ */
+const UNIQUE_VIOLATION = '23505';
 
 /**
  * The read and write side of the curation screen.
@@ -51,6 +67,8 @@ export class ProductReviewService {
 
   private readonly products: CoreProductService;
 
+  private readonly flavors: CoreFlavorService;
+
   private readonly reach: ProducerReachService;
 
   private readonly reconcile: KbReconcileService;
@@ -58,11 +76,13 @@ export class ProductReviewService {
   public constructor(
     producers: CoreProducerService,
     products: CoreProductService,
+    flavors: CoreFlavorService,
     reach: ProducerReachService,
     reconcile: KbReconcileService,
   ) {
     this.producers = producers;
     this.products = products;
+    this.flavors = flavors;
     this.reach = reach;
     this.reconcile = reconcile;
   }
@@ -147,13 +167,14 @@ export class ProductReviewService {
         query.status,
         limit,
         offset,
+        query.name,
       );
 
       return { data: rows, total, limit, offset };
     }
 
     const [listed, reach] = await Promise.all([
-      this.producers.listForReview(query.status, null, 0),
+      this.producers.listForReview(query.status, null, 0, query.name),
       this.reach.withheldReach(),
     ]);
 
@@ -190,6 +211,7 @@ export class ProductReviewService {
       limit,
       offset,
       query.producer,
+      query.name,
     );
 
     return { data: rows, total, limit, offset };
@@ -212,6 +234,7 @@ export class ProductReviewService {
       query.store,
       limit,
       offset,
+      query.name,
     );
 
     return { data: rows, total, limit, offset };
@@ -284,6 +307,180 @@ export class ProductReviewService {
     }
 
     return detail;
+  }
+
+  /**
+   * Lists the bottlings behind one producer row — what expanding the row on
+   * the review screen shows.
+   *
+   * The answer depends on the row's status, because the number next to it
+   * does too. A live producer (`verified`/`auto`) lists what resolves to it
+   * **today**, in either slot — made by it or bottled by it. A withheld one
+   * resolves to nothing by construction, so its list is the same what-if pass
+   * its `potentialReach` ranking came from: the bottlings that **would**
+   * resolve to it were it promoted.
+   *
+   * @param id - The producer.
+   * @returns The bottlings, alphabetically by display name.
+   * @throws {NotFoundError} When no producer has that id.
+   */
+  public async producerProducts(id: ID): Promise<ProducerProductRow[]> {
+    const producer = await this.producers.findReviewRow(id);
+
+    if (!producer) {
+      throw new NotFoundError('Producer not found');
+    }
+
+    const live = producer.status === KbStatus.VERIFIED
+      || producer.status === KbStatus.AUTO;
+
+    if (live) {
+      return this.products.findResolvedByProducer(id);
+    }
+
+    const ids = await this.reach.withheldProductIds(id);
+
+    return this.products.findProducerProductsByIds(ids);
+  }
+
+  /**
+   * Creates one producer-scoped name-pattern rule **and applies it**.
+   *
+   * The same recording-vs-applying rule as `patchProducer`: a stored rule
+   * changes nothing a filter reads until the catalogue is re-resolved, so the
+   * pass runs in the same request and the response reports what it wrote.
+   *
+   * Validation the DTO cannot express happens here: exactly one of the peat
+   * band or the tag claim must be stated (the table's CHECK constraint, as a
+   * 400 instead of a 500), the pattern must normalize to something matchable,
+   * and a tag rule's flavour must already exist — an unknown name is rejected
+   * rather than coined, the same stance `CoreBrandService.findIdsByName`
+   * takes.
+   *
+   * @param id - The producer the rule is scoped to.
+   * @param input - The rule as the reviewer stated it.
+   * @returns What applying the rule wrote.
+   * @throws {NotFoundError} When no producer has that id.
+   * @throws {BadRequestError} When the rule states both claims, neither, an
+   *   unknown flavour, or a pattern that normalizes to nothing.
+   * @throws {DuplicateError} When the producer already has a rule for that
+   *   pattern and tag.
+   */
+  public async createProducerRule(
+    id: ID,
+    input: ProducerRuleCreateInput,
+  ): Promise<KbReconcileSummary> {
+    const producer = await this.producers.findReviewRow(id);
+
+    if (!producer) {
+      throw new NotFoundError('Producer not found');
+    }
+
+    const rule = await this.buildRule(id, input);
+
+    try {
+      await this.producers.createRule(rule);
+    } catch (error) {
+      if ((error as { code?: string }).code === UNIQUE_VIOLATION) {
+        throw new DuplicateError(
+          'The producer already has a rule for this pattern',
+        );
+      }
+
+      throw error;
+    }
+
+    const run = await this.reconcile.run();
+
+    return run.summary;
+  }
+
+  /**
+   * Deletes one of a producer's own rules **and applies the removal**.
+   *
+   * Scoped to the producer, so a global rule — migration-authored context —
+   * is unreachable by construction rather than by a check someone could
+   * forget.
+   *
+   * @param id - The producer the rule belongs to.
+   * @param ruleId - The rule to delete.
+   * @returns What applying the removal wrote.
+   * @throws {NotFoundError} When the rule does not exist or is not that
+   *   producer's.
+   */
+  public async deleteProducerRule(
+    id: ID,
+    ruleId: ID,
+  ): Promise<KbReconcileSummary> {
+    const deleted = await this.producers.deleteRule(ruleId, id);
+
+    if (deleted === 0) {
+      throw new NotFoundError('Rule not found');
+    }
+
+    const run = await this.reconcile.run();
+
+    return run.summary;
+  }
+
+  /**
+   * Validates and normalizes a reviewer's rule into the row to store.
+   *
+   * @param id - The producer the rule is scoped to.
+   * @param input - The rule as the reviewer stated it.
+   * @returns The validated rule.
+   * @throws {BadRequestError} When the rule is not exactly one claim, names an
+   *   unknown flavour, or its pattern normalizes to nothing.
+   */
+  private async buildRule(
+    id: ID,
+    input: ProducerRuleCreateInput,
+  ): Promise<ProducerRuleInput> {
+    const isPeatRule = input.peatProfile !== undefined;
+    const isTagRule = input.flavorName !== undefined
+      || input.effect !== undefined;
+
+    if (isPeatRule === isTagRule) {
+      throw new BadRequestError(
+        'A rule states either a peat band or a tag claim, exactly one',
+      );
+    }
+
+    if (isTagRule && (!input.flavorName || !input.effect)) {
+      throw new BadRequestError(
+        'A tag rule needs both the flavor and the effect',
+      );
+    }
+
+    const pattern = KbKeyUtils.key(input.pattern);
+
+    if (!pattern) {
+      throw new BadRequestError('The pattern contains nothing matchable');
+    }
+
+    let flavorId: ID | null = null;
+
+    if (input.flavorName) {
+      const ids = await this.flavors.findIdsByName([input.flavorName]);
+      const found = ids.get(input.flavorName);
+
+      if (!found) {
+        throw new BadRequestError(`Unknown flavor: ${input.flavorName}`);
+      }
+
+      flavorId = found;
+    }
+
+    return {
+      producerId: id,
+      pattern,
+      matchMode: input.matchMode ?? FlavorRuleMatchMode.WORD,
+      peatProfile: input.peatProfile ?? null,
+      flavorId,
+      effect: input.effect ?? null,
+      priority: input.priority ?? DEFAULT_RULE_PRIORITY,
+      note: input.note?.trim() ? input.note.trim() : null,
+    };
   }
 
   /**

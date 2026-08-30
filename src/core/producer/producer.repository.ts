@@ -11,6 +11,7 @@ import {
   KbProducerFlavor,
   ProducerChildRow,
   ProducerReviewRow,
+  ProducerRuleInput,
   ProducerRuleRow,
   ResearchedProducer,
   UnresearchedBrandRow,
@@ -51,7 +52,7 @@ const ALIAS_INDEX_SQL = `
  * flavour's name and carries the citations and the note.
  */
 const RULE_ROWS_SQL = `
-  SELECT r.pattern, r."matchMode", f.name AS "flavorName", r.effect,
+  SELECT r.id, r.pattern, r."matchMode", f.name AS "flavorName", r.effect,
          r."peatProfile", r.priority, r."sourceUrls", r.note
   FROM flavor_rule r
   LEFT JOIN flavor f ON f.id = r."flavorId"
@@ -68,7 +69,7 @@ const RULE_ROWS_SQL = `
  * review.
  */
 const GLOBAL_PEAT_RULE_ROWS_SQL = `
-  SELECT r.pattern, r."matchMode", NULL AS "flavorName", r.effect,
+  SELECT r.id, r.pattern, r."matchMode", NULL AS "flavorName", r.effect,
          r."peatProfile", r.priority, r."sourceUrls", r.note
   FROM flavor_rule r
   WHERE r."producerId" IS NULL AND r."peatProfile" IS NOT NULL
@@ -396,7 +397,8 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
       `SELECT p.id, p.slug, p.name, p.kind, p.region, p."legalRegion",
               p.owner, p."defaultTypeName", p."peatProfile", p.status,
               p.confidence, p."sourceUrls", p.note, p."verifiedAt",
-              c.code AS "countryCode",
+              c.code AS "countryCode", c."nameUa" AS "countryName",
+              c.icon AS "countryIcon",
               par.slug AS "parentSlug", bot.slug AS "bottlerSlug",
               (SELECT count(*)::int FROM product pr
                WHERE pr."producerId" = p.id) AS "productCount",
@@ -460,6 +462,56 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
   }
 
   /**
+   * Inserts one producer-scoped name-pattern rule.
+   *
+   * The caller has already validated and normalized the input — this only
+   * writes it. A duplicate `(producerId, pattern, flavorId)` violates
+   * `flavor_rule_uindex` and surfaces as the driver's 23505, which the domain
+   * layer maps to a conflict.
+   *
+   * @param input - The validated rule.
+   * @returns Resolves once the row is written.
+   */
+  public async insertRule(input: ProducerRuleInput): Promise<void> {
+    await this.query(
+      `INSERT INTO flavor_rule
+         ("producerId", pattern, "matchMode", "flavorId", effect,
+          "peatProfile", priority, note)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        input.producerId,
+        input.pattern,
+        input.matchMode,
+        input.flavorId,
+        input.effect,
+        input.peatProfile,
+        input.priority,
+        input.note,
+      ],
+    );
+  }
+
+  /**
+   * Deletes one rule, scoped to its producer so a global rule is unreachable
+   * by construction: those are migration-authored and a stray id could
+   * otherwise silently remove a rule every producer relies on.
+   *
+   * @param ruleId - The rule to delete.
+   * @param producerId - The producer it must belong to.
+   * @returns How many rows were deleted — zero when the rule is not that
+   *   producer's.
+   */
+  public async deleteRule(ruleId: ID, producerId: ID): Promise<number> {
+    const result = await this.query(
+      `DELETE FROM flavor_rule
+       WHERE id = $1 AND "producerId" = $2`,
+      [ruleId, producerId],
+    ) as [unknown[], number];
+
+    return result[1] ?? 0;
+  }
+
+  /**
    * Lists producers for the review screen.
    *
    * `productCount` is how many bottlings resolve to the row **today**, which
@@ -476,18 +528,22 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
    * @param limit - Page size; `null` returns every matching row (Postgres
    *   reads `LIMIT NULL` as unlimited), which is what the ranked tab needs.
    * @param offset - Page offset.
+   * @param search - Case-insensitive substring of the name or slug, or omit
+   *   for all.
    * @returns The rows and the total matching count.
    */
   public async findForReview(
     status?: string,
     limit: number | null = 50,
     offset = 0,
+    search?: string,
   ): Promise<{ rows: ProducerReviewRow[]; total: number }> {
     const rows = await this.query(
       `SELECT p.id, p.slug, p.name, p.kind, p.region, p."legalRegion",
               p.owner, p."defaultTypeName", p."peatProfile", p.status,
               p.confidence, p."sourceUrls", p.note, p."verifiedAt",
-              c.code AS "countryCode",
+              c.code AS "countryCode", c."nameUa" AS "countryName",
+              c.icon AS "countryIcon",
               par.slug AS "parentSlug", bot.slug AS "bottlerSlug",
               (SELECT count(*)::int FROM product pr
                WHERE pr."producerId" = p.id) AS "productCount",
@@ -497,16 +553,22 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
        LEFT JOIN producer par ON par.id = p."parentId"
        LEFT JOIN producer bot ON bot.id = p."bottlerId"
        WHERE ($1::text IS NULL OR p.status = $1)
+         AND ($4::text IS NULL
+              OR p.name ILIKE '%' || $4 || '%'
+              OR p.slug ILIKE '%' || $4 || '%')
        ORDER BY (SELECT count(*) FROM product pr
                  WHERE pr."producerId" = p.id) DESC, p.slug
        LIMIT $2 OFFSET $3`,
-      [status ?? null, limit ?? null, offset],
+      [status ?? null, limit ?? null, offset, search ?? null],
     ) as ProducerReviewRow[];
 
     const counted = await this.query(
-      `SELECT count(*)::int AS total FROM producer
-       WHERE ($1::text IS NULL OR status = $1)`,
-      [status ?? null],
+      `SELECT count(*)::int AS total FROM producer p
+       WHERE ($1::text IS NULL OR p.status = $1)
+         AND ($2::text IS NULL
+              OR p.name ILIKE '%' || $2 || '%'
+              OR p.slug ILIKE '%' || $2 || '%')`,
+      [status ?? null, search ?? null],
     ) as { total: number }[];
 
     return { rows, total: counted[0]?.total ?? 0 };

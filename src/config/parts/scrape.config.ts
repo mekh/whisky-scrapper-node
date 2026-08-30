@@ -157,4 +157,16 @@ export class ScrapeConfig extends BaseConfig {
   @Min(0)
   public readonly llmMaxRetries = this.asNumber('LLM_MAX_RETRIES')
     ?? DEFAULT_LLM_MAX_RETRIES;
+
+  /**
+   * Whether the knowledge base is re-applied to the catalogue once at every
+   * application bootstrap. On by default: a deploy that ships knowledge-base
+   * rows through a migration changes nothing a filter reads until the
+   * catalogue is re-resolved, and this is what makes that step automatic
+   * rather than a manual action after every deploy. The pass is idempotent,
+   * ~200 ms over the whole catalogue, never touches a `manual` value and
+   * fails closed on an empty knowledge base — see `KbBootApplyService`.
+   */
+  @IsBoolean()
+  public readonly kbApplyOnBoot = this.asBoolean('KB_APPLY_ON_BOOT') ?? true;
 }

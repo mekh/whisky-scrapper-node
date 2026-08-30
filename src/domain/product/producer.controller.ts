@@ -1,13 +1,35 @@
-import { Body, Controller, Get, Param, Patch, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 
 import { Permission } from '~decorators/auth';
 import { Plain } from '~decorators/types';
 import { Action, Resource } from '~enums';
-import type { ID, ProducerDetail, ProducerPatchResult } from '~types';
+import type {
+  ID,
+  KbReconcileSummary,
+  ProducerDetail,
+  ProducerPatchResult,
+  ProducerProductRow,
+} from '~types';
 
-import { ProducerPatchDto } from './dto';
+import { ProducerPatchDto, ProducerRuleCreateDto } from './dto';
 import { ProductReviewService } from './product-review.service';
-import { ProducerDetailType, ProducerPatchResultType } from './types';
+import {
+  KbReconcileSummaryType,
+  ProducerDetailType,
+  ProducerPatchResultType,
+  ProducerProductType,
+} from './types';
 
 @Controller('producer')
 export class ProducerController {
@@ -21,6 +43,31 @@ export class ProducerController {
     return this.reviewService.unresolvedBrands(
       limit ? Number(limit) : undefined,
     );
+  }
+
+  @Get(':id/products')
+  @Plain([ProducerProductType], [Resource.PRODUCER, Action.READ])
+  public products(@Param('id') id: string): Promise<ProducerProductRow[]> {
+    return this.reviewService.producerProducts(id as ID);
+  }
+
+  @Post(':id/rule')
+  @HttpCode(HttpStatus.OK)
+  @Plain(KbReconcileSummaryType, [Resource.PRODUCER, Action.UPDATE])
+  public createRule(
+    @Param('id') id: string,
+    @Body() body: ProducerRuleCreateDto,
+  ): Promise<KbReconcileSummary> {
+    return this.reviewService.createProducerRule(id as ID, body);
+  }
+
+  @Delete(':id/rule/:ruleId')
+  @Plain(KbReconcileSummaryType, [Resource.PRODUCER, Action.UPDATE])
+  public deleteRule(
+    @Param('id') id: string,
+    @Param('ruleId') ruleId: string,
+  ): Promise<KbReconcileSummary> {
+    return this.reviewService.deleteProducerRule(id as ID, ruleId as ID);
   }
 
   @Get(':id')

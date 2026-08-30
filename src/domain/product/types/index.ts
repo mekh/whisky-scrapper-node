@@ -2,6 +2,7 @@ export { KbReconcileSummaryType } from './kb-reconcile-summary.type.dto';
 export { ProducerChildType } from './producer-child.type.dto';
 export { ProducerDetailType } from './producer-detail.type.dto';
 export { ProducerPatchResultType } from './producer-patch-result.type.dto';
+export { ProducerProductType } from './producer-product.type.dto';
 export { ProducerReviewType } from './producer-review.type.dto';
 export { ProducerRuleType } from './producer-rule.type.dto';
 export { ProductFactReviewType } from './product-fact-review.type.dto';

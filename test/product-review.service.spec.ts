@@ -1,3 +1,4 @@
+import type { CoreFlavorService } from '~core/flavor';
 import type { CoreProducerService } from '~core/producer';
 import type { CoreProductService } from '~core/product';
 import { ProducerReachService } from '~domain/product/producer-reach.service';
@@ -55,11 +56,18 @@ function build(updated: ProducerReviewRow | null = PROMOTED): Doubles {
 
   const producers = { applyReview } as unknown as CoreProducerService;
   const products = {} as unknown as CoreProductService;
+  const flavors = {} as unknown as CoreFlavorService;
   const reach = {} as unknown as ProducerReachService;
   const reconcile = { run } as unknown as KbReconcileService;
 
   return {
-    service: new ProductReviewService(producers, products, reach, reconcile),
+    service: new ProductReviewService(
+      producers,
+      products,
+      flavors,
+      reach,
+      reconcile,
+    ),
     applyReview,
     run,
   };

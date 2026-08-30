@@ -7,6 +7,7 @@ import { CoreWhiskyModule } from '~core/core-whisky.module';
 import { AdapterRegistryService } from './adapters/adapter-registry.service';
 import { HttpClientFactory } from './http/http-client.factory';
 import { KbApplyService } from './kb/kb-apply.service';
+import { KbBootApplyService } from './kb/kb-boot-apply.service';
 import { KbReconcileService } from './kb/kb-reconcile.service';
 import { KbResolverService } from './kb/kb-resolver.service';
 import { LlmClientService } from './llm/llm-client.service';
@@ -39,6 +40,7 @@ import { ScrapeService } from './scrape.service';
     KbResolverService,
     KbApplyService,
     KbReconcileService,
+    KbBootApplyService,
     AdapterRegistryService,
     ScrapePersistService,
     ScrapeService,

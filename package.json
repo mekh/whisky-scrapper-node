@@ -31,6 +31,7 @@
     "rederive-name-facts": "ts-node -r tsconfig-paths/register ./scripts/rederive-name-facts.ts",
     "research-brands": "ts-node -r tsconfig-paths/register ./scripts/research-brands.ts",
     "kb-export": "ts-node -r tsconfig-paths/register ./scripts/kb-export.ts",
+    "kb-verify-merge": "ts-node -r tsconfig-paths/register ./scripts/kb-verify-merge.ts",
     "restore-flavor-import": "ts-node -r tsconfig-paths/register ./scripts/restore-flavor-import.ts"
   },
   "dependencies": {

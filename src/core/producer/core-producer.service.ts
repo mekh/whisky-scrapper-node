@@ -11,6 +11,7 @@ import {
   KbProducerFlavor,
   ProducerDetail,
   ProducerReviewRow,
+  ProducerRuleInput,
   ResearchedProducer,
   UnresearchedBrandRow,
   UnresolvedBrandRow,
@@ -186,14 +187,47 @@ export class CoreProducerService extends CoreBaseService<ProducerEntity> {
    * @param status - Restrict to one review status, or omit for all.
    * @param limit - Page size; `null` returns every matching row.
    * @param offset - Page offset.
+   * @param search - Case-insensitive substring of the name or slug.
    * @returns The rows and the total matching count.
    */
   public async listForReview(
     status?: string,
     limit?: number | null,
     offset?: number,
+    search?: string,
   ): Promise<{ rows: ProducerReviewRow[]; total: number }> {
-    return this.repo.findForReview(status, limit, offset);
+    return this.repo.findForReview(status, limit, offset, search);
+  }
+
+  /**
+   * Reads one producer as a review row, without the detail payload.
+   *
+   * @param id - The producer to read.
+   * @returns The row, or null when no producer has that id.
+   */
+  public async findReviewRow(id: ID): Promise<ProducerReviewRow | null> {
+    return this.repo.findOneForReview(id);
+  }
+
+  /**
+   * Inserts one producer-scoped name-pattern rule.
+   *
+   * @param input - The validated, normalized rule.
+   * @returns Resolves once the row is written.
+   */
+  public async createRule(input: ProducerRuleInput): Promise<void> {
+    return this.repo.insertRule(input);
+  }
+
+  /**
+   * Deletes one rule, scoped to its producer.
+   *
+   * @param ruleId - The rule to delete.
+   * @param producerId - The producer it must belong to.
+   * @returns How many rows were deleted.
+   */
+  public async deleteRule(ruleId: ID, producerId: ID): Promise<number> {
+    return this.repo.deleteRule(ruleId, producerId);
   }
 
   /**

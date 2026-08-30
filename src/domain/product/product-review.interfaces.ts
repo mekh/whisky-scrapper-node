@@ -1,4 +1,6 @@
 import type {
+  FlavorRuleMatchMode,
+  KbFlavorEffect,
   KbStatus,
   PeatProfile,
   ProducerKind,
@@ -14,6 +16,11 @@ export interface ReviewProducerQuery {
    * Restrict to one review status, or omit for all.
    */
   status?: KbStatus;
+
+  /**
+   * Case-insensitive name search, or omit for all.
+   */
+  name?: string;
 
   /**
    * 1-based page number.
@@ -45,6 +52,11 @@ export interface ReviewFactQuery {
   producer?: string;
 
   /**
+   * Case-insensitive name search, or omit for all.
+   */
+  name?: string;
+
+  /**
    * 1-based page number.
    */
   page?: number;
@@ -70,6 +82,11 @@ export interface ReviewConflictQuery {
   store?: string;
 
   /**
+   * Case-insensitive name search, or omit for all.
+   */
+  name?: string;
+
+  /**
    * 1-based page number.
    */
   page?: number;
@@ -78,6 +95,53 @@ export interface ReviewConflictQuery {
    * Page size.
    */
   perPage?: number;
+}
+
+/**
+ * A reviewer's new name-pattern rule, as the request states it. Exactly one of
+ * `peatProfile` or the `flavorName`/`effect` pair must be set — the XOR the
+ * table's CHECK constraint enforces, validated in the domain layer so it
+ * answers 400 rather than 500.
+ */
+export interface ProducerRuleCreateInput {
+  /**
+   * The pattern, in whatever spelling the reviewer typed; normalized to a
+   * `KbKeyUtils.key` before it is stored.
+   */
+  pattern: string;
+
+  /**
+   * `word` (default) or `prefix` — the latter exists for Ukrainian
+   * inflection.
+   */
+  matchMode?: FlavorRuleMatchMode;
+
+  /**
+   * The peat band, for a peat rule. Never `unknown`.
+   */
+  peatProfile?: PeatProfile;
+
+  /**
+   * The flavour tag name, for a tag rule. Resolved against the `flavor`
+   * table; an unknown name is rejected rather than coined.
+   */
+  flavorName?: string;
+
+  /**
+   * `require` or `forbid`. Never `baseline`, which belongs to the house
+   * style.
+   */
+  effect?: KbFlavorEffect;
+
+  /**
+   * Higher wins; defaults to 60, the producer-scoped convention.
+   */
+  priority?: number;
+
+  /**
+   * Why the rule exists.
+   */
+  note?: string;
 }
 
 /**

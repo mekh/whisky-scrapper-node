@@ -1,19 +1,20 @@
 import { TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 
+import { CoreFlavorService } from '~core/flavor';
 import { CoreProducerService } from '~core/producer';
 import { CoreProductService } from '~core/product';
-import { ProducerKind, KbStatus, PeatProfile } from '~enums';
+import { KbStatus, PeatProfile, ProducerKind } from '~enums';
 import {
   KbApplyService,
   KbReconcileService,
   KbResolverService,
 } from '~scrape/kb';
 import type {
-  ProducerDetail,
-  ProducerReviewRow,
   ID,
   KbAliasEntry,
+  ProducerDetail,
+  ProducerReviewRow,
   ProductFactReviewRow,
   ProductReviewSummary,
   TypePaginated,
@@ -184,6 +185,7 @@ describe('producer review (integration)', () => {
     const review = new ProductReviewService(
       producers,
       products,
+      moduleRef.get(CoreFlavorService, { strict: false }),
       new ProducerReachService(producers, products, resolver),
       reconcile,
     );

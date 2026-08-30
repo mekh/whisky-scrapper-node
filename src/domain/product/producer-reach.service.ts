@@ -3,7 +3,35 @@ import { Injectable } from '@nestjs/common';
 import { CoreProducerService } from '~core/producer';
 import { CoreProductService } from '~core/product';
 import { KbApplyService, KbResolverService } from '~scrape/kb';
-import type { ID, KbAliasEntry, KbResolveInput } from '~types';
+import type {
+  ID,
+  KbAliasEntry,
+  KbNameGroup,
+  KbResolution,
+  KbResolveInput,
+} from '~types';
+
+/**
+ * What a what-if pass concluded: the name groups and, in the same order, what
+ * each would resolve to with the withheld aliases in the index.
+ */
+interface WithheldResolution {
+  /**
+   * The catalogue's name groups, in first-seen order.
+   */
+  groups: KbNameGroup[];
+
+  /**
+   * One resolution per group, same order.
+   */
+  resolutions: KbResolution[];
+
+  /**
+   * The ids of the withheld producers, for telling a what-if claim from a
+   * live one.
+   */
+  withheldIds: Set<ID>;
+}
 
 /**
  * How many bottlings each withheld producer would claim.
@@ -59,6 +87,30 @@ export class ProducerReachService {
     );
   }
 
+  /**
+   * Which withheld producers a group's resolution would claim.
+   *
+   * A set, not an array, so a group counts once however many slots it fills.
+   * Today the two slots can never name the same producer — a bottler is
+   * refused the producer slot outright — but `bottlerOf`'s own documentation
+   * promises a second path it does not yet implement (the resolved producer
+   * being a range a bottler owns, `Big Peat` reporting Douglas Laing), and
+   * that path would make the collision real.
+   *
+   * @param resolution - What the group resolved to.
+   * @param withheldIds - The withheld producers' ids.
+   * @returns The withheld ids the resolution names, in either slot.
+   */
+  private static claimedBy(
+    resolution: KbResolution,
+    withheldIds: Set<ID>,
+  ): Set<ID> {
+    return new Set(
+      [resolution.producer?.id, resolution.bottler?.id]
+        .filter((id): id is ID => id != null && withheldIds.has(id)),
+    );
+  }
+
   private readonly producers: CoreProducerService;
 
   private readonly products: CoreProductService;
@@ -83,6 +135,60 @@ export class ProducerReachService {
    *   a curation gap rather than a ranking answer.
    */
   public async withheldReach(): Promise<Map<ID, number>> {
+    const { groups, resolutions, withheldIds } = await this.resolveWithheld();
+
+    const reach = new Map<ID, number>();
+
+    resolutions.forEach((resolution, position) => {
+      const weight = groups[position]?.rows.length ?? 0;
+
+      const claimed = ProducerReachService.claimedBy(resolution, withheldIds);
+
+      claimed.forEach((id) => {
+        reach.set(id, (reach.get(id) ?? 0) + weight);
+      });
+    });
+
+    return reach;
+  }
+
+  /**
+   * Lists the bottlings one withheld producer would claim — the expansion
+   * behind a "potential reach" number. Same pass, same arbitration, so the
+   * list always sums to the number the queue ranked by.
+   *
+   * @param producerId - The withheld producer.
+   * @returns The claimed bottlings' ids, in catalogue order.
+   */
+  public async withheldProductIds(producerId: ID): Promise<ID[]> {
+    const { groups, resolutions, withheldIds } = await this.resolveWithheld();
+
+    const ids: ID[] = [];
+
+    resolutions.forEach((resolution, position) => {
+      const claimed = ProducerReachService.claimedBy(resolution, withheldIds);
+
+      if (!claimed.has(producerId)) {
+        return;
+      }
+
+      const group = groups[position];
+
+      group?.rows.forEach((row) => {
+        ids.push(row.id);
+      });
+    });
+
+    return ids;
+  }
+
+  /**
+   * Runs the one what-if pass both public reads share: the whole catalogue
+   * resolved against the live index plus every withheld alias.
+   *
+   * @returns The groups, their resolutions and the withheld producer ids.
+   */
+  private async resolveWithheld(): Promise<WithheldResolution> {
     const [index, withheld, rows] = await Promise.all([
       this.producers.loadIndex(),
       this.producers.loadWithheldAliasIndex(),
@@ -98,54 +204,21 @@ export class ProducerReachService {
     /**
      * The resolver echoes the input id back and nothing here reads it, but the
      * shape requires one, so the group's first bottling stands for the group —
-     * exactly as the reconciliation pass does.
+     * exactly as the reconciliation pass does. A group with no rows cannot
+     * exist (`groupByName` only ever creates one around a row), so the inputs
+     * stay index-aligned with the groups.
      */
-    const inputs: KbResolveInput[] = [];
-    const weights: number[] = [];
-
-    groups.forEach((group) => {
-      const first = group.rows[0];
-
-      if (!first) {
-        return;
-      }
-
-      inputs.push({
-        id: first.id,
-        name: group.name,
-        brand: KbApplyService.brandOf(group),
-      });
-      weights.push(group.rows.length);
-    });
+    const inputs: KbResolveInput[] = groups.map((group) => ({
+      id: group.rows[0]?.id ?? ('' as ID),
+      name: group.name,
+      brand: KbApplyService.brandOf(group),
+    }));
 
     const resolutions = this.resolver.resolve(inputs, {
       ...index,
       aliases: ProducerReachService.mergeAliases(index.aliases, withheld),
     });
 
-    const reach = new Map<ID, number>();
-
-    resolutions.forEach((resolution, position) => {
-      const weight = weights[position] ?? 0;
-
-      /**
-       * A set, not an array, so a group counts once however many slots it
-       * fills. Today the two slots can never name the same producer — a
-       * bottler is refused the producer slot outright — but `bottlerOf`'s own
-       * documentation promises a second path it does not yet implement (the
-       * resolved producer being a range a bottler owns, `Big Peat` reporting
-       * Douglas Laing), and that path would make the collision real.
-       */
-      const claimed = new Set(
-        [resolution.producer?.id, resolution.bottler?.id]
-          .filter((id): id is ID => id != null && withheldIds.has(id)),
-      );
-
-      claimed.forEach((id) => {
-        reach.set(id, (reach.get(id) ?? 0) + weight);
-      });
-    });
-
-    return reach;
+    return { groups, resolutions, withheldIds };
   }
 }

@@ -8,6 +8,7 @@ import {
   KbFlavorWrite,
   KbProducerWrite,
   KbReconcileRow,
+  ProducerProductRow,
   ProductCanonicalInput,
   ProductFactConflictInput,
   ProductFactReviewRow,
@@ -242,6 +243,8 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
    * @param field - `type`, `country`, or omit for either.
    * @param limit - Page size.
    * @param offset - Page offset.
+   * @param producer - `resolved` or `unresolved` for one half of the queue.
+   * @param search - Case-insensitive substring of a name, or omit for all.
    * @returns The rows and the total matching count.
    */
   public async findUntrustedFacts(
@@ -249,8 +252,15 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
     limit?: number,
     offset?: number,
     producer?: string,
+    search?: string,
   ): Promise<{ rows: ProductFactReviewRow[]; total: number }> {
-    return this.repo.findUntrustedFacts(field, limit, offset, producer);
+    return this.repo.findUntrustedFacts(
+      field,
+      limit,
+      offset,
+      producer,
+      search,
+    );
   }
 
   /**
@@ -269,6 +279,7 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
    * @param store - Restrict to one shop's claims, by slug.
    * @param limit - Page size.
    * @param offset - Page offset.
+   * @param search - Case-insensitive substring of a name, or omit for all.
    * @returns The rows and the total matching count.
    */
   public async findConflicts(
@@ -276,8 +287,33 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
     store?: string,
     limit?: number,
     offset?: number,
+    search?: string,
   ): Promise<{ rows: ReviewConflictRow[]; total: number }> {
-    return this.repo.findConflicts(attribute, store, limit, offset);
+    return this.repo.findConflicts(attribute, store, limit, offset, search);
+  }
+
+  /**
+   * Lists the bottlings resolved to a producer, in either slot.
+   *
+   * @param producerId - The producer or bottler.
+   * @returns The bottlings, alphabetically by display name.
+   */
+  public async findResolvedByProducer(
+    producerId: ID,
+  ): Promise<ProducerProductRow[]> {
+    return this.repo.findResolvedByProducer(producerId);
+  }
+
+  /**
+   * Reads specific bottlings as producer-expansion rows.
+   *
+   * @param ids - The bottlings to read.
+   * @returns The bottlings, alphabetically by display name.
+   */
+  public async findProducerProductsByIds(
+    ids: ID[],
+  ): Promise<ProducerProductRow[]> {
+    return this.repo.findProducerProductsByIds(ids);
   }
 
   /**

@@ -8,7 +8,9 @@
  * which only ever adds. `LLM` rows come from the dedicated classification
  * pass, are written by `setLlmFlavors` instead, and the sync never touches
  * them — without this column a sync would wipe every LLM answer the next time
- * it ran. `MANUAL` rows are a person's decision and outrank both.
+ * it ran. `KB` rows are derived from the curated knowledge base and are the
+ * only source allowed to state peat. `MANUAL` rows are a person's decision and
+ * outrank all of them.
  */
 export enum FlavorSource {
   /**
@@ -20,6 +22,19 @@ export enum FlavorSource {
    * The LLM flavor-classification pass produced this tag. Survives syncs.
    */
   LLM = 'llm',
+  /**
+   * Derived deterministically from the knowledge base: a producer's peat
+   * profile, a curated house-style row, or a name-pattern rule.
+   *
+   * For `peated` and `smoky` this is the **only** automatic source there is —
+   * both tags were taken out of the keyword vocabulary and out of the LLM's
+   * prompt, so after reconciliation every peat link in the database is either
+   * `KB` or `MANUAL`. That invariant is what makes "exclude peated" safe to
+   * trust: a plausible-but-wrong peat tag silently removed the user's
+   * favourite whisky from every result, and no amount of prompt tuning could
+   * rule that out.
+   */
+  KB = 'kb',
   /**
    * Someone set this tag by hand through `POST /product/update`. A manual edit
    * replaces the bottling's whole tag set and stamps the bottling's

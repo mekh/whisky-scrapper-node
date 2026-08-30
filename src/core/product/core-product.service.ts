@@ -4,13 +4,23 @@ import { CoreBaseService } from '~core/_common';
 import {
   FlavorCandidateRow,
   ID,
+  KbFactWrite,
+  KbFlavorWrite,
+  KbProducerWrite,
+  KbReconcileRow,
+  ProducerProductRow,
   ProductCanonicalInput,
+  ProductFactConflictInput,
+  ProductFactReviewRow,
   ProductFillInput,
   ProductMatchRow,
   ProductNameCandidateRow,
   ProductScrapeFlavorLink,
   ProductSearchItem,
   ProductStoreFieldsRow,
+  ProductStoredFactsRow,
+  ReviewConflictRow,
+  UntrustedFactCounts,
 } from '~types';
 
 import { ProductEntity } from './product.entity';
@@ -162,6 +172,180 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
     storeId: ID,
   ): Promise<ProductStoreFieldsRow[]> {
     return this.repo.findCarriedByStore(storeId);
+  }
+
+  /**
+   * Records which producer and bottler the knowledge base placed each bottling
+   * with.
+   *
+   * @param writes - One assignment per bottling.
+   * @returns How many bottlings changed.
+   */
+  public async setProducers(writes: KbProducerWrite[]): Promise<number> {
+    return this.repo.setProducers(writes);
+  }
+
+  /**
+   * Writes the country and whisky type the knowledge base states.
+   *
+   * @param writes - One entry per bottling; a null field states nothing and
+   *   leaves the stored value alone.
+   * @returns How many bottlings changed.
+   */
+  public async applyKbFacts(writes: KbFactWrite[]): Promise<number> {
+    return this.repo.applyKbFacts(writes);
+  }
+
+  /**
+   * Applies the knowledge base's flavor decisions, links and unlinks alike.
+   *
+   * @param writes - One entry per bottling.
+   * @returns Resolves once the links are written.
+   */
+  public async applyKbFlavors(writes: KbFlavorWrite[]): Promise<void> {
+    return this.repo.applyKbFlavors(writes);
+  }
+
+  /**
+   * Records the store claims that contradict the catalogue.
+   *
+   * @param conflicts - The claims observed during a scrape.
+   * @returns Resolves once the log is written.
+   */
+  public async logFactConflicts(
+    conflicts: ProductFactConflictInput[],
+  ): Promise<void> {
+    return this.repo.logFactConflicts(conflicts);
+  }
+
+  /**
+   * Reads the stored facts of a set of bottlings, with their provenance.
+   *
+   * @param ids - The bottlings being written this run.
+   * @returns One row per bottling that exists.
+   */
+  public async findFactsByIds(ids: ID[]): Promise<ProductStoredFactsRow[]> {
+    return this.repo.findFactsByIds(ids);
+  }
+
+  /**
+   * Counts the bottlings whose type or country the filters no longer trust.
+   *
+   * @returns The per-field counts and the count of bottlings with either.
+   */
+  public async countUntrustedFacts(): Promise<UntrustedFactCounts> {
+    return this.repo.countUntrustedFacts();
+  }
+
+  /**
+   * Lists the bottlings whose type or country the filters distrust.
+   *
+   * @param field - `type`, `country`, or omit for either.
+   * @param limit - Page size.
+   * @param offset - Page offset.
+   * @param producer - `resolved` or `unresolved` for one half of the queue.
+   * @param search - Case-insensitive substring of a name, or omit for all.
+   * @returns The rows and the total matching count.
+   */
+  public async findUntrustedFacts(
+    field?: string,
+    limit?: number,
+    offset?: number,
+    producer?: string,
+    search?: string,
+  ): Promise<{ rows: ProductFactReviewRow[]; total: number }> {
+    return this.repo.findUntrustedFacts(
+      field,
+      limit,
+      offset,
+      producer,
+      search,
+    );
+  }
+
+  /**
+   * Counts the unresolved cross-shop contradictions.
+   *
+   * @returns How many are open.
+   */
+  public async countOpenConflicts(): Promise<number> {
+    return this.repo.countOpenConflicts();
+  }
+
+  /**
+   * Lists the unresolved contradictions, worst-first.
+   *
+   * @param attribute - Restrict to one disputed attribute.
+   * @param store - Restrict to one shop's claims, by slug.
+   * @param limit - Page size.
+   * @param offset - Page offset.
+   * @param search - Case-insensitive substring of a name, or omit for all.
+   * @returns The rows and the total matching count.
+   */
+  public async findConflicts(
+    attribute?: string,
+    store?: string,
+    limit?: number,
+    offset?: number,
+    search?: string,
+  ): Promise<{ rows: ReviewConflictRow[]; total: number }> {
+    return this.repo.findConflicts(attribute, store, limit, offset, search);
+  }
+
+  /**
+   * Lists the bottlings resolved to a producer, in either slot.
+   *
+   * @param producerId - The producer or bottler.
+   * @returns The bottlings, alphabetically by display name.
+   */
+  public async findResolvedByProducer(
+    producerId: ID,
+  ): Promise<ProducerProductRow[]> {
+    return this.repo.findResolvedByProducer(producerId);
+  }
+
+  /**
+   * Reads specific bottlings as producer-expansion rows.
+   *
+   * @param ids - The bottlings to read.
+   * @returns The bottlings, alphabetically by display name.
+   */
+  public async findProducerProductsByIds(
+    ids: ID[],
+  ): Promise<ProducerProductRow[]> {
+    return this.repo.findProducerProductsByIds(ids);
+  }
+
+  /**
+   * Marks one contradiction settled.
+   *
+   * @param productId - The bottling.
+   * @param storeId - The shop making the claim.
+   * @param attribute - Which fact is disputed.
+   * @returns Resolves once the row is marked.
+   */
+  public async resolveConflict(
+    productId: ID,
+    storeId: ID,
+    attribute: string,
+  ): Promise<void> {
+    return this.repo.resolveConflict(productId, storeId, attribute);
+  }
+
+  /**
+   * Loads every bottling the reconciliation pass may touch.
+   *
+   * @param storeSlug - Narrow to bottlings some store lists.
+   * @param brand - Narrow to one brand name.
+   * @param ids - Narrow to specific bottlings, as the sync path does.
+   * @returns One row per bottling, flavor links included.
+   */
+  public async findKbReconcileCandidates(
+    storeSlug?: string,
+    brand?: string,
+    ids?: ID[],
+  ): Promise<KbReconcileRow[]> {
+    return this.repo.findKbReconcileCandidates(storeSlug, brand, ids);
   }
 
   /**

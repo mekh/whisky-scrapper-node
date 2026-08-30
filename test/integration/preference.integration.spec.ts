@@ -60,6 +60,7 @@ describe('user preferences (integration)', () => {
    */
   const makeBottling = async (brand?: ID): Promise<ID> => {
     return products.createUnmatched({
+      factSources: {},
       matchKey: null,
       name: `IT Pref ${STAMP}`,
       brandId: brand ?? null,

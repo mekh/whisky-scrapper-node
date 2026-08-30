@@ -1,0 +1,75 @@
+West Cork	west-cork	any	exact input brand string
+West Cork Distillers	west-cork	any	common variant
+The Macallan	macallan	any	exact input brand string
+Macallan	macallan	any	canonical short form
+Bladnoch	bladnoch	any	exact input brand string
+The Glenlivet	glenlivet	any	exact input brand string
+Glenlivet	glenlivet	any	canonical short form
+Old & Rare	old-rare	any	exact input brand string
+Maltbarn	maltbarn	any	exact input brand string
+Smokehead	smokehead	any	exact input brand string
+Singleton	singleton	brand	exact input brand string; generic English word, restrict to whole-brand match
+The Singleton	singleton	brand	common variant with article
+Singleton of Glen Ord	singleton-glen-ord	any	sample product name
+The Singleton of Glen Ord	singleton-glen-ord	any	sample product name
+Singleton of Dufftown	singleton-dufftown	any	sample product name
+The Singleton of Dufftown	singleton-dufftown	any	sample product name
+Hinch	hinch	any	exact input brand string
+Dailuaine	dailuaine	any	exact input brand string
+Mortlach	mortlach	any	exact input brand string
+Black Bottle	black-bottle	any	exact input brand string
+Hibiki	hibiki	any	exact input brand string
+Black Bull	black-bull	any	exact input brand string
+King's	kings	brand	exact input brand string; short/generic, restrict to whole-brand match
+Kings	kings	brand	apostrophe-less variant
+The Pogues	pogues	any	common variant (with article; seen in all four sample product names)
+Pogues	pogues	any	exact input brand string
+Torabhaig	torabhaig	any	exact input brand string
+Daviess County	daviess-county	any	exact input brand string
+Goalong	goalong	any	exact input brand string
+Maen	maen	brand	exact input brand string; under 5 characters, must be brand-scoped
+Seagram's	seagrams	any	exact input brand string
+Seagrams	seagrams	any	apostrophe-less variant
+Adelphi	adelphi	any	exact input brand string
+Caisteal Chamuis	caisteal-chamuis	any	exact input brand string
+First Edition	first-editions	any	exact input brand string (singular; producer's real range name is plural "The First Editions")
+The First Editions	first-editions	any	canonical range name
+James Kilton	james-kilton	any	exact input brand string
+Linkwood	linkwood	any	exact input brand string
+Onikishi	onikishi	any	exact input brand string
+St.kilian	st-kilian	any	exact input brand string, as-spelled (irregular casing/punctuation)
+St Kilian	st-kilian	any	common variant
+St. Kilian	st-kilian	any	common variant
+Whyte & Mackay	whyte-mackay	any	exact input brand string
+Whyte&Mackey	whyte-mackay	any	typo observed twice in this batch's sample product names (missing spaces, "Mackey" misspelling)
+An Orkney	an-orkney	any	exact input brand string
+Buchanan's	buchanans	any	exact input brand string
+Buchanans	buchanans	any	apostrophe-less variant
+Easy Rider	easy-rider	any	exact input brand string
+Grand Grizzly	grand-grizzly	any	exact input brand string
+Inchgower	inchgower	any	exact input brand string
+Lauders	lauders	any	exact input brand string (no apostrophe, as spelled in the catalogue's brand field)
+Lauder's	lauders	any	common variant with apostrophe (as spelled in the sample product name "Lauder's Finest")
+Method and Madness	method-and-madness	any	exact input brand string
+Old Castle	old-castle	any	exact input brand string
+Pickup Truck	pickup-truck	any	exact input brand string
+Royal Canadian	royal-canadian	any	exact input brand string
+Star&stripes	star-stripes	any	exact input brand string, as-spelled (no spaces)
+Star & Stripes	star-stripes	any	canonical spelling
+The Wild Geese	wild-geese	any	exact input brand string
+Wild Geese	wild-geese	any	canonical short form
+Yamazaki	yamazaki	any	exact input brand string
+Arran	arran	brand	supporting distillery for "Old & Rare Arran"; ambiguous common word, restrict to whole-brand match
+Dufftown	dufftown	any	supporting distillery for "Old & Rare Dufftown" and Singleton of Dufftown
+Glenturret	glenturret	any	supporting distillery for "Old & Rare Glenturret"
+Bunnahabhain	bunnahabhain	any	supporting distillery for "Old & Rare Bunnahabhain"
+Glen Garioch	glen-garioch	any	supporting distillery for "Old & Rare Glen Garioch"
+Highland Park	highland-park	any	supporting distillery for "Old & Rare Higland Park" (sic) and parent of An Orkney
+Speyburn	speyburn	any	supporting distillery for "First Edition Speyburn"
+Craigellachie	craigellachie	any	supporting distillery for "First Edition Craigellachie"
+Tullibardine	tullibardine	any	supporting distillery for "Tullibardine 2016" (Maltbarn sample)
+Ben Nevis	ben-nevis	any	supporting distillery for "Maltbarn Ben Nevis 2012"
+Glenburgie	glenburgie	any	supporting distillery for "Maltbarn Glenburgie 2003"
+Blair Athol	blair-athol	any	supporting distillery for "Maltbarn Blair Athol 1988"
+Glen Ord	glen-ord	any	supporting distillery for "Singleton of Glen Ord" and parent of singleton-glen-ord
+Midleton	midleton	any	supporting distillery for Method and Madness (Irish Distillers)

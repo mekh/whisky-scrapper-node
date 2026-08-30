@@ -1,0 +1,59 @@
+Glenfiddich	glenfiddich	any	
+BenRiach	benriach	any	
+Benriach	benriach	any	spelling variant seen in samples (lowercase r)
+Scyfion	scyfion	any	
+Glengoyne	glengoyne	any	
+Slyrs	slyrs	any	
+Aberfeldy	aberfeldy	any	
+Artist Collective	artist-collective	any	
+Glenrothes	glenrothes	any	
+Cailleach	cailleach	any	
+Amahagan	amahagan	any	
+High West	high-west	any	
+Ardmore	ardmore	any	
+Finlaggan	finlaggan	any	
+Sir Pitterson	sir-pitterson	any	
+GlenAladale	glenaladale	any	
+McIvor	mcivor	any	
+Stateless	stateless	brand	plain dictionary word -- restrict to whole-value match
+Clan Campbell	clan-campbell	any	
+Glenburgie	glenburgie	any	
+King Robert Ii	king-robert-ii	any	exact catalogue spelling (lowercase roman numeral)
+King Robert II	king-robert-ii	any	
+Rabbit Hole	rabbit-hole	any	
+Westland	westland	any	
+Beauchamp	beauchamp	any	
+Cu Bocan	cu-bocan	any	exact catalogue spelling, no diacritics
+Cù Bòcan	cu-bocan	any	properly accented canonical spelling
+Great Oaks	great-oaks	brand	generic two-word compound -- restrict to whole-value match
+Kentucky Owl	kentucky-owl	any	
+Muteki	muteki	any	
+Sazerac	sazerac	any	
+The Tottori	tottori	any	exact catalogue spelling, includes "The"
+Tottori	tottori	any	
+Aberdour	aberdour	any	
+Bib&tucker	bib-tucker	any	exact catalogue spelling
+Bib&Tucker	bib-tucker	any	spelling variant seen in samples
+Bib & Tucker	bib-tucker	any	properly spaced canonical spelling
+Dalmunach	dalmunach	any	
+Glenalmond	glenalmond	any	
+Highland's Friends	highlands-friends	any	
+Judas Priest	judas-priest	any	
+Masterson's	mastersons	any	
+Nelson's Green Brier	nelsons-green-brier	any	
+O Neills	o-neills	any	exact catalogue spelling, no apostrophe
+O'Neills	o-neills	any	properly spelled canonical (seen in samples)
+Robert Burns	robert-burns	any	
+Slipknot №9	slipknot-9	any	exact catalogue spelling
+The Glenturret	glenturret	any	exact catalogue spelling, includes "The"
+Glenturret	glenturret	any	
+Velvet Cap	velvet-cap	brand	generic two-word compound -- restrict to whole-value match
+Tomatin	tomatin	any	
+Dailuaine	dailuaine	any	
+Aultmore	aultmore	any	
+Dufftown	dufftown	any	
+Caol Ila	caol-ila	any	
+Ben Nevis	ben-nevis	any	
+Glen Elgin	glen-elgin	any	
+Glen Ord	glen-ord	any	
+Linkwood	linkwood	any	

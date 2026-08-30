@@ -59,6 +59,9 @@ export class ReportController {
       excludeFlavors: query.excludeFlavors,
       types: query.types,
       countries: query.countries,
+      regions: query.regions,
+      excludeRegions: query.excludeRegions,
+      verifiedFacts: query.verifiedFacts,
       name: query.name,
     };
   }

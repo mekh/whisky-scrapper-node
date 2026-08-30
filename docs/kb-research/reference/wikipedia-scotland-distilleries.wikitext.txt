@@ -1,0 +1,1108 @@
+{{Short description|None}}
+{{Use dmy dates|date=April 2022}}
+[[File:Whisky distilleries and regions in Scotland (Updated).svg|alt=Map of Scotland with icons for distilleries|A map of all distilleries operating in 2018|thumb|219x219px]]
+
+[[Scotch whisky]] is [[Distillation|distilled]] from water, cereals and yeast. It must be matured for three years or more before bottling, and bottled at 40% or more [[alcohol by volume]]. There are five single malt producing regions, namely [[Campbeltown single malts|Campbeltown]], [[Highland single malts|Highland]], [[Islay single malts|Islay]], [[Lowland single malts|Lowland]] and [[Speyside single malt|Speyside]].<ref name="FAQ">{{cite web |title=Scotch Whisky FAQs |url=https://www.scotch-whisky.org.uk/discover-scotch/faqs/ |website=Scotch Whisky Association |access-date=27 October 2025 |language=en}}</ref>
+
+==Currently operating distilleries==
+
+As of June 2026, there are 154 whisky distilleries operating in Scotland.<ref>{{Cite web |title=Facts & Figures |url=https://www.scotch-whisky.org.uk/industry-insights/facts-figures/ |access-date=7 April 2026 |publisher=The Scotch Whisky Association}}</ref>
+
+===Malt whisky distilleries===
+{| class="sortable wikitable"
+|-
+!style="text-align:left" | Distillery
+!style="text-align:left" | Location
+!style="text-align:left" | [[Scotch whisky#Regions|Region]]
+!Founded
+! style="text-align:left" | Owner
+|-
+||[[Aberargie distillery|Aberargie]]||[[Aberargie]]||[[Lowland single malts|Lowland]]
+|2017||Morrison Scotch Whisky Distillers
+|-
+||[[Aberfeldy distillery|Aberfeldy]]||[[Aberfeldy, Perth and Kinross|Aberfeldy]]||[[Highland single malts|Highland]]
+|1896||[[John Dewar & Sons]]
+|-
+||[[Aberlour distillery|Aberlour]]||[[Aberlour]]||[[Speyside single malt|Speyside]]
+|1879||[[Chivas Brothers]]
+|-
+||[[Abhainn Dearg distillery|Abhainn Dearg]]||[[Uig, Lewis|Uig]], [[Isle of Lewis]]||[[Island single malt|Island]]
+|2008||Mark Tayburn
+|-
+||[[Ailsa Bay distillery|Ailsa Bay]]||[[Girvan]]||Lowland
+|2009||[[William Grant & Sons]]
+|-
+||[[Allt-A-Bhainne distillery|Allt-A-Bhainne]]||[[Glenrinnes]]||Speyside
+|1975||[[Chivas Brothers]]
+|-
+||[[Annandale distillery|Annandale]]||[[Annan, Dumfries and Galloway|Annan]]||Lowland
+|1836||[[Annandale distillery|Annandale Distillery Company]]
+|-
+||[[Arbikie distillery|Arbikie]]||[[Inverkeilor]]||Highland
+|2013||Arbikie Highland Estate
+|-
+||[[Ardbeg distillery|Ardbeg]]||[[Port Ellen]]||[[Islay single malts|Islay]]
+|1815||[[LVMH]]
+|-
+|[[Ardgowan distillery|Ardgowan]]
+|[[Inverkip]]
+|Lowland
+|1896
+| [[Ardgowan distillery|Ardgowan Distillery Company]]
+|-
+||[[Ardmore distillery|Ardmore]]||[[Kennethmont]]||Highland
+|1898||[[Suntory Global Spirits]]
+|-
+||[[Ardnahoe distillery|Ardnahoe]]||[[Port Askaig]]||Islay
+|2019||Hunter Laing & Company
+|-
+|[[Ardnamurchan distillery|Ardnamurchan]]
+|[[Ardnamurchan]]
+|Highland
+|2014
+|[[Adelphi distillery|Adelphi Distillery Co]]
+|-
+|[[Ardross distillery|Ardross]]
+|[[Alness]]
+|Highland
+|2019
+|Greenwood Distillers
+|-
+||[[Auchentoshan distillery|Auchentoshan]]||[[Dalmuir]]||Lowland
+|1823||[[Suntory Global Spirits]]
+|-
+||[[Auchroisk distillery|Auchroisk]]||[[Mulben]]||Speyside
+|1972||[[Diageo]]
+|-
+||[[Aultmore distillery|Aultmore]]||[[Banffshire]]||Speyside
+|1895||[[John Dewar & Sons]]
+|-
+||[[Balblair distillery|Balblair]]||[[Edderton]]||Highland
+|1790||[[Inver House Distillers]]
+|-
+|[[Ballindalloch distillery|Ballindalloch]]
+|[[Ballindalloch]]
+|Speyside
+|2014
+|[[Ballindalloch distillery|Ballindalloch Distillery LLP]]
+|- 
+||[[Balmaud distillery|Balmaud]]||[[Turriff]]||Highland
+| 2024||Balmaud Distillery Co. Ltd.
+|-
+||[[Balmenach distillery|Balmenach]]||[[Cromdale]]||Speyside
+|1824||[[Inver House Distillers]]
+|-
+||[[Balvenie distillery|Balvenie]]||[[Dufftown]]||Speyside
+|1892||[[William Grant & Sons]]
+|- 
+||[[Ben Cumhaill distillery|Ben Cumhaill]] ({{IPAc-en|b|E|n|'|k|u:|l}})||[[Dumfries]]||Lowland
+| 2025||Simpson family
+|-
+||[[Ben Nevis distillery|Ben Nevis]]||[[Fort William, Highland|Fort William]]||Highland
+|1825||[[Nikka Whisky Distilling|Nikka Whisky Distilling Co Ltd]]
+|-
+|[[Benbecula Distillery|Benbecula]]
+|[[Outer Hebrides]]
+|Island
+|2024
+|Angus A. MacMillan
+|-
+||[[BenRiach distillery|BenRiach]]||[[Longmorn]], [[Moray]]||Speyside
+|1898||[[Brown–Forman|Brown-Forman]]
+|-
+||[[Benrinnes distillery|Benrinnes]]||[[Banffshire]]||Speyside
+|1826||[[Diageo]]
+|-
+||[[Benromach distillery|Benromach]]||[[Forres]]||Speyside
+|1898||[[Gordon & MacPhail]]
+|-
+||[[Blackness Bay Distillery|Blackness]]||[[Linlithgow]]||Lowland
+|2024||Colm O'Rourke
+|-
+||[[Bladnoch distillery|Bladnoch]]||[[Wigtown]]||Lowland
+|1817||[[David Prior (entrepreneur)|David Prior]]
+|-
+||[[Blair Athol distillery|Blair Athol]]||[[Pitlochry]]||Highland
+|1798||[[Diageo]]
+|-
+|[[Bonnington distillery|Bonnington]]
+|[[Edinburgh]]
+|Lowland
+|2020
+|Halewood Artisanal Spirits
+|-
+|[[Borders distillery|Borders]]
+|[[Hawick]]
+|Lowland
+|2018
+|The Three Stills Company
+|-
+||[[Bowmore distillery|Bowmore]]||[[Bowmore]]||Islay
+|1779||[[Suntory Global Spirits]]
+|-
+||[[Braeval distillery|Braeval]]||[[Ballindalloch]]||Speyside
+|1973||[[Chivas Brothers]]
+|-
+|[[Brora distillery|Brora]]
+|[[Brora]]
+|Highland
+|1819
+|[[Diageo]]
+|-
+||[[Bruichladdich distillery|Bruichladdich]]||[[Rhinns of Islay]]||Islay
+|1881||[[Rémy Cointreau]]
+|-
+||[[Bunnahabhain distillery|Bunnahabhain]]||[[Port Askaig]]||Islay
+|1881||[[Distell Group Limited|Distell]]
+|-
+|[[Burn O'Bennie distillery|Burn O'Bennie]]
+|[[Banchory]]
+|Highland
+|2021
+|Deeside Brewery & Distillery Ltd.
+|-
+|[[Cabrach distillery|Cabrach]]
+|[[Cabrach]]
+|Speyside
+|2024
+|The Cabrach Trust
+|-
+|[[Cairn distillery|Cairn]]||[[Grantown-on-Spey]]||Speyside
+|2022||[[Gordon & MacPhail]]
+|-
+||[[Caol Ila distillery|Caol Ila]]||[[Port Askaig]]||Islay
+|1846||[[Diageo]]
+|-
+||[[Cardhu distillery|Cardhu]]||[[Knockando, Moray|Knockando]]||Speyside
+|1824||[[Diageo]]
+|-
+|[[Clydeside distillery|Clydeside]]
+|[[Glasgow]]
+|Lowland
+|2017
+|Morrison Glasgow Distillers
+|-
+||[[Clynelish distillery|Clynelish]]||[[Brora]]||Highland
+|1967||[[Diageo]]
+|-
+||[[Cragganmore distillery|Cragganmore]]||[[Ballindalloch]]||Speyside
+|1869||[[Diageo]]
+|-
+||[[Craigellachie distillery|Craigellachie]]||[[Craigellachie, Moray|Craigellachie]]||Speyside
+|1891||[[John Dewar & Sons]]
+|-
+||[[Daftmill distillery|Daftmill]]||[[Fife]]||Lowland
+|2005||Francis and Ian Cuthbert
+|-
+||[[Dailuaine distillery|Dailuaine]]||[[Aberlour]]||Speyside
+|1852||[[Diageo]]
+|-
+||[[Dalmore distillery|Dalmore]]||[[Alness]]||Highland
+|1839||[[Whyte & Mackay]]
+|-
+||[[Dalmunach distillery|Dalmunach]]||[[Carron, Strathspey|Carron]]||Speyside
+|2015||[[Chivas Brothers]]
+|-
+||[[Dalwhinnie distillery|Dalwhinnie]]||[[Dalwhinnie]]||Highland
+|1898||[[Diageo]]
+|-
+||[[Deanston distillery|Deanston]]||[[Doune]]||Highland
+|1965||[[Distell Group Limited|Distell]]
+|-
+|[[Deerness distillery|Deerness]]
+|[[Deerness]]
+|Island
+|2016
+|Deerness Distillery Ltd
+|-
+|[[Dornoch distillery|Dornoch]]
+|[[Dornoch]]
+|Highland
+|2017
+|Dornoch Distillery Company
+|-
+||[[Dufftown distillery|Dufftown]]||[[Banffshire]]||Speyside
+|1895||[[Diageo]]
+|-
+|[[Dunphail distillery|Dunphail]]
+|[[Edinkillie]], [[Moray]]
+|Speyside
+|2023
+|Bimber
+|-
+||[[Eden Mill St Andrews distillery|Eden Mill]]||[[Fife]]||Lowland
+|2012||Paul Miller
+|-
+||[[Edradour distillery|Edradour]]||[[Pitlochry]]||Highland
+|1825||Signatory Vintage Scotch Whisky Co
+|-
+||[[Falkirk distillery|Falkirk]]||[[Falkirk]]||Lowland
+|2020||Fiona Stewart
+|-
+||[[Fettercairn distillery|Fettercairn]]||[[Fettercairn]]||Highland
+|1824||[[Whyte & Mackay]]
+|-
+|[[Galloway distillery|Galloway]]
+|[[Galloway Hills|Galloway]]
+|Lowland
+|2017
+|[[Sam Heughan]]
+|-
+||[[Glasgow distillery|Glasgow]]||[[Glasgow]]||Lowland
+|2015||[[Glasgow distillery|The Glasgow Distillery Company]]
+|-
+||[[Glenallachie distillery|Glenallachie]]||[[Banffshire]]||Speyside
+|1967||[[Glenallachie distillery|The GlenAllachie Distillers Co Limited]]
+|-
+||[[Glenburgie distillery|Glenburgie]]||[[Moray]]||Speyside
+|1810||[[Chivas Brothers]]
+|-
+||[[Glencadam distillery|Glencadam]]||[[Angus, Scotland|Angus]]||Highland
+|1825||Angus Dundee Distiller
+|-
+||[[Glendronach distillery|Glendronach]]||[[Aberdeenshire]]||Highland
+|1826||[[Brown–Forman|Brown-Forman]]
+|-
+||[[Glendullan distillery|Glendullan]]||[[Banffshire]]||Speyside
+|1897||[[Diageo]]
+|-
+||[[Glen Elgin distillery|Glen Elgin]]||[[Fogwatt]], [[Moray]]||Speyside
+|1898||[[Diageo]]
+|-
+||[[Glenfarclas distillery|Glenfarclas]]||[[Ballindalloch]]||Speyside
+|1836||[[J. & G. Grant]]
+|-
+||[[Glenfiddich distillery|Glenfiddich]]||[[Dufftown]]||Speyside
+|1886||[[William Grant & Sons]]
+|-
+||[[Glen Garioch distillery|Glen Garioch]]||[[Oldmeldrum]]||Highland
+|1797||[[Suntory Global Spirits]]
+|-
+||[[Glenglassaugh distillery|Glenglassaugh]]||[[Portsoy]]||Highland
+|1875||[[Brown–Forman|Brown-Forman]]
+|-
+||[[Glengoyne distillery|Glengoyne]]||[[Dumgoyne]]||Highland
+|1833||[[Ian Macleod Distillers]]
+|-
+||[[Glen Grant distillery|Glen Grant]]||[[Rothes]]||Speyside
+|1840||[[Campari Group|Campari]]
+|-
+||[[Glengyle distillery|Glengyle]]||[[Campbeltown]]||[[Campbeltown single malts|Campbeltown]]
+|1872||Mitchell's Glengyle Ltd
+|-
+||[[Glen Keith distillery|Glen Keith]]||[[Keith, Moray|Keith]]||Speyside
+|1957||[[Chivas Brothers]]
+|-
+||[[Glenkinchie distillery|Glenkinchie]]||[[Pencaitland]]||Lowland
+|1837||[[Diageo]]
+|-
+||[[The Glenlivet distillery|Glenlivet]]||[[Ballindalloch]]||Speyside
+|1824||[[Chivas Brothers]]
+|-
+||[[Glenlossie distillery|Glenlossie]]||[[Elgin, Moray|Elgin]]||Speyside
+|1876||[[Diageo]]
+|-
+||[[Glenmorangie distillery|Glenmorangie]]||[[Tain]]||Highland
+|1843||[[LVMH]]
+|-
+||[[Glen Moray distillery|Glen Moray]]||[[Elgin, Moray|Elgin]]||Speyside
+|1897||[[La Martiniquaise]]
+|-
+||[[Glen Ord Distillery|Glen Ord]]||[[Muir of Ord]]||Highland
+|1838||[[Diageo]]
+|-
+||[[The Glenrothes distillery|Glenrothes]]||[[Rothes]]||Speyside
+|1879||[[Edrington (spirits company)|Edrington]]
+|-
+||[[Glen Scotia distillery|Glen Scotia]]||[[Campbeltown]]||Campbeltown
+|1832||[[Loch Lomond distillery|Loch Lomond Group]]
+|-
+||[[Glen Spey distillery|Glen Spey]]||[[Rothes]]||Speyside
+|1878||[[Diageo]]
+|-
+||[[Glentauchers distillery|Glentauchers]]||[[Mulben]]||Speyside
+|1897||[[Chivas Brothers]]
+|-
+||[[Glenturret distillery|Glenturret]]||[[Crieff]]||Highland
+|1763||[[Silvio Denz|Lalique Group]]
+|-
+||[[GlenWyvis distillery|GlenWyvis]]||[[Dingwall]]||Highland
+|2015||[[GlenWyvis distillery|GlenWyvis Distillery Ltd.]]
+|-
+|[[Harris distillery|Harris]]
+|[[Tarbert, Harris|Tarbert]]
+|Island
+|2015
+|[[Harris distillery|Isle of Harris Distillers Ltd.]]
+|-
+||[[Highland Park distillery|Highland Park]]||[[Kirkwall]]||Island
+|1798||[[Edrington (spirits company)|Edrington]]
+|-
+||[[Holyrood Distillery|Holyrood]]||[[Edinburgh]]||Lowland
+|2019||David Robertson
+|-
+|[[Inchdairnie distillery|Inchdairnie]]
+|[[Glenrothes]]
+|Lowland
+|2015
+|John Fergus & Co.
+|-
+||[[Inchgower distillery|Inchgower]]||[[Buckie]]||Speyside
+|1871||[[Diageo]]
+|-
+|[[Jackton distillery|Jackton]]
+|[[Jackton]]
+|Lowland
+|2020
+|RAER Spirits
+|-
+||[[Jura distillery|Jura]]||[[Craighouse]], [[Jura, Scotland|Jura]]||Island
+|1810||[[Whyte & Mackay]]
+|-
+||[[Kilchoman distillery|Kilchoman]]||[[Kilchoman]]||Islay
+|2005||[[Kilchoman distillery|Kilchoman Distillery Company]]
+|-
+|[[Kimbland distillery|Kimbland]]
+|[[Sanday, Orkney|Sanday]]
+|Island
+|2017
+|Kimbland Distillery Ltd
+|-
+||[[Kingsbarns distillery|Kingsbarns]]||[[Kingsbarns]]||Lowland
+|2014||[[Kingsbarns distillery|The Kingsbarns Company of Distillers]]
+|-
+||[[Kininvie distillery|Kininvie]]||[[Dufftown]]||Speyside
+|1990||[[William Grant & Sons]]
+|-
+||[[Knockando distillery|Knockando]]||[[Knockando, Moray|Knockando]]||Speyside
+|1898||[[Diageo]]
+|-
+||[[Knockdhu distillery|Knockdhu]]||[[Banffshire|Knock]]||Speyside
+|1894||[[Inver House Distillers]]
+|- 
+||[[Kythe distillery|Kythe]]||[[Blairgowrie and Rattray|Blairgowrie]]||Lowland
+| 2022||Kythe Distillery Co.
+|-
+|[[Lagg distillery|Lagg]]
+|[[Lagg, Arran|Lagg]]
+|Island
+|2019
+|[[Arran distillery|Isle of Arran Distillers Ltd.]]
+|- 
+||[[Laggan Bay distillery|Laggan Bay]]||[[Islay]]||Islay
+| 2026||[[Ian MacLeod Distillers]]
+|-
+||[[Lagavulin distillery|Lagavulin]]||[[Port Ellen]]||Islay
+| 1816||[[Diageo]]
+|-
+||[[Laphroaig distillery|Laphroaig]]||[[Port Ellen]]||Islay
+| 1815||[[Suntory Global Spirits]]
+|-
+|[[Lerwick distillery|Lerwick]]
+|[[Lerwick]]
+|Island
+|2022
+|Lerwick Distillery Ltd
+|-
+|[[Leven distillery|Leven]]
+|[[Leven, Fife|Leven]]
+|Lowland
+|2013
+|[[Diageo]]
+|-
+|[[Lindores Abbey distillery|Lindores Abbey]]
+|[[Newburgh, Fife|Newburgh]]
+|Lowland
+|2017
+|[[Lindores Abbey distillery|Lindores Distilling Co.]]
+|-
+||[[Linkwood distillery|Linkwood]]||[[Elgin, Moray|Elgin]]||Speyside
+| 1821||[[Diageo]]
+|-
+||[[Lochlea distillery|Lochlea]]||[[Ayrshire]]||Lowland
+| 2018||Neil McGeoch
+|-
+||[[Lochranza distillery|Lochranza]]||[[Lochranza]]||Island
+|1995||[[Lochranza distillery|Isle of Arran Distillers Ltd.]]
+|-
+||[[Loch Lomond distillery|Loch Lomond]]||[[Alexandria, West Dunbartonshire|Alexandria]]||Highland
+| 1964||[[Loch Lomond distillery|Loch Lomond Group]]
+|-
+||[[Longmorn distillery|Longmorn]]||[[Elgin, Moray|Elgin]]||Speyside
+| 1893||[[Chivas Brothers]]
+|-
+||[[The Macallan distillery|Macallan]]||[[Craigellachie, Moray|Craigellachie]]||Speyside
+| 1824||[[Edrington (spirits company)|Edrington]]
+|-
+||[[Macduff distillery|Macduff]]||[[Banff, Aberdeenshire|Banff]]||Highland
+| 1960||[[John Dewar & Sons]]
+|-
+||[[Mannochmore distillery|Mannochmore]]||[[Elgin, Moray|Elgin]]||Speyside
+| 1971||[[Diageo]]
+|-
+||[[Miltonduff distillery|Miltonduff]]||[[Elgin, Moray|Elgin]]||Speyside
+| 1824||[[Chivas Brothers]]
+|-
+||[[Moffat distillery|Moffat]]||[[Moffat, Dumfries and Galloway|Moffat]]||Lowland
+| 2023||Dark Sky Spirits
+|-
+||[[Mortlach distillery|Mortlach]]||[[Dufftown]]||Speyside
+| 1823||[[Diageo]]
+|-
+|[[Nc'nean distillery|Nc’nean]]
+|[[Lochaline|Lochlaline]]
+|Highland
+|2017
+|Drimnin Distillery Company
+|- 
+||[[North Point distillery|North Point]]||[[Thurso]]||Highland
+| 2020||North Coast Distillers Ltd.
+|-
+|[[North Uist distillery|North Uist]]
+|[[Benbecula]]
+|Island
+|2024
+|North Uist Distillery Company 
+|-
+||[[Oban distillery|Oban]]||[[Oban]]||Highland
+| 1794||[[Diageo]]
+|- 
+||[[Orkney distillery|Orkney]]||[[Kirkwall]]||Island
+| 2018||Orkney Distilling Ltd.
+|-
+|[[Port Ellen distillery|Port Ellen]]
+|[[Port Ellen]]
+|Islay
+|1825
+|[[Diageo]]
+|-
+|[[Port of Leith distillery|Port of Leith]]
+|[[Edinburgh]]
+|Lowland
+|2023
+|Muckle Brig
+|-
+||[[Old Pulteney distillery|Pulteney]]||[[Wick, Caithness|Wick]]||Highland
+| 1826||[[Inver House Distillers]]
+|-
+||[[Isle of Raasay distillery|Raasay]]||[[Isle of Raasay]]||Island
+| 2014||R&B Distillers
+|-
+|[[Rosebank distillery|Rosebank]]
+|[[Falkirk]]
+|Lowland
+|1798
+|[[Ian Macleod Distillers]]
+|-
+||[[Roseisle distillery|Roseisle]]||[[Roseisle]]||Speyside
+| 2010||[[Diageo]]
+|-
+|[[Royal Brackla distillery|Royal Brackla]]
+|[[Nairn]]
+|Highland
+|1812
+|[[John Dewar & Sons]]
+|-
+||[[Royal Lochnagar distillery|Royal Lochnagar]]||[[Ballater]]||Highland
+| 1845||[[Diageo]]
+|-
+|[[Saxa Vord distillery|Saxa Vord]]
+|[[Unst]]
+|Island
+|2015
+|Shetland Distillery Company 
+|-
+||[[Scapa distillery|Scapa]]||[[Kirkwall]]||Island
+| 1885||[[Chivas Brothers]]
+|-
+||[[Speyburn distillery|Speyburn]]||[[Rothes]]||Speyside
+| 1897||[[Inver House Distillers]]
+|-
+||[[Springbank distillery|Springbank]]||[[Campbeltown]]||Campbeltown
+| 1828||J&A Mitchell & Company
+|-
+|[[Stannergill distillery|Stannergill]]
+|[[Caithness]]
+|Highland
+|2026
+|Dunnet Bay Distillers
+|- 
+||[[Stirling distillery|Stirling]]||[[Stirling]]||Lowland
+| 2015||June & Cameron McCann
+|-
+||[[Strathearn distillery|Strathearn]]||[[Methven, Perth and Kinross|Methven]]||Highland
+| 2013||[[Douglas Laing & Co]].
+|-
+||[[Strathisla distillery|Strathisla]]||[[Keith, Moray|Keith]]||Speyside
+| 1786||[[Chivas Brothers]]
+|- 
+||[[Strathmill distillery|Strathmill]]||[[Keith, Moray|Keith]]||Speyside
+| 1891||[[Diageo]]
+|-
+||[[Talisker distillery|Talisker]]||[[Carbost, Loch Harport|Carbost]], [[Isle of Skye]]||Island
+| 1830||[[Diageo]]
+|-
+||[[Tamdhu distillery|Tamdhu]]||[[Knockando, Moray|Knockando]]||Speyside
+| 1897||[[Ian Macleod Distillers]]
+|-
+||[[Tamnavulin distillery|Tamnavulin]]||[[Tomnavoulin]]||Speyside
+| 1966||[[Whyte & Mackay]]
+|-
+||[[Teaninich distillery|Teaninich]]||[[Alness]]||Highland
+| 1817||[[Diageo]]
+|-
+||[[Isle of Tiree distillery|Tiree]]||[[Tiree]]||Island
+| 2019||[[Tiree Whisky Company Ltd.]]
+|-
+||[[Tobermory distillery|Tobermory]]||[[Tobermory, Mull|Tobermory]], [[Isle of Mull]]||Island
+| 1798||[[Distell Group Limited|Distell]]
+|-
+||[[Tomatin distillery|Tomatin]]||[[Tomatin]]||Highland
+| 1897||[[Takara Holdings|Takara Shuzo Co]]
+|-
+||[[Tomintoul distillery|Tomintoul]]||[[Ballindalloch]]||Speyside
+| 1964||[[Angus Dundee Distiller]]
+|-
+||[[Torabhaig distillery|Torabhaig]]||[[Teangue]], [[Isle of Skye]]||Island
+| 2017||Mossburn Distillers
+|-
+||[[Tormore distillery|Tormore]]||[[Grantown-on-Spey]]||Speyside
+| 1958||Elixir Distillers
+|- 
+||[[Toulvaddie distillery|Toulvaddie]]||[[Fearn (Highland)|Fearn]]||Highland
+| 2022||Heather & Bobby Nelson
+|-
+||[[Tullibardine distillery|Tullibardine]]||[[Blackford, Perth and Kinross|Blackford]]||Highland
+| 1949||Picard Vins & Spiritueux
+|-
+|[[Uile-bheist]] ({{IPAc-en|'|u:|l|@|v|ei|sh|t}})
+|[[Inverness]]
+|Highland
+|2023
+|Victoria and John Erasmus
+|-
+||[[Wolfburn distillery|Wolfburn]]||[[Thurso]]||Highland
+| 1822||Aurora Brewing
+|-
+|[[8 Doors distillery|8 Doors]]
+|[[John o' Groats|John O’Groats]]
+|Highland
+|2022
+|Kerry and Derek Campbell
+|}
+
+'''''Note:''''' The Scotch Whisky Association considers the Island region as part of the Highlands region.
+
+===Grain whisky distilleries===
+{| class="sortable wikitable"
+|-
+!style="text-align:left" | Distillery
+!style="text-align:left" | Location
+!Founded
+! style="text-align:left" | Owner
+|-
+||[[Cameronbridge distillery|Cameronbridge]]||[[Fife]]
+|1824||[[Diageo]]
+|-
+|[[Girvan distillery|Girvan]]
+|[[Girvan]]
+|1963
+|[[William Grant & Sons]]
+|-
+||[[Invergordon distillery|Invergordon]]||[[Easter Ross]]
+|1959||[[Whyte & Mackay]]
+|-
+||[[Loch Lomond distillery|Loch Lomond]]||[[Alexandria, Scotland|Alexandria]]
+|1964||[[Loch Lomond distillery|Loch Lomond Group]]
+|-
+||[[North British distillery|North British]]||[[Edinburgh]]
+|1885||Lothian Distillers Ltd.
+|-
+|[[Reivers distillery|Reivers]]
+|[[Tweedbank]]
+|2018
+|Mossburn Distillers Ltd.
+|- 	
+||[[Starlaw distillery|Starlaw]]||[[Livingston, West Lothian|Livingston]]
+|2010||[[La Martiniquaise]]
+|-
+||[[Strathclyde distillery|Strathclyde]]||[[Glasgow]]
+|1927||[[Chivas Brothers]]
+|}
+
+== Closed distilleries ==
+
+===Former malt distilleries===
+{| class="sortable wikitable"
+|-
+!style="text-align:left" | Distillery
+!style="text-align:left" | Location
+!style="text-align:left" | [[Scotch whisky#Whisky regions|Region]]
+!style="text-align:left" | Year closed
+|-
+||[[Adelphi distillery|Adelphi]]|||[[Glasgow]]||[[Lowland single malts|Lowland]]
+|1907, demolished 1970
+|-
+|[[Albyn distillery|Albyn]]
+|[[Millknowe]]
+|[[Campbeltown single malts|Campbeltown]]
+|1920, demolished 1929
+|-
+|[[Ardlussa distillery|Ardlussa]]
+|[[Campbeltown]]
+|Campbeltown
+|1927, demolished
+|-
+|[[Argyll distillery|Argyll]]
+|[[Campbeltown]]
+|Campbeltown
+|1923, demolished
+|-
+||[[Auchinblae distillery|Auchinblae]]||[[Auchenblae]]||[[Highland single malts|Highland]]
+|1929, demolished
+|-
+|[[Auchnagie distillery|Auchnagie]] 
+|[[Tulliemet]]
+|Highland
+|1911, demolished
+|-
+||[[Auchtermuchty distillery|Auchtermuchty]]||[[Auchtermuchty]]||Lowland
+|1926, buildings have remained intact
+|-
+||[[Auchtertool distillery|Auchtertool]]||[[Auchtertool]]||Lowland
+|1927, demolished
+|-
+||[[Ballechin distillery|Ballechin]]||[[Pitlochry]]||Highland
+|1927, demolished
+|-
+||[[Banff distillery|Banff]]||[[Banff, Aberdeenshire|Banff]]||[[Speyside single malt|Speyside]]
+|1983, demolished 1991
+|-
+|[[Bankier distillery|Bankier]]
+|[[Denny, Falkirk|Denny]] 
+|Lowland
+|1928, demolished 1981
+|-
+|[[Benachie distillery|Benachie]]
+|[[Insch]]
+|Highland
+|1915, demolished
+|-
+|[[Benmore distillery|Benmore]]
+|[[Campbeltown]]
+|Campbeltown
+|1927, buildings have remained intact
+|-
+|[[Ben Morven distillery|Ben Morven]]
+|[[Halkirk]]
+|Highland
+|1914, demolished
+|-
+||[[Ben Wyvis distillery|Ben Wyvis]]||[[Dingwall]]||Highland
+|1977, demolished 1977
+|-
+|[[Bon Accord distillery|Bon Accord]]
+|[[Aberdeen]]
+|Highland
+|1913, demolished
+|-
+|[[BrewDog distillery|BrewDog]]
+|[[Ellon, Aberdeenshire|Ellon]]
+|Highland
+|2026, continued to function as a brewery
+|-
+|[[Burnside distillery|Burnside]]
+|[[Campbeltown]]
+|Campbeltown
+|1919, demolished
+|-
+|[[Caledonian distillery|Caledonian]]
+|[[Campbeltown]]
+|Campbeltown
+|1842, demolished
+|-
+|[[Campbeltown distillery|Campbeltown]]
+|[[Campbeltown]]
+|Campbeltown
+|1924, demolished
+|-
+||[[Caperdonich distillery|Caperdonich]]||[[Rothes]]||Speyside
+|2002, demolished 2010
+|-
+|[[Clydesdale distillery|Clydesdale]]
+|[[Wishaw]]
+|Lowland
+|1919, demolished 1988
+|-
+||[[Chain Pier distillery|Chain Pier]]||[[Edinburgh]]||Lowland
+|2019, only operated for a few months between 2018-19
+|-
+||[[Coleburn distillery|Coleburn]]||[[Elgin, Moray|Elgin]]||Speyside
+|1985, plans for the distillery to reopen in 2027
+|-
+||[[Convalmore distillery|Convalmore]]||[[Dufftown]]||Speyside
+|1985, converted into a whisky warehouse facility
+|-
+|[[Dalaruan distillery|Dalaruan]]
+|[[Campbeltown]]
+|Campbeltown
+|1922, demolished
+|-
+|[[Dalintober distillery|Dalintober]]
+|[[Campbeltown]]
+|Campbeltown
+|1925, demolished
+|-
+||[[Dallas Dhu distillery|Dallas Dhu]]||[[Forres]]||Speyside
+|1983, plans for the distillery to reopen in 2025
+|-
+|[[Dean distillery|Dean]]
+|[[Edinburgh]]
+|Lowland
+|1922, demolished
+|-
+|[[Devanha distillery|Devanha]]
+|[[Aberdeen]]
+|Highland
+|1915, demolished
+|-
+|[[Drumcaldie distillery|Drumcaldie]]
+|[[Fife]]
+|Lowland
+|1903, demolished 1988
+|-
+|[[Drumore distillery|Drumore]]
+|[[Campbeltown]]
+|Campbeltown
+|1847, demolished
+|-
+|[[Edinburgh distillery|Edinburgh]]
+|[[Edinburgh]]
+|Lowland
+|1925, demolished
+|-
+||[[Finnieston distillery|Finnieston]]||[[Glasgow]]||Lowland
+|1827, demolished
+|-
+||[[Fortrose distillery|Fortrose]]||[[Fortrose]]||Highland
+|1852, demolished
+|-
+||[[Glen Albyn distillery|Glen Albyn]]||[[Inverness]]||Highland
+|1983, demolished 1988
+|-
+|[[Glenaden distillery|Glenaden]]
+|[[Old Deer]]
+|Highland
+|1915, demolished
+|-
+|[[Glencawdor distillery|Glencawdor]]
+|[[Nairn]]
+|Highland
+|1927, demolished 1930
+|-
+|[[Glencoull distillery|Glencoull]]
+|[[Angus, Scotland|Angus]]
+|Highland
+|1927, demolished 1934
+|-
+||[[Glenesk distillery|Glenesk]]||[[Montrose, Angus|Montrose]]||Highland
+|1985, demolished 1996
+|-
+||[[Glen Flagler distillery|Glen Flagler]]||[[Airdrie, North Lanarkshire|Airdrie]]||Lowland
+|1985, demolished 1988, warehouse  converted into Inver House headquarters 
+|-
+|[[Glenfoyle distillery|Glenfoyle]]
+|[[Gargunnock]]
+|Highland
+|1923, demolished
+|-
+||[[Glengilp distillery|Glengilp]]||[[Ardrishaig]]||Highland
+|1937, demolished 1996
+|-
+|[[Gleniffer distillery|Gleniffer]]
+|[[Elderslie, Scotland|Elderslie]]
+|Lowland
+|1894, demolished
+|-
+|[[Glenlochy distillery|Glenlochy]]
+|[[Fort William, Highland|Fort William]]
+|Highland
+|1983, demolished 1991
+|-
+|[[Glenmavis distillery|Glenmavis]]
+|[[Bathgate]]
+|Lowland
+|1910, demolished
+|-
+||[[Glen Mhor distillery|Glen Mhor]]||[[Inverness]]||Highland
+|1983, demolished 1986
+|-
+|[[Glen Nevis distillery|Glen Nevis]]
+|[[Campbeltown]]
+|Campbeltown
+|1923, demolished
+|-
+|[[Glenramskill distillery|Glenramskill]]
+|[[Campbeltown]]
+|Campbeltown
+|1854, demolished
+|-
+|[[Glenside distillery|Glenside]]
+|[[Campbeltown]]
+|Campbeltown
+|1926, demolished
+|-
+||[[Glenskiach distillery|Glenskiach]]||[[Evanton]]||Highland
+|1926, demolished 1933
+|-
+|[[Glentarras distillery|Glentarras]]
+|[[Langholm]]
+|Lowland
+|1914, demolished
+|-
+||[[Glenugie distillery|Glenugie]]||[[Peterhead]]||Highland
+|1983, demolished 1985
+|-
+||[[Glenury distillery|Glenury]]||[[Stonehaven]]||Highland
+|1985, demolished 1993
+|-
+|[[Grandtully distillery|Grandtully]]
+|[[Grandtully]]
+|Highland
+|1910, demolished
+|-
+|[[Grange distillery|Grange]]
+|[[Burntisland]]
+|Lowland
+|1925, demolished 1990
+|-
+|[[Greenock distillery|Greenock]]
+|[[Greenock]]
+|Lowland
+|1915, demolished
+|-
+|[[Highland whisky distillery|Highland]]
+|[[Campbeltown]]
+|Campbeltown
+|1852, demolished
+|-
+||[[Hazelburn distillery|Hazelburn]]||[[Campbeltown]]||Campbeltown
+|1925, demolished 1926
+|-
+||[[Imperial distillery|Imperial]]||[[Carron, Falkirk|Carron]]||Speyside
+|1998, demolished 2013 
+|-
+||[[Inverleven distillery|Inverleven]]||[[Dumbarton]]||Lowland
+|1991, demolished 2017
+|-
+|[[Isla distillery|Isla]]
+|[[Perth, Scotland|Perth]]
+|Highland
+|1926, demolished
+|-
+||[[Kinclaith distillery|Kinclaith]]||[[Glasgow]]||Lowland
+|1976, demolished 1976
+|-
+|[[Kinloch distillery|Kinloch]]
+|[[Campbeltown]]
+|Campbeltown
+|1926, demolished 1928
+|-
+|[[Kintyre distillery|Kintyre]]
+|[[Campbeltown]]
+|Campbeltown
+|1920, demolished
+|-
+||[[Ladyburn distillery|Ladyburn]]||[[Girvan]]||Lowland
+|1975, demolished 1976
+|-
+|[[Langholm distillery|Langholm]]
+|[[Langholm]]
+|Lowland
+|1917, demolished 1926
+|-
+||[[Littlemill distillery|Littlemill]]||[[Bowling, West Dunbartonshire|Bowling]]||Lowland
+|1992, demolished 2004
+|-
+|[[Loch Katrine distillery|Loch Katrine]]
+|[[Glasgow]]
+|Lowland
+|1920, demolished
+|-
+||[[Lochside distillery|Lochside]]||[[Montrose, Angus|Montrose]]||Highland
+|1992, demolished 2004
+|-
+|[[Lochhead distillery|Lochhead]]
+|[[Campbeltown]]
+|Campbeltown
+|1928, demolished
+|-
+|[[Lochruan distillery|Lochruan]]
+|[[Campbeltown]]
+|Campbeltown
+|1925, demolished
+|-
+|[[Longrow distillery|Longrow]]
+|[[Campbeltown]]
+|Campbeltown
+|1896, demolished
+|-
+|[[Meadowburn distillery|Meadowburn]]
+|[[Campbeltown]]
+|Campbeltown
+|1882, demolished
+|-
+||[[Millburn distillery|Millburn]]||[[Inverness]]||Highland
+|1985, demolished 1988
+|-
+|[[Mossfield distillery|Mossfield]]
+|[[Campbeltown]]
+|Campbeltown
+|1837, demolished
+|-
+||[[North Port distillery|North Port]]||[[Brechin]]||Highland
+|1983, demolished 1994
+|-
+||[[Parkmore distillery|Parkmore]]||[[Dufftown]]||Speyside
+|1988, converted into a whisky warehouse facility
+|-
+||[[Pittyvaich distillery|Pittyvaich]]||[[Dufftown]]||Speyside
+|1993, demolished 2002
+|-
+||[[Port Charlotte distillery|Port Charlotte]]||[[Port Charlotte, Islay|Port Charlotte]]||[[Islay single malts|Islay]]
+|1929, converted into a whisky warehouse facility
+|-
+|[[Provanmill distillery|Provanmill]]
+|[[Glasgow]]
+|Lowland
+|1922, demolished 1953
+|-
+|[[Saucel distillery|Saucel]]
+|[[Paisley, Renfrewshire|Paisley]]
+|Lowland
+|1915, demolished
+|-
+|[[The Speyside distillery|Speyside]]
+|[[Drumguish]]
+|Speyside 
+|2025
+|-
+|[[Springside distillery|Springside]]
+|[[Campbeltown]]
+|Campbeltown
+|1926, demolished
+|-
+||[[St Magdalene distillery|St. Magdalene]]||[[Linlithgow]]||Lowland
+|1983, buildings were converted into apartments
+|-
+|[[Strathdee distillery|Strathdee]]
+|[[Aberdeen]]
+|Highland
+|1942, demolished
+|-
+|[[Stromness distillery|Stromness]]
+|[[Orkney]]
+|Highland
+|1928, demolished 1940
+|-
+|[[Stronarchie distillery|Stronarchie]]
+|[[Forgandenny]]
+|Highland
+|1928, demolished 1950
+|-
+|[[Tambovie distillery|Tambovie]]
+|[[Milngavie]]
+|Lowland
+|1914, demolished 1921
+|-
+|[[Thistle distillery|Thistle]]
+|[[Campbeltown]]
+|Campbeltown
+|1837, demolished
+|-
+|[[Toberanrigh distillery|Toberanrigh]]
+|[[Campbeltown]]
+|Campbeltown
+|1860, demolished
+|-
+|[[Towiemore distillery|Towiemore]]
+|[[Botriphnie, Banffshire|Botriphnie]]
+|Highland
+|1930, demolished
+|-
+|[[Union distillery|Union]]
+|[[Campbeltown]]
+|Campbeltown
+|1850, demolished
+|-
+|[[West Highland distillery|West Highland]]
+|[[Campbeltown]]
+|Campbeltown
+|1852, demolished
+|}
+
+===Former grain distilleries===
+{| class="sortable wikitable"
+|-
+!style="text-align:left" | Distillery
+!style="text-align:left" | Location
+! style="text-align:left" | Year closed
+|-
+||[[Caledonian grain distillery|Caledonian]]||[[Haymarket, Edinburgh|Haymarket]]||1988, demolished
+|-
+||[[Cambus,_Clackmannanshire#Distillery|Cambus]]||[[Tullibody]]||1993, converted into a whisky warehouse facility and cask filling operation
+|-
+||[[Carsebridge distillery|Carsebridge]]||[[Alloa]]||1983, demolished 1990
+|-
+||[[Dumbarton#Whisky|Dumbarton]]||[[West Dunbartonshire]]||2002, demolished 2017
+|-
+|[[Dundashill distillery|Dundashill]]
+|[[Glasgow]]
+|1902, merged with Port Dundas distillery
+|-
+|[[Garnheath distillery|Garnheath]]
+|[[Airdrie, North Lanarkshire|Airdrie]]
+|1986, demolished 1986
+|-
+|[[Gartloch distillery|Gartloch]]
+|[[Chryston]]
+|1920, demolished
+|-
+|[[Kirkliston distillery|Kirkliston]]
+|[[Kirkliston]]
+|1920, buildings have remained intact
+|-
+|[[North of Scotland grain distillery|North of Scotland]]
+|[[Cambus, Clackmannanshire|Cambus]]
+|1980, demolished 1993
+|-
+||[[Port Dundas Grain Distillery|Port Dundas]]||[[Glasgow]]||2010, demolished 2011
+|}
+
+==See also==
+{{Portal|Liquor}}
+* [[Scotch whisky]]
+* [[List of historic whisky distilleries]]
+* [[List of whisky brands]]
+* [[Outline of whisky]]
+
+==References==
+{{Reflist}}
+
+==Bibliography==
+* {{Cite book | last=Barnard | first=Alfred | author-link=Alfred Barnard |title=The Whisky Distilleries of the United Kingdom | publisher=Birlinn |year=2008 |orig-year=1887 | location=Edinburgh | isbn=978-1-84158-652-6| title-link=The Whisky Distilleries of the United Kingdom }}
+* {{Cite book |last=Townsend |first=Brian |title=Scotch Missed: The Lost Distilleries of Scotland |publisher=Angel's Share |year=2000 |isbn=978-1897784976}}
+
+==External links==
+* [https://www.dcs.ed.ac.uk/home/jhb/whisky/pronounc.html Pronunciation guide]
+* [https://www.planetwhiskies.com/distilleries/scottish.html Distillery list A to Z]
+* [https://scotchwhisky.com/whiskypedia/ Whiskypedia]
+
+{{Scottish Distilleries}}
+
+{{DEFAULTSORT:Distilleries in Scotland}}
+[[Category:Lists of distilleries|Scotland]]
+[[Category:Distilleries in Scotland| ]]
+[[Category:Scottish malt whisky| ]]
+[[Category:Economy of Scotland]]
+[[Category:Scottish cuisine-related lists|Whisky distilleries]]

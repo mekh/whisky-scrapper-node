@@ -1,0 +1,264 @@
+# Authority table for region and owner, parsed from the Wikipedia article
+# 'List of whisky distilleries in Scotland', fetched 2026-08-27.
+# Fields: distillery, region (Wikipedia 'Island' folded to 'Islands'), owner, malt|grain, operating|closed.
+# Region here is the COMMON convention. legalRegion for an 'Islands' row is always 'highland'.
+# This file is the P1.7 cross-check authority: where it disagrees with a researched row, it wins.
+Aberargie	Lowland	Morrison Scotch Whisky Distillers	malt	operating
+Aberfeldy	Highland	John Dewar & Sons	malt	operating
+Aberlour	Speyside	Chivas Brothers	malt	operating
+Abhainn Dearg	Islands	Mark Tayburn	malt	operating
+Ailsa Bay	Lowland	William Grant & Sons	malt	operating
+Allt-A-Bhainne	Speyside	Chivas Brothers	malt	operating
+Annandale	Lowland	Annandale Distillery Company	malt	operating
+Arbikie	Highland	Arbikie Highland Estate	malt	operating
+Ardbeg	Islay	LVMH	malt	operating
+Ardgowan	Lowland	Ardgowan Distillery Company	malt	operating
+Ardmore	Highland	Suntory Global Spirits	malt	operating
+Ardnahoe	Islay	Hunter Laing & Company	malt	operating
+Ardnamurchan	Highland	Adelphi Distillery Co	malt	operating
+Ardross	Highland	Greenwood Distillers	malt	operating
+Auchentoshan	Lowland	Suntory Global Spirits	malt	operating
+Auchroisk	Speyside	Diageo	malt	operating
+Aultmore	Speyside	John Dewar & Sons	malt	operating
+Balblair	Highland	Inver House Distillers	malt	operating
+Ballindalloch	Speyside	Ballindalloch Distillery LLP	malt	operating
+Balmaud	Highland	Balmaud Distillery Co. Ltd.	malt	operating
+Balmenach	Speyside	Inver House Distillers	malt	operating
+Balvenie	Speyside	William Grant & Sons	malt	operating
+Ben Cumhaill ()	Lowland	Simpson family	malt	operating
+Ben Nevis	Highland	Nikka Whisky Distilling Co Ltd	malt	operating
+Benbecula	Islands	Angus A. MacMillan	malt	operating
+BenRiach	Speyside	Brown-Forman	malt	operating
+Benrinnes	Speyside	Diageo	malt	operating
+Benromach	Speyside	Gordon & MacPhail	malt	operating
+Blackness	Lowland	Colm O'Rourke	malt	operating
+Bladnoch	Lowland	David Prior	malt	operating
+Blair Athol	Highland	Diageo	malt	operating
+Bonnington	Lowland	Halewood Artisanal Spirits	malt	operating
+Borders	Lowland	The Three Stills Company	malt	operating
+Bowmore	Islay	Suntory Global Spirits	malt	operating
+Braeval	Speyside	Chivas Brothers	malt	operating
+Brora	Highland	Diageo	malt	operating
+Bruichladdich	Islay	Rémy Cointreau	malt	operating
+Bunnahabhain	Islay	Distell	malt	operating
+Burn O'Bennie	Highland	Deeside Brewery & Distillery Ltd.	malt	operating
+Cabrach	Speyside	The Cabrach Trust	malt	operating
+Cairn	Speyside	Gordon & MacPhail	malt	operating
+Caol Ila	Islay	Diageo	malt	operating
+Cardhu	Speyside	Diageo	malt	operating
+Clydeside	Lowland	Morrison Glasgow Distillers	malt	operating
+Clynelish	Highland	Diageo	malt	operating
+Cragganmore	Speyside	Diageo	malt	operating
+Craigellachie	Speyside	John Dewar & Sons	malt	operating
+Daftmill	Lowland	Francis and Ian Cuthbert	malt	operating
+Dailuaine	Speyside	Diageo	malt	operating
+Dalmore	Highland	Whyte & Mackay	malt	operating
+Dalmunach	Speyside	Chivas Brothers	malt	operating
+Dalwhinnie	Highland	Diageo	malt	operating
+Deanston	Highland	Distell	malt	operating
+Deerness	Islands	Deerness Distillery Ltd	malt	operating
+Dornoch	Highland	Dornoch Distillery Company	malt	operating
+Dufftown	Speyside	Diageo	malt	operating
+Dunphail	Speyside	Bimber	malt	operating
+Eden Mill	Lowland	Paul Miller	malt	operating
+Edradour	Highland	Signatory Vintage Scotch Whisky Co	malt	operating
+Falkirk	Lowland	Fiona Stewart	malt	operating
+Fettercairn	Highland	Whyte & Mackay	malt	operating
+Galloway	Lowland	Sam Heughan	malt	operating
+Glasgow	Lowland	The Glasgow Distillery Company	malt	operating
+Glenallachie	Speyside	The GlenAllachie Distillers Co Limited	malt	operating
+Glenburgie	Speyside	Chivas Brothers	malt	operating
+Glencadam	Highland	Angus Dundee Distiller	malt	operating
+Glendronach	Highland	Brown-Forman	malt	operating
+Glendullan	Speyside	Diageo	malt	operating
+Glen Elgin	Speyside	Diageo	malt	operating
+Glenfarclas	Speyside	J. & G. Grant	malt	operating
+Glenfiddich	Speyside	William Grant & Sons	malt	operating
+Glen Garioch	Highland	Suntory Global Spirits	malt	operating
+Glenglassaugh	Highland	Brown-Forman	malt	operating
+Glengoyne	Highland	Ian Macleod Distillers	malt	operating
+Glen Grant	Speyside	Campari	malt	operating
+Glengyle	Campbeltown	Mitchell's Glengyle Ltd	malt	operating
+Glen Keith	Speyside	Chivas Brothers	malt	operating
+Glenkinchie	Lowland	Diageo	malt	operating
+Glenlivet	Speyside	Chivas Brothers	malt	operating
+Glenlossie	Speyside	Diageo	malt	operating
+Glenmorangie	Highland	LVMH	malt	operating
+Glen Moray	Speyside	La Martiniquaise	malt	operating
+Glen Ord	Highland	Diageo	malt	operating
+Glenrothes	Speyside	Edrington	malt	operating
+Glen Scotia	Campbeltown	Loch Lomond Group	malt	operating
+Glen Spey	Speyside	Diageo	malt	operating
+Glentauchers	Speyside	Chivas Brothers	malt	operating
+Glenturret	Highland	Lalique Group	malt	operating
+GlenWyvis	Highland	GlenWyvis Distillery Ltd.	malt	operating
+Harris	Islands	Isle of Harris Distillers Ltd.	malt	operating
+Highland Park	Islands	Edrington	malt	operating
+Holyrood	Lowland	David Robertson	malt	operating
+Inchdairnie	Lowland	John Fergus & Co.	malt	operating
+Inchgower	Speyside	Diageo	malt	operating
+Jackton	Lowland	RAER Spirits	malt	operating
+Jura	Islands	Whyte & Mackay	malt	operating
+Kilchoman	Islay	Kilchoman Distillery Company	malt	operating
+Kimbland	Islands	Kimbland Distillery Ltd	malt	operating
+Kingsbarns	Lowland	The Kingsbarns Company of Distillers	malt	operating
+Kininvie	Speyside	William Grant & Sons	malt	operating
+Knockando	Speyside	Diageo	malt	operating
+Knockdhu	Speyside	Inver House Distillers	malt	operating
+Kythe	Lowland	Kythe Distillery Co.	malt	operating
+Lagg	Islands	Isle of Arran Distillers Ltd.	malt	operating
+Laggan Bay	Islay	Ian MacLeod Distillers	malt	operating
+Lagavulin	Islay	Diageo	malt	operating
+Laphroaig	Islay	Suntory Global Spirits	malt	operating
+Lerwick	Islands	Lerwick Distillery Ltd	malt	operating
+Leven	Lowland	Diageo	malt	operating
+Lindores Abbey	Lowland	Lindores Distilling Co.	malt	operating
+Linkwood	Speyside	Diageo	malt	operating
+Lochlea	Lowland	Neil McGeoch	malt	operating
+Lochranza	Islands	Isle of Arran Distillers Ltd.	malt	operating
+Loch Lomond	Highland	Loch Lomond Group	malt	operating
+Longmorn	Speyside	Chivas Brothers	malt	operating
+Macallan	Speyside	Edrington	malt	operating
+Macduff	Highland	John Dewar & Sons	malt	operating
+Mannochmore	Speyside	Diageo	malt	operating
+Miltonduff	Speyside	Chivas Brothers	malt	operating
+Moffat	Lowland	Dark Sky Spirits	malt	operating
+Mortlach	Speyside	Diageo	malt	operating
+Nc’nean	Highland	Drimnin Distillery Company	malt	operating
+North Point	Highland	North Coast Distillers Ltd.	malt	operating
+North Uist	Islands	North Uist Distillery Company	malt	operating
+Oban	Highland	Diageo	malt	operating
+Orkney	Islands	Orkney Distilling Ltd.	malt	operating
+Port Ellen	Islay	Diageo	malt	operating
+Port of Leith	Lowland	Muckle Brig	malt	operating
+Pulteney	Highland	Inver House Distillers	malt	operating
+Raasay	Islands	R&B Distillers	malt	operating
+Rosebank	Lowland	Ian Macleod Distillers	malt	operating
+Roseisle	Speyside	Diageo	malt	operating
+Royal Brackla	Highland	John Dewar & Sons	malt	operating
+Royal Lochnagar	Highland	Diageo	malt	operating
+Saxa Vord	Islands	Shetland Distillery Company	malt	operating
+Scapa	Islands	Chivas Brothers	malt	operating
+Speyburn	Speyside	Inver House Distillers	malt	operating
+Springbank	Campbeltown	J&A Mitchell & Company	malt	operating
+Stannergill	Highland	Dunnet Bay Distillers	malt	operating
+Stirling	Lowland	June & Cameron McCann	malt	operating
+Strathearn	Highland	Douglas Laing & Co.	malt	operating
+Strathisla	Speyside	Chivas Brothers	malt	operating
+Strathmill	Speyside	Diageo	malt	operating
+Talisker	Islands	Diageo	malt	operating
+Tamdhu	Speyside	Ian Macleod Distillers	malt	operating
+Tamnavulin	Speyside	Whyte & Mackay	malt	operating
+Teaninich	Highland	Diageo	malt	operating
+Tiree	Islands	Tiree Whisky Company Ltd.	malt	operating
+Tobermory	Islands	Distell	malt	operating
+Tomatin	Highland	Takara Shuzo Co	malt	operating
+Tomintoul	Speyside	Angus Dundee Distiller	malt	operating
+Torabhaig	Islands	Mossburn Distillers	malt	operating
+Tormore	Speyside	Elixir Distillers	malt	operating
+Toulvaddie	Highland	Heather & Bobby Nelson	malt	operating
+Tullibardine	Highland	Picard Vins & Spiritueux	malt	operating
+Uile-bheist ()	Highland	Victoria and John Erasmus	malt	operating
+Wolfburn	Highland	Aurora Brewing	malt	operating
+8 Doors	Highland	Kerry and Derek Campbell	malt	operating
+Cameronbridge		Diageo	grain	operating
+Girvan		William Grant & Sons	grain	operating
+Invergordon		Whyte & Mackay	grain	operating
+North British		Lothian Distillers Ltd.	grain	operating
+Reivers		Mossburn Distillers Ltd.	grain	operating
+Starlaw		La Martiniquaise	grain	operating
+Strathclyde		Chivas Brothers	grain	operating
+Adelphi	Lowland		malt	closed
+Albyn	Campbeltown		malt	closed
+Ardlussa	Campbeltown		malt	closed
+Argyll	Campbeltown		malt	closed
+Auchinblae	Highland		malt	closed
+Auchnagie	Highland		malt	closed
+Auchtermuchty	Lowland		malt	closed
+Auchtertool	Lowland		malt	closed
+Ballechin	Highland		malt	closed
+Banff	Speyside		malt	closed
+Bankier	Lowland		malt	closed
+Benachie	Highland		malt	closed
+Benmore	Campbeltown		malt	closed
+Ben Morven	Highland		malt	closed
+Ben Wyvis	Highland		malt	closed
+Bon Accord	Highland		malt	closed
+BrewDog	Highland		malt	closed
+Burnside	Campbeltown		malt	closed
+Caledonian	Campbeltown		malt	closed
+Campbeltown	Campbeltown		malt	closed
+Caperdonich	Speyside		malt	closed
+Clydesdale	Lowland		malt	closed
+Chain Pier	Lowland		malt	closed
+Coleburn	Speyside		malt	closed
+Convalmore	Speyside		malt	closed
+Dalaruan	Campbeltown		malt	closed
+Dalintober	Campbeltown		malt	closed
+Dallas Dhu	Speyside		malt	closed
+Dean	Lowland		malt	closed
+Devanha	Highland		malt	closed
+Drumcaldie	Lowland		malt	closed
+Drumore	Campbeltown		malt	closed
+Edinburgh	Lowland		malt	closed
+Finnieston	Lowland		malt	closed
+Fortrose	Highland		malt	closed
+Glen Albyn	Highland		malt	closed
+Glenaden	Highland		malt	closed
+Glencawdor	Highland		malt	closed
+Glencoull	Highland		malt	closed
+Glenesk	Highland		malt	closed
+Glen Flagler	Lowland		malt	closed
+Glenfoyle	Highland		malt	closed
+Glengilp	Highland		malt	closed
+Gleniffer	Lowland		malt	closed
+Glenlochy	Highland		malt	closed
+Glenmavis	Lowland		malt	closed
+Glen Mhor	Highland		malt	closed
+Glen Nevis	Campbeltown		malt	closed
+Glenramskill	Campbeltown		malt	closed
+Glenside	Campbeltown		malt	closed
+Glenskiach	Highland		malt	closed
+Glentarras	Lowland		malt	closed
+Glenugie	Highland		malt	closed
+Glenury	Highland		malt	closed
+Grandtully	Highland		malt	closed
+Grange	Lowland		malt	closed
+Greenock	Lowland		malt	closed
+Highland	Campbeltown		malt	closed
+Hazelburn	Campbeltown		malt	closed
+Imperial	Speyside		malt	closed
+Inverleven	Lowland		malt	closed
+Isla	Highland		malt	closed
+Kinclaith	Lowland		malt	closed
+Kinloch	Campbeltown		malt	closed
+Kintyre	Campbeltown		malt	closed
+Ladyburn	Lowland		malt	closed
+Langholm	Lowland		malt	closed
+Littlemill	Lowland		malt	closed
+Loch Katrine	Lowland		malt	closed
+Lochside	Highland		malt	closed
+Lochhead	Campbeltown		malt	closed
+Lochruan	Campbeltown		malt	closed
+Longrow	Campbeltown		malt	closed
+Meadowburn	Campbeltown		malt	closed
+Millburn	Highland		malt	closed
+Mossfield	Campbeltown		malt	closed
+North Port	Highland		malt	closed
+Parkmore	Speyside		malt	closed
+Pittyvaich	Speyside		malt	closed
+Port Charlotte	Islay		malt	closed
+Provanmill	Lowland		malt	closed
+Saucel	Lowland		malt	closed
+Speyside	Speyside		malt	closed
+Springside	Campbeltown		malt	closed
+St. Magdalene	Lowland		malt	closed
+Strathdee	Highland		malt	closed
+Stromness	Highland		malt	closed
+Stronarchie	Highland		malt	closed
+Tambovie	Lowland		malt	closed
+Thistle	Campbeltown		malt	closed
+Toberanrigh	Campbeltown		malt	closed
+Towiemore	Highland		malt	closed
+Union	Campbeltown		malt	closed
+West Highland	Campbeltown		malt	closed

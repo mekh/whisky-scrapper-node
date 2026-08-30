@@ -1,0 +1,106 @@
+# slug	field	value	why the researched value was wrong, and what says so
+jura	peatProfile	light	Three agents cited a lightly peated core (post-2018 vatting), one said none. Wishart also scores Jura smoky 2 / medicinal 2. `light` tags smoky without claiming peat.
+macduff	peatProfile	none	Macduff's own blending spirit is unpeated; the lightly peated claim describes The Deveron, which is its own row with parentSlug=macduff. The sibling split is exactly what that architecture is for.
+springbank	peatProfile	light	The brief's own calibration lists Springbank under `light` (~7-8ppm); its heavily peated sibling Longrow is a separate row. `medium` would have tagged every Springbank bottling `peated`.
+clynelish	peatProfile	light	Wishart scores Clynelish smoky 3 / medicinal 3, the strongest sensory signal in the dataset for a distillery the seed called unpeated. `light` records the smoke without claiming peat; the heavily peated Brora is its own row.
+ancnoc	legalRegion	speyside	Wikipedia's distillery list places Knockdhu in Speyside while the brand markets itself as Highland. That is precisely the region/legalRegion split: common convention stays `highland`, the protected region becomes `speyside`.
+compass-box	countryCode	GB-SCT	BRAND_INFO cross-check. Compass Box is a London blender of Scotch; the country column describes the whisky, not the office.
+o-brian	countryCode	GB-SCT	BRAND_INFO cross-check: a curated country+type pair states blended Scotch, where the agent found nothing and left XX.
+daftmill	owner	Francis and Ian Cuthbert	Wikipedia cross-check filled an empty owner.
+kilchoman	owner	Kilchoman Distillery Company	Wikipedia cross-check filled an empty owner.
+nc-nean	owner	Drimnin Distillery Company	Wikipedia cross-check filled an empty owner.
+clydeside	owner	Morrison Glasgow Distillers	Wikipedia cross-check: the seed named the distillery, not the owning company.
+# --- P1.7 addendum: Wikipedia-corroborated confidence, generated ---
+8-doors	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+abhainn-dearg	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+ailsa-bay	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+allt-a-bhainne	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+arbikie	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+ardgowan	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+ardnamurchan	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+ardross	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+auchroisk	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+aultmore	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+balmaud	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+ben-cumhaill	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+ben-nevis	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+benbecula	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+benrinnes	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+blackness	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+blackness	sourceUrls	https://en.wikipedia.org/wiki/List_of_whisky_distilleries_in_Scotland	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+bladnoch	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+borders	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+braeval	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+burn-o-bennie	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+burn-o-bennie	sourceUrls	https://en.wikipedia.org/wiki/List_of_whisky_distilleries_in_Scotland	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+cabrach	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+cairn	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+caperdonich	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+cragganmore	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+dailuaine	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+dalmore	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+dalmunach	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+deerness	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+dornoch	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+dufftown	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+eden-mill	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+galloway	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+girvan	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+glen-elgin	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+glen-grant	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+glen-keith	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+glen-ord	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+glen-scotia	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+glen-spey	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+glenburgie	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+glencadam	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+glendullan	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+glenkinchie	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+glenlossie	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+glentauchers	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+glenturret	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+glenwyvis	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+imperial	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+inchdairnie	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+inchgower	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+isle-of-harris	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+jackton	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+kimbland	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+kingsbarns	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+kingsbarns	sourceUrls	https://en.wikipedia.org/wiki/List_of_whisky_distilleries_in_Scotland	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+kininvie	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+kythe	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+laggan-bay	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+lerwick	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+leven	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+lindores-abbey	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+linkwood	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+littlemill	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+lochlea	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+miltonduff	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+moffat	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+mortlach	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+north-british	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+north-point	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+north-point	sourceUrls	https://en.wikipedia.org/wiki/List_of_whisky_distilleries_in_Scotland	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+north-uist	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+oban	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+orkney	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+port-of-leith	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+roseisle	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+royal-brackla	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+royal-lochnagar	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+saxa-vord	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+st-magdalene	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+stannergill	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+stannergill	sourceUrls	https://en.wikipedia.org/wiki/List_of_whisky_distilleries_in_Scotland	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+stirling	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+strathearn	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+strathisla	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+strathmill	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+tiree	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+toulvaddie	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+toulvaddie	sourceUrls	https://en.wikipedia.org/wiki/List_of_whisky_distilleries_in_Scotland	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+tullibardine	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+uile-bheist	confidence	high	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.
+uile-bheist	sourceUrls	https://en.wikipedia.org/wiki/List_of_whisky_distilleries_in_Scotland	Wikipedia list cross-check: the distillery, its region and its owner are independently corroborated, so the agent understated confidence. The peat sub-gate is untouched.

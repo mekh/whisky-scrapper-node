@@ -9,3 +9,12 @@
  * walk reached the end of the source's listing.
  */
 export const PERSIST_SWEEP_GUARD_RATIO = 0.5;
+
+/**
+ * How far two stated strengths may differ before the disagreement is logged.
+ *
+ * The same bottling really is listed at 40 % by one shop and 43 % by another —
+ * `Balvenie DoubleWood` is the standing example — and that is worth a reviewer
+ * knowing. A 0.05 rounding difference is not, so the comparison is not exact.
+ */
+export const ABV_TOLERANCE = 0.1;

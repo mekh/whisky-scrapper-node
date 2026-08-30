@@ -6,6 +6,7 @@ import { CoreFlavorService } from '~core/flavor';
 import { CoreStoreService } from '~core/store';
 import { CoreStoreProductService } from '~core/store-product';
 import { CoreTypeService } from '~core/type';
+import { ScotlandLegalRegion, ScotlandRegion } from '~enums';
 import { Meta, MetaCountry, MetaStore } from '~types';
 
 @Injectable()
@@ -20,8 +21,10 @@ export class MetaService {
 
   /**
    * Builds the filter-form metadata: available stores, flavor/type chips, the
-   * countries present in the catalog, and pagination/window options. Every
-   * list is sourced from the database.
+   * countries present in the catalog, Scotland's regions, and
+   * pagination/window options. Every list but the regions is sourced from the
+   * database; the regions are closed vocabularies and come from the enums, so
+   * a region no producer has been seeded with yet still offers a chip.
    *
    * @returns The aggregated filter metadata.
    */
@@ -47,6 +50,8 @@ export class MetaService {
       flavors,
       types,
       countries,
+      regions: Object.values(ScotlandRegion),
+      legalRegions: Object.values(ScotlandLegalRegion),
       allCountries: allCountries.map((country): MetaCountry => ({
         code: country.code,
         nameUa: country.nameUa,

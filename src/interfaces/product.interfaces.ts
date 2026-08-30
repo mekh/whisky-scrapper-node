@@ -23,6 +23,16 @@ export interface StoreProductRef {
 }
 
 /**
+ * The column patch a manual edit builds, holding each edited fact together
+ * with its provenance column (`countryId` and `countrySource`, and so on).
+ *
+ * Keyed loosely because the two halves are assembled from a `ProductFactField`
+ * at runtime; the pairing itself is enforced in one place, by the helper that
+ * writes both at once, so no caller can set a value and forget its source.
+ */
+export type ProductManualPatch = Record<string, string | number | null>;
+
+/**
  * Request body for a manual product edit. Every field except `id` is optional;
  * an omitted (undefined) field is left unchanged, while `null` clears it.
  */

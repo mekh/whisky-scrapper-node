@@ -1,0 +1,40 @@
+aikan	caramel	baseline	high	https://www.aikanwhisky.com/en-extra-collection/	Producer's own tasting notes describe "chocolatey" palate with "caramel"/pastry sweetness across the Extra Collection range (rum-cask finished)
+aikan	chocolate	baseline	high	https://www.aikanwhisky.com/en-extra-collection/	Producer's own site: "gourmand...chocolatey in the mouth" for the Extra Collection range
+beverbach	vanilla	baseline	high	https://hardenbergdistillery.com/produkte/single-estate-whiskey/	Producer's own site describes every expression with vanilla notes (vanilla sponge cake, baking spice) alongside oak.
+beverbach	fruity	baseline	high	https://hardenbergdistillery.com/produkte/single-estate-whiskey/	Producer's own site: "fresh, creamy and fruity" house style, dried fruit/light fruits across expressions.
+filliers	sherry	baseline	high	https://filliersdistillery.com/en/	Producer's own site: the Single Malt Whisky is described as entirely matured in sherry casks -- a structural production claim, not just a tasting-note adjective. Scoped to baseline rather than require since the same range also includes a Single Rye Whisky whose cask treatment is not stated.
+fitzwilliam	vanilla	baseline	high	https://www.bbcspirits.com/gb/whiskies/683-whiskey-ireland-fitzwilliam-irish-blended-whiskey.html	own product page: grain whiskey aged in new American oak casks "to bring out powerful vanilla flavours"
+fitzwilliam	spicy	baseline	high	https://www.bbcspirits.com/gb/whiskies/683-whiskey-ireland-fitzwilliam-irish-blended-whiskey.html	own product page: rye whiskey casks "add aroma and spice"
+fitzwilliam	chocolate	baseline	high	https://www.bbcspirits.com/gb/whiskies/683-whiskey-ireland-fitzwilliam-irish-blended-whiskey.html	own product page: stout beer barrels "bring notes of coffee and chocolate"
+glenalmond	honey	baseline	high	https://scotchwhisky.com/whiskypedia/2109/glenalmond/	dedicated profile: "mellow, easy-going dram with honeyed notes of buttered toast"
+gouden-carolus	vanilla	baseline	high	https://www.hetanker.be/en/drinks/gouden-carolus-single-malt	own site: "notes of wood and vanilla"
+gouden-carolus	oak	baseline	high	https://www.hetanker.be/en/drinks/gouden-carolus-single-malt	own site: notes of wood, aged in first-fill bourbon then their own oak "Anker" casks
+grangestone	vanilla	baseline	high	https://www.qualityspiritsinternational.com/brands/grangestone/	own brand page: "vanilla, oak, fruit, and spice"
+grangestone	oak	baseline	high	https://www.qualityspiritsinternational.com/brands/grangestone/	own brand page: "vanilla, oak, fruit, and spice"
+grass-widow	nutty	baseline	high	https://twojames.com/our-spirits/grass-widow-bourbon/	own site: notes of "cashews and Marcona almonds", "hazelnuts"
+grass-widow	fruity	baseline	high	https://twojames.com/our-spirits/grass-widow-bourbon/	own site: notes of "dried figs, plums", "dried raisins, wild berries"
+gwalarn-pure	vanilla	baseline	high	https://maisonvillevert.com/en/products/gwalarn-pure-malt-1	own site: "suppleness of vanilla and honey"
+gwalarn-pure	honey	baseline	high	https://maisonvillevert.com/en/products/gwalarn-pure-malt-1	own site: "suppleness of vanilla and honey"
+high-commissioner	fruity	baseline	high	https://www.lochlomondgroup.com/pages/brands-high-commissioner	Producer's own page: 'soft, fruity flavors with notes of peach, pear'.
+high-commissioner	vanilla	baseline	high	https://www.lochlomondgroup.com/pages/brands-high-commissioner	Producer's own page: 'sweet vanilla toffee flavours'.
+highlands-friends	vanilla	baseline	high	https://www.fauconnier.com/en/produit/highlands-friends-blended-scotch-whisky/	Fauconnier's own product page describes Highland's Friends with "subtle woody and vanilla notes".
+judas-priest	smoky	require	high	https://www.stkiliandistillers.com/en/presse-news/pressemitteilung-judas-priest-whisky/	beechwood-smoked malt (not peat) per producer's own press release, specific to the "50 Heavy Metal Years" edition
+king-charles	vanilla	baseline	high	https://www.qualityspiritsinternational.com/brands/king-charles/	Producer's own page: nose carries 'subtle hints of vanilla'.
+london-square	smoky	require	high	https://charlesedge.com/products/london-square-blended-scotch-whisky-no-giftbox	producer's own tasting notes state "smoky wood" (nose) and "smoky fudge notes" (palate); peat origin of the smoke is not stated, kept separate from peatProfile=unknown
+masthouse	vanilla	baseline	high	https://copperrivetdistillery.com/product/masthouse-single-malt-signature/ https://copperrivetdistillery.com/product/masthouse-grain-whisky/	Signature: "Vanilla mousse with candied zest ... on the nose." Grain: "rounded with decadent oak vanillin." Consistent across two of the three current products.
+masthouse	oak	baseline	high	https://copperrivetdistillery.com/product/masthouse-single-malt-signature/ https://copperrivetdistillery.com/product/masthouse-grain-whisky/	Signature: "light oak shavings on the nose." Grain: "decadent oak vanillin." Both current products name oak explicitly.
+naked-grouse	sherry	baseline	high	https://scotchwhisky.com/magazine/latest-news/15718/the-naked-grouse-becomes-a-blended-malt/	Finished six months in first-fill oloroso sherry butts per scotchwhisky.com.
+onikishi	smoky	require	high	http://www.milestonebeverages.com/brand/onikishi	Cedar-cask-derived smoke note (Demon Knight: "cedar smoke" finish; Deadly Sakura: "light smoky close"), not peat -- producer's own copy attributes it to cask aging.
+robert-burns	honey	baseline	high	https://www.arranwhisky.com/shop-whiskies/arran-blended-whiskies/11-the-robert-burns-blend	Arran's own site lists honey among the Robert Burns Blend's flavour notes.
+robert-burns	vanilla	baseline	high	https://www.arranwhisky.com/shop-whiskies/arran-blended-whiskies/11-the-robert-burns-blend	Arran's own site lists vanilla among the Robert Burns Blend's flavour notes.
+spice-king	spicy	baseline	high	https://scotchwhisky.com/whiskypedia/2822/spice-king/	Defining character per scotchwhisky.com: "all about warming spicy flavours" from 16 distillery characters.
+spice-king	maritime	baseline	high	https://scotchwhisky.com/whiskypedia/2822/spice-king/	scotchwhisky.com: the west-coast Island malt component gives a salty edge alongside the smoky finish.
+stronachie	honey	baseline	high	https://adrattray.com/our-whisky/stronachie	A.D. Rattray's own tasting notes: "soft honey, earthy heather" (nose), "luscious honey and biscuits" (palate).
+taketsuru	fruity	baseline	high	https://www.nikka.com/eng/brands/taketsuru/	Nikka's own site: "bittersweet fruits such as apple and apricot" on the nose, "fruitiness of banana and navel orange" on the palate.
+taketsuru	vanilla	baseline	high	https://www.nikka.com/eng/brands/taketsuru/	Nikka's own site: "Oak notes of toast and vanilla" on the nose.
+taketsuru	oak	baseline	high	https://www.nikka.com/eng/brands/taketsuru/	Nikka's own site: oak/toast on the nose and "mellow oak" in the finish.
+taketsuru	chocolate	baseline	high	https://www.nikka.com/eng/brands/taketsuru/	Nikka's own site: "a sweet, slightly bitter dark chocolate finish."
+the-speaker	fruity	baseline	high	https://www.blockgreyandblock.com/	Producer's own site describes it as "a light coloured, soft whisky with elegant overtones of fruitiness."
+the-speaker	vanilla	baseline	high	https://www.blockgreyandblock.com/	Same page: "pleasant hints of vanilla and pear drops."
+the-woodsman	smoky	require	high	https://greatdrams.com/whyte-mackay-announce-latest-modern-spirit-innovation-the-woodsman/	Woodsmoke character is explicitly from double-scorched ex-bourbon casks, not peated malt, per the producer's own product description quoted in this article.
+thin-lizzy	smoky	require	high	https://www.hotpress.com/music/thin-lizzy-collaborate-with-west-cork-distillers-on-new-whiskey-22963828	Official tasting description states "a hint of smokiness" from double-charred oak casks, not from peat.

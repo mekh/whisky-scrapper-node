@@ -1,0 +1,86 @@
+Johnnie Walker	johnnie-walker	any	exact input brand string
+Hart Brothers	hart-brothers	any	exact input brand string
+Hankey Bannister	hankey-bannister	any	exact input brand string
+Tomintoul	tomintoul	any	exact input brand string
+Benromach	benromach	any	exact input brand string
+Dunville's	dunvilles	any	exact input brand string
+Dunvilles	dunvilles	any	seen in sample "Dunvilles Blend"
+John Barr	john-barr	any	exact input brand string
+Murray Mcdavid	murray-mcdavid	any	exact input brand string (note casing)
+Murray McDavid	murray-mcdavid	any	correctly-cased common spelling, seen in samples
+Dewar Rattray	dewar-rattray	any	exact input brand string
+Stronachie	stronachie	any	distinct brand name seen in samples
+Boulder	boulder	brand	exact input brand string; generic English word, brand scope
+Mac Talla	mac-talla	any	exact input brand string (space, not hyphen)
+Mac-Talla	mac-talla	any	hyphenated spelling seen in all samples
+Ben Nevis	ben-nevis	any	exact input brand string
+Glen Scanlan	glen-scanlan	any	exact input brand string
+Antiquary	antiquary	any	exact input brand string
+The Antiquary	antiquary	any	common full-name variant
+Glenlossie	glenlossie	any	exact input brand string
+Mitchell's	mitchells	any	exact input brand string
+Mitchells	mitchells	any	seen in samples "Mitchells Green Spot"
+Green Spot	mitchells	brand	sub-brand seen in samples; color+noun combo, brand scope
+Yellow Spot	mitchells	brand	sub-brand seen in samples
+Blue Spot	mitchells	brand	sub-brand seen in samples
+The Epicurean	the-epicurean	any	exact input brand string
+Cooper's Choice	coopers-choice	any	exact input brand string
+Coopers Choice	coopers-choice	any	seen in sample "The Coopers Choice"
+Glen Ord	glen-ord	any	exact input brand string
+Longrow	longrow	any	exact input brand string
+Royal Lochnagar	royal-lochnagar	any	exact input brand string
+Wise Salmon	wise-salmon	any	exact input brand string
+Brenne	brenne	any	exact input brand string
+D.u.c	d-u-c	brand	exact input brand string (note casing)
+D.U.C	d-u-c	brand	spelling seen in samples
+Heaven's Door	heavens-door	any	exact input brand string
+Heavens Door	heavens-door	any	no-apostrophe variant
+Kirkcowan	kirkcowan	any	exact input brand string
+O Brian	o-brian	brand	exact input brand string (space, no apostrophe)
+O'Brian	o-brian	brand	apostrophe spelling seen in samples
+Slaur Sardet	slaur-sardet	any	exact input brand string
+Trail's End	trails-end	any	exact input brand string
+Trails End	trails-end	any	no-apostrophe variant
+Ailsa Bay	ailsa-bay	any	exact input brand string
+Bonailie	bonailie	any	exact input brand string
+Dram Loch	dram-loch	any	exact input brand string
+Glengannon	glengannon	any	exact input brand string
+Hunter Laing	hunter-laing	any	exact input brand string
+Koriyama	koriyama	brand	exact input brand string; place name, brand scope
+McGibbon's	mcgibbons	any	exact input brand string
+McGibbons	mcgibbons	any	no-apostrophe variant
+O Dohertys	o-dohertys	brand	exact input brand string (space, no apostrophe)
+O'Dohertys	o-dohertys	brand	apostrophe spelling seen in samples
+Peanut Butter	peanut-butter	brand	exact input brand string; generic phrase, brand scope
+Skrewball	peanut-butter	any	actual distinctive brand name seen in samples
+Roseisle	roseisle	any	exact input brand string
+Spearhead	spearhead	brand	exact input brand string; generic English word, brand scope
+The Kurayoshi	the-kurayoshi	any	exact input brand string
+Wilson&ford	wilson-ford	any	exact input brand string (note lowercase "ford")
+Wilson&Ford	wilson-ford	any	seen in sample, capitalized
+Wilson & Ford	wilson-ford	any	spaced variant
+Girvan	girvan	any	distillery named in a Hart Brothers sample
+Royal Brackla	royal-brackla	any	canonical name
+Brackla	royal-brackla	brand	short form seen in Hart Brothers sample
+Dalmore	dalmore	any	distillery named in a Hart Brothers sample
+Tomatin	tomatin	any	distillery named in a Hart Brothers sample
+BenRiach	benriach	any	canonical name
+Benriach	benriach	any	single-capital spelling seen in Hart Brothers sample
+Mortlach	mortlach	any	distillery named in a Murray McDavid sample
+Macallan	macallan	any	distillery named in a Murray McDavid sample
+The Macallan	macallan	any	common full-name variant
+Bunnahabhain	bunnahabhain	any	distillery named in a Murray McDavid sample
+Caol Ila	caol-ila	any	distillery named in a Murray McDavid sample
+Caol ila	caol-ila	any	lowercase-i spelling seen in a Murray McDavid sample
+Bowmore	bowmore	any	distillery named in a Murray McDavid sample
+Laphroaig	laphroaig	any	distillery named in a Murray McDavid sample
+North British	north-british	any	grain distillery named in a Murray McDavid sample
+Glenrothes	glenrothes	any	distillery named in a Dewar Rattray sample
+The Glenrothes	glenrothes	any	common full-name variant
+Auchentoshan	auchentoshan	any	distillery named in a Dewar Rattray sample
+Dailuaine	dailuaine	any	distillery named in a Cooper's Choice sample
+Inchgower	inchgower	any	distillery named in a Cooper's Choice sample
+Strathisla	strathisla	any	distillery named in a Cooper's Choice sample
+Tullibardine	tullibardine	any	distillery named in the Hunter Laing sample
+Springbank	springbank	any	parent distillery of Longrow
+Echlinville	echlinville	any	parent distillery of Dunville's

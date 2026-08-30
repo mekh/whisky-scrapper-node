@@ -20,6 +20,22 @@ export class MetaType implements Meta {
   @IsString({ each: true })
   public types!: string[];
 
+  /**
+   * Scotland's regions by the market convention, `islands` included — the list
+   * a filter chip should offer. The client's label must say "common", because
+   * five of these producers are legally Highland.
+   */
+  @IsArray()
+  @IsString({ each: true })
+  public regions!: string[];
+
+  /**
+   * The five protected SWA regions. Display only; `islands` is never here.
+   */
+  @IsArray()
+  @IsString({ each: true })
+  public legalRegions!: string[];
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => MetaCountryType)

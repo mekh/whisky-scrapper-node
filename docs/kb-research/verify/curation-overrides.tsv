@@ -1,0 +1,8 @@
+ailsa-bay	auto	Medium peat stated on owner William Grant's own domain (williamgrant.com); gate's URL heuristic misses it because no slug word appears in the URL. Dossier-class evidence.
+an-orkney	auto	Teaspooned Highland Park; HP's own site (highlandpark.co.uk) states the lightly-peated style. Review-dossier 3b row. URL heuristic misses parent-domain citations.
+cask-orkney	auto	Light peat stated on owning bottler A.D. Rattray's own domain (adrattray.com); URL heuristic misses it (no slug word in URL).
+lagg	auto	Heavy peat stated outright on laggwhisky.com's own Our Whiskies page; slug word "lagg" is 4 chars, one short of the heuristic's >4 floor. Review-dossier 3b row.
+longrow	auto	Heavy peat stated on owner Springbank's own domain (springbank.scot: "our heavily peated" whisky); parent-domain citation the URL heuristic cannot see. Review-dossier 3b row.
+man-o-sword	auto	Light peat stated on Annandale's own site; corrected from the dossier's medium. Review-dossier 3b row; URL heuristic misses it.
+poli	auto	Light peat stated on the producer's own domain poligrappa.com ("pleasantly peaty"); slug "poli" is 4 chars, under the heuristic's >4 floor.
+rysa	auto	Light peat stated on Orkney Distilling's own product page (orkneydistilling.com); slug "rysa" is 4 chars, under the heuristic's >4 floor.

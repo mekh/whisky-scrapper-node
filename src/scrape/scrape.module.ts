@@ -6,10 +6,15 @@ import { CoreWhiskyModule } from '~core/core-whisky.module';
 
 import { AdapterRegistryService } from './adapters/adapter-registry.service';
 import { HttpClientFactory } from './http/http-client.factory';
+import { KbApplyService } from './kb/kb-apply.service';
+import { KbBootApplyService } from './kb/kb-boot-apply.service';
+import { KbReconcileService } from './kb/kb-reconcile.service';
+import { KbResolverService } from './kb/kb-resolver.service';
 import { LlmClientService } from './llm/llm-client.service';
 import { LlmEnrichmentService } from './llm/llm-enrichment.service';
 import { LlmFlavorService } from './llm/llm-flavor.service';
 import { LlmNameExtractionService } from './llm/llm-name-extraction.service';
+import { LlmResearchService } from './llm/llm-research.service';
 import { NormalizeService } from './normalize/normalize.service';
 import { ScrapePersistService } from './persist/scrape-persist.service';
 import { ScrapeService } from './scrape.service';
@@ -30,7 +35,12 @@ import { ScrapeService } from './scrape.service';
     LlmEnrichmentService,
     LlmNameExtractionService,
     LlmFlavorService,
+    LlmResearchService,
     HttpClientFactory,
+    KbResolverService,
+    KbApplyService,
+    KbReconcileService,
+    KbBootApplyService,
     AdapterRegistryService,
     ScrapePersistService,
     ScrapeService,
@@ -42,6 +52,9 @@ import { ScrapeService } from './scrape.service';
   exports: [
     ScrapeService,
     LlmFlavorService,
+    LlmResearchService,
+    KbResolverService,
+    KbReconcileService,
   ],
 })
 export class ScrapeModule {}

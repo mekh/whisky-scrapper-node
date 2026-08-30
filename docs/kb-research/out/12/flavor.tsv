@@ -1,0 +1,3 @@
+fireball	spicy	require	high	https://en.wikipedia.org/wiki/Fireball_Cinnamon_Whisky	Artificial cinnamon (Atomic Fireball candy) flavouring defines every bottling, not a natural cask characteristic.
+kilbeggan	bourbon-cask	baseline	high	https://en.wikipedia.org/wiki/Cooley_Distillery	Infobox: 'Kilbeggan Blend ... Fresh Bourbon Casks, small portion in 2nd and 3rd'.
+glen-moray	bourbon-cask	baseline	low	https://en.wikipedia.org/wiki/Glen_Moray_distillery	Infobox lists cask_1 = 'American oak' for the core range; read as conventional ex-bourbon barrels, standard for Speyside, but the infobox does not use the word bourbon explicitly, hence low confidence.

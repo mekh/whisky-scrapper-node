@@ -1,5 +1,6 @@
 import {
   IsDate,
+  IsEnum,
   IsInt,
   IsNumber,
   IsOptional,
@@ -9,13 +10,16 @@ import {
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 
 import {
+  KB_ENUM_MAX_LENGTH,
   PRODUCT_MATCH_KEY_MAX_LENGTH,
   PRODUCT_NAME_MAX_LENGTH,
 } from '~constants';
 import { GuidV7Column } from '~decorators/columns';
+import { FactSource } from '~enums';
 import type {
   EntityBrand,
   EntityCountry,
+  EntityProducer,
   EntityProduct,
   EntityType,
   ID,
@@ -32,9 +36,17 @@ import { BaseRichEntity } from '../_common';
  * `matchKey` is the identity. It is derived, unique, and frozen at creation:
  * see `ProductMatchUtils` for how it is built and `EntityProduct` for why
  * nothing re-derives it.
+ *
+ * Every fact field carries a `<field>Source` column recording where its value
+ * came from ({@link FactSource}). The columns are what make the catalogue
+ * correctable: a value is overwritten only by a better-ranked source, a
+ * hand-edited one is never overwritten at all, and a value that is still only
+ * a model's guess can be told apart from one a distillery states.
  */
 @Entity('product')
 @Index('product_match_key_uindex', ['matchKey'], { unique: true })
+@Index('product_producer_idx', ['producerId'])
+@Index('product_bottler_idx', ['bottlerId'])
 export class ProductEntity extends BaseRichEntity implements EntityProduct {
   @IsOptional()
   @IsString()
@@ -82,6 +94,52 @@ export class ProductEntity extends BaseRichEntity implements EntityProduct {
   @Column({ type: 'timestamp', nullable: true })
   public flavorsCuratedAt?: Date;
 
+  @GuidV7Column({ nullable: true })
+  public producerId?: ID;
+
+  @GuidV7Column({ nullable: true })
+  public bottlerId?: ID;
+
+  @IsOptional()
+  @IsEnum(FactSource)
+  @Column({ type: 'varchar', length: KB_ENUM_MAX_LENGTH, nullable: true })
+  public nameSource?: FactSource;
+
+  @IsOptional()
+  @IsEnum(FactSource)
+  @Column({ type: 'varchar', length: KB_ENUM_MAX_LENGTH, nullable: true })
+  public typeSource?: FactSource;
+
+  @IsOptional()
+  @IsEnum(FactSource)
+  @Column({ type: 'varchar', length: KB_ENUM_MAX_LENGTH, nullable: true })
+  public countrySource?: FactSource;
+
+  @IsOptional()
+  @IsEnum(FactSource)
+  @Column({ type: 'varchar', length: KB_ENUM_MAX_LENGTH, nullable: true })
+  public brandSource?: FactSource;
+
+  @IsOptional()
+  @IsEnum(FactSource)
+  @Column({ type: 'varchar', length: KB_ENUM_MAX_LENGTH, nullable: true })
+  public abvSource?: FactSource;
+
+  @IsOptional()
+  @IsEnum(FactSource)
+  @Column({ type: 'varchar', length: KB_ENUM_MAX_LENGTH, nullable: true })
+  public ageSource?: FactSource;
+
+  @IsOptional()
+  @IsEnum(FactSource)
+  @Column({ type: 'varchar', length: KB_ENUM_MAX_LENGTH, nullable: true })
+  public volumeSource?: FactSource;
+
+  @IsOptional()
+  @IsEnum(FactSource)
+  @Column({ type: 'varchar', length: KB_ENUM_MAX_LENGTH, nullable: true })
+  public producerSource?: FactSource;
+
   @ManyToOne(
     'BrandEntity',
     (brand: EntityBrand) => brand.id,
@@ -114,4 +172,26 @@ export class ProductEntity extends BaseRichEntity implements EntityProduct {
     name: 'countryId',
   })
   public country?: EntityCountry;
+
+  @ManyToOne(
+    'ProducerEntity',
+    (producer: EntityProducer) => producer.id,
+    { onDelete: 'SET NULL', nullable: true },
+  )
+  @JoinColumn({
+    foreignKeyConstraintName: 'fk_product_producer',
+    name: 'producerId',
+  })
+  public producer?: EntityProducer;
+
+  @ManyToOne(
+    'ProducerEntity',
+    (producer: EntityProducer) => producer.id,
+    { onDelete: 'SET NULL', nullable: true },
+  )
+  @JoinColumn({
+    foreignKeyConstraintName: 'fk_product_bottler',
+    name: 'bottlerId',
+  })
+  public bottler?: EntityProducer;
 }

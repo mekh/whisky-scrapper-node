@@ -241,6 +241,7 @@ describe('WinePointAdapter.enrichDetail', () => {
       country: null,
       flavorTags: [],
       rawAttrs: {},
+      factSources: {},
     };
 
     await expect(adapter.enrichDetail(snap)).resolves.toBe(true);

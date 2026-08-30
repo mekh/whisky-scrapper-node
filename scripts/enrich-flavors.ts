@@ -231,15 +231,28 @@ async function write(
 
   const flavorIds = await flavors.resolveByName(names);
 
+  let written = 0;
+
   for (const item of answered) {
     const ids = (item.llmFlavorTags ?? [])
       .map((tag) => flavorIds.get(tag))
       .filter((id): id is ID => id !== undefined);
 
-    await products.setLlmFlavors(item.id, ids);
+    /**
+     * One answer, written to every bottling sharing the name. Two sizes of a
+     * whisky are two rows and one flavour profile; the query asks once and the
+     * write fans out, so they cannot end up disagreeing.
+     */
+    const targets = item.groupIds?.length ? item.groupIds : [item.id];
+
+    for (const target of new Set(targets)) {
+      await products.setLlmFlavors(target, ids);
+
+      written += 1;
+    }
   }
 
-  return answered.length;
+  return written;
 }
 
 /**

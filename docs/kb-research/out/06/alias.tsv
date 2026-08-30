@@ -1,0 +1,67 @@
+Signatory	signatory	any	exact catalogue brand string
+Arran	arran	any	exact catalogue brand string
+Nikka	nikka	any	exact catalogue brand string
+Glendronach	glendronach	any	exact catalogue brand string
+Scottish Leader	scottish-leader	any	exact catalogue brand string
+William Lawson's	william-lawsons	any	exact catalogue brand string
+Agitator	agitator	brand	exact catalogue brand string; also a common English word, kept brand-scope
+Glendalough	glendalough	any	exact catalogue brand string
+Bell's	bells	brand	exact catalogue brand string; short/common word, brand-scope
+Widow Jane	widow-jane	any	exact catalogue brand string
+Highland Mist	highland-mist	any	exact catalogue brand string
+Allt A Bhainne	allt-a-bhainne	any	exact catalogue brand string
+Famous Grouse	famous-grouse	any	exact catalogue brand string
+Scottish Collie	scottish-collie	any	exact catalogue brand string
+Flora & Fauna	flora-fauna	any	exact catalogue brand string
+McConnell's	mcconnells	any	exact catalogue brand string
+Speciality Drinks	speciality-drinks	any	exact catalogue brand string
+Cedar Ridge	cedar-ridge	any	exact catalogue brand string
+Girvan	girvan	any	exact catalogue brand string
+King Robert	king-robert	any	exact catalogue brand string
+Quality House	quality-house	brand	exact catalogue brand string; generic words, brand-scope
+VAT 69	vat-69	brand	exact catalogue brand string; short/generic, brand-scope
+Bayadera	bayadera	any	exact catalogue brand string
+Crabbie	crabbie	any	exact catalogue brand string
+Great Barrel	great-barrel	any	exact catalogue brand string
+J.p. Wiser's	jp-wisers	any	exact catalogue brand string, note unusual casing
+Mitchell&son	mitchell-son	any	exact catalogue brand string, note unusual casing/no space
+Sam Barton	sam-barton	any	exact catalogue brand string
+The Talisman	the-talisman	brand	exact catalogue brand string; kept brand-scope, deliberately distinct from Talisker
+Aber	aber-falls	brand	exact catalogue brand string; 4 chars, generic Welsh prefix, brand-scope
+Bernheim	bernheim	any	exact catalogue brand string
+Daftmill	daftmill	any	exact catalogue brand string
+Glant Bernard	glant-bernard	any	exact catalogue brand string; producer unresearched
+Hepp	hepp	brand	exact catalogue brand string; 4 chars, brand-scope
+J.riddle	j-riddle	any	exact catalogue brand string, note lowercase r
+Mash Cut	mash-cut	brand	exact catalogue brand string; both words are common whisky-production terms, brand-scope to avoid false matches
+Neidhal	neidhal	any	exact catalogue brand string; producer unresearched
+O Liam	o-liam	brand	exact catalogue brand string (no apostrophe as scraped); brand-scope
+Reservoir	reservoir	brand	exact catalogue brand string; common English word, brand-scope
+Skrewball	skrewball	any	exact catalogue brand string
+The Gild	the-gild	brand	exact catalogue brand string; common-word-adjacent, brand-scope
+Valdespino	valdespino	any	exact catalogue brand string; likely not actually a whisky, see producer note
+The Famous Grouse	famous-grouse	any	official full name
+Skottish Collie	scottish-collie	any	misspelling seen in one sample product name
+J.P. Wiser's	jp-wisers	any	correctly-cased canonical variant
+JP Wiser's	jp-wisers	any	common variant without periods
+Mitchell & Son	mitchell-son	any	correctly-spaced canonical variant
+Mitchells	mitchell-son	brand	variant seen in sample "Mitchells Green Spot"
+Talisman	the-talisman	brand	short form; brand-scope, deliberately distinct from Talisker
+J&W Hardie	the-talisman	brand	historic blending-house name seen in sample
+Aber Falls	aber-falls	any	canonical distillery name
+O'Liam	o-liam	any	canonical spelling with apostrophe, as seen in sample product name
+Mortlach	mortlach	any	canonical distillery name
+Ardmore	ardmore	any	canonical distillery name
+Ledaig	ledaig	any	canonical peated-Tobermory brand name
+Tobermory	tobermory	any	canonical distillery name
+Macduff	macduff	any	canonical distillery name
+Teaninich	teaninich	any	canonical distillery name
+Auchroisk	auchroisk	any	canonical distillery name
+Glen Spey	glen-spey	any	canonical distillery name
+Inchgower	inchgower	any	canonical distillery name
+Mannochmore	mannochmore	any	canonical distillery name
+Port Askaig	port-askaig	any	canonical Islay range name
+Midleton	midleton	any	canonical distillery name
+Green Spot	green-spot	any	canonical brand name
+Yellow Spot	yellow-spot	any	canonical brand name
+Heaven Hill	heaven-hill	any	canonical distillery name

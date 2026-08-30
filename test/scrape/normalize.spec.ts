@@ -28,6 +28,7 @@ function snap(
     country: null,
     flavorTags: [],
     rawAttrs: {},
+    factSources: {},
     ...over,
   };
 }
@@ -147,9 +148,22 @@ describe('NormalizeService.normalize age handling', () => {
 
 describe('NormalizeService.extractFlavorTags', () => {
   it('matches flavor keywords', () => {
-    expect(n.extractFlavorTags("Laphroaig торф'яний дим")).toContain('peated');
     expect(n.extractFlavorTags('Macallan sherry oak')).toContain('sherry');
     expect(n.extractFlavorTags('звичайний бленд')).toEqual([]);
+  });
+
+  /**
+   * The inversion that makes the knowledge base the only source of peat.
+   *
+   * This used to assert the opposite. A shop's prose saying "торф'яний дим" is
+   * marketing copy about one listing, and letting it write `peated` meant the
+   * next sync re-derived the very tag the reconciliation pass had corrected.
+   * The peat words still decide the level — through `flavor_rule`, where the
+   * decision is reviewable and a negation can outrank a house profile.
+   */
+  it('never derives a peat tag from a listing', () => {
+    expect(n.extractFlavorTags("Laphroaig торф'яний дим")).toEqual([]);
+    expect(n.extractFlavorTags('Ardbeg peated smoky')).toEqual([]);
   });
 });
 
@@ -171,12 +185,27 @@ describe('NormalizeService.normalize', () => {
 
   it('reads flavor and abv from rawAttrs', () => {
     const s = snap('Mystery whisky', {
+      rawAttrs: { description: 'Хересна бочка, 46%' },
+    });
+
+    n.normalize(s);
+
+    expect(s.flavorTags).toContain('sherry');
+    expect(s.abv).toBe(46);
+  });
+
+  /**
+   * The description is still read — it is where the other thirteen tags come
+   * from — but its peat words no longer reach `flavorTags`.
+   */
+  it('reads a description without letting it state peat', () => {
+    const s = snap('Mystery whisky', {
       rawAttrs: { description: "Островний торф'яний смак, 46%" },
     });
 
     n.normalize(s);
 
-    expect(s.flavorTags).toContain('peated');
+    expect(s.flavorTags).toEqual([]);
     expect(s.abv).toBe(46);
   });
 

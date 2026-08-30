@@ -77,6 +77,31 @@ export interface LlmFlavorCandidate {
   rawAttrs?: Record<string, unknown>;
 
   /**
+   * The resolved distillery's display name, when the knowledge base placed
+   * this bottling.
+   *
+   * This is the grounding that matters most. Asked about
+   * `Gordon & MacPhail Ledaig Discovery` the model has to work out whose
+   * whisky it is before it can say anything about the flavour; told the
+   * distillery outright, it does not have to guess — and guessing from the
+   * neighbourhood of a name is exactly what put Ledaig's smoke on Tobermory.
+   */
+  distillery?: string | null;
+
+  /**
+   * The distillery's region, for the same reason.
+   */
+  region?: string | null;
+
+  /**
+   * Tags the producer's curated house style rules out for every bottling.
+   *
+   * Passed so the answer can be post-filtered against them. Telling the model
+   * about them as well would only invite it to argue.
+   */
+  forbiddenTags?: string[];
+
+  /**
    * Result slot: the tags the model returned, filtered to the closed
    * vocabulary.
    */
@@ -113,4 +138,112 @@ export interface LlmNameCandidate {
    * falls back to `ProductNameUtils.clean`.
    */
   cleanName?: string | null;
+}
+
+/**
+ * What the research pass proposes for one brand.
+ *
+ * Every field is a string because it is a proposal, not a fact: it goes
+ * through the same validation and the same auto-gate the researched seed went
+ * through before any of it reaches a typed column.
+ */
+export interface LlmResearchResult {
+  /**
+   * Stable kebab-case key for the producer.
+   */
+  slug: string;
+
+  /**
+   * Display name.
+   */
+  name: string;
+
+  /**
+   * `ProducerKind` value.
+   */
+  kind: string;
+
+  /**
+   * ISO country code.
+   */
+  countryCode: string;
+
+  /**
+   * Common region, `islands` included.
+   */
+  region: string;
+
+  /**
+   * The protected SWA region; never `islands`.
+   */
+  legalRegion: string;
+
+  /**
+   * Owning company.
+   */
+  owner: string;
+
+  /**
+   * The type every bottling of this producer is.
+   */
+  defaultTypeName: string;
+
+  /**
+   * The peat band. The gate treats a positive value far more strictly than
+   * `none`, because only a positive one can hide a whisky.
+   */
+  peatProfile: string;
+
+  /**
+   * The distillery a `brand` comes from.
+   */
+  parentSlug: string;
+
+  /**
+   * The model's self-assessed confidence.
+   */
+  confidence: string;
+
+  /**
+   * Space-separated citations.
+   */
+  sourceUrls: string;
+
+  /**
+   * What it was unsure of, and anything withheld.
+   */
+  note: string;
+}
+
+/**
+ * One brand the knowledge base does not know, with the evidence available.
+ */
+export interface LlmResearchCandidate {
+  /**
+   * The brand name exactly as the catalogue spells it, typos included — that
+   * spelling is what has to resolve afterwards.
+   */
+  brand: string;
+
+  /**
+   * How many bottlings carry it, so the worst gaps are researched first.
+   */
+  productCount: number;
+
+  /**
+   * A few of its product names. They are evidence, and often the decisive
+   * kind: an independent bottler's samples name the distilleries it bottles.
+   */
+  sampleNames: string[];
+
+  /**
+   * Result slot: what the model proposed.
+   */
+  result?: LlmResearchResult;
+
+  /**
+   * Result slot: whether the model answered, so an unanswered brand is retried
+   * rather than recorded as researched.
+   */
+  checked?: boolean;
 }

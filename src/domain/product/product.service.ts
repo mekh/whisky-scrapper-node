@@ -6,9 +6,11 @@ import { CoreFlavorService } from '~core/flavor';
 import { CoreProductService } from '~core/product';
 import { CoreStoreProductService } from '~core/store-product';
 import { CoreTypeService } from '~core/type';
+import { FactSource, ProductFactField } from '~enums';
 import { BadRequestError, NotFoundError } from '~errors';
 import {
   ID,
+  ProductManualPatch,
   ProductSearchItem,
   ProductUpdateInput,
   SearchQuery,
@@ -76,30 +78,34 @@ export class ProductService {
       throw new NotFoundError('Product not found', { id: input.id });
     }
 
-    const patch: Record<string, string | number | null> = {};
+    const patch: ProductManualPatch = {};
 
     if (input.name !== undefined) {
-      patch.name = input.name;
+      this.stamp(patch, 'name', ProductFactField.NAME, input.name);
     }
 
     if (input.age !== undefined) {
-      patch.age = input.age;
+      this.stamp(patch, 'age', ProductFactField.AGE, input.age);
     }
 
     if (input.abv !== undefined) {
-      patch.abv = input.abv;
+      this.stamp(patch, 'abv', ProductFactField.ABV, input.abv);
     }
 
     if (input.volumeMl !== undefined) {
-      patch.volumeMl = input.volumeMl;
+      this.stamp(patch, 'volumeMl', ProductFactField.VOLUME, input.volumeMl);
     }
 
     if (input.countryCode !== undefined) {
-      patch.countryId = await this.resolveCountryId(input.countryCode);
+      const countryId = await this.resolveCountryId(input.countryCode);
+
+      this.stamp(patch, 'countryId', ProductFactField.COUNTRY, countryId);
     }
 
     if (input.typeName !== undefined) {
-      patch.typeId = await this.resolveTypeId(input.typeName);
+      const typeId = await this.resolveTypeId(input.typeName);
+
+      this.stamp(patch, 'typeId', ProductFactField.TYPE, typeId);
     }
 
     const updated = await this.products.updateByIdOrThrow(
@@ -121,6 +127,34 @@ export class ProductService {
       name: updated.name ?? null,
       nameOrig: ref.nameOrig,
     };
+  }
+
+  /**
+   * Writes one edited field into the patch together with its provenance.
+   *
+   * The provenance half is not bookkeeping — it is what makes the edit
+   * durable. Every automatic pass is now gated on `<field>Source <> 'manual'`,
+   * so without the stamp the knowledge-base pass or the very next sync would
+   * quietly overwrite a correction somebody had just made by hand.
+   *
+   * A cleared field is stamped `manual` too. Clearing is a decision — usually
+   * "what was here was wrong" — and leaving it unstamped would let the next
+   * scrape put the same wrong value straight back.
+   *
+   * @param patch - The patch being built (mutated in place).
+   * @param column - The entity column to write.
+   * @param field - The fact field, which names the provenance column.
+   * @param value - The new value, or null to clear it.
+   * @returns Nothing.
+   */
+  private stamp(
+    patch: ProductManualPatch,
+    column: string,
+    field: ProductFactField,
+    value: string | number | null,
+  ): void {
+    patch[column] = value;
+    patch[`${field}Source`] = FactSource.MANUAL;
   }
 
   /**

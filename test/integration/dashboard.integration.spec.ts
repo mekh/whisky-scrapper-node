@@ -95,6 +95,7 @@ describe('dashboard aggregates over the live queries (integration)', () => {
   const makeBottling = async (key: string): Promise<ID> => {
     const { ids } = await products.findOrCreateByMatchKeys([
       {
+        factSources: {},
         matchKey: `${TOKEN}-${key}`,
         name: `Dash ${TOKEN} ${key}`,
         brandId: null,

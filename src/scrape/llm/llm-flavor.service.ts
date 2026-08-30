@@ -3,7 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ScrapeConfig } from '~config';
 import type { FlavorConfidence } from '~types';
 
-import { FLAVOR_TAGS } from '../normalize/brand-info.constants';
+import { LLM_FLAVOR_TAGS } from '../normalize/brand-info.constants';
 import { LlmBatchRunner } from './llm-batch.runner';
 import { LlmClientService } from './llm-client.service';
 
@@ -23,14 +23,21 @@ const MAX_DESCRIPTION_CHARS = 300;
 /**
  * Model instruction for flavor classification. The tag list is inlined rather
  * than interpolated so the prompt reads as one literal, which means it must be
- * edited together with `FLAVOR_TAGS` (`normalize/brand-info.constants.ts`) —
- * that constant is what the answer is filtered against, so a tag named here but
- * missing there is silently dropped.
+ * edited together with `LLM_FLAVOR_TAGS`
+ * (`normalize/brand-info.constants.ts`) — that constant is what the answer is
+ * filtered against, so a tag named here but missing there is silently dropped.
  *
  * The "answer unknown rather than guess" instruction is the point of this
  * prompt, not a caveat: the tags drive the report's exclude filter, so a
- * plausible-but-wrong `peated` on an unrecognized bottling is worse than no tag
- * at all. `{items}` is the numbered listing.
+ * plausible-but-wrong tag on an unrecognized bottling is worse than no tag at
+ * all.
+ *
+ * **Peat and smoke are no longer in the list, and the prompt says why.** They
+ * come from a curated database keyed on the producer, because a model asked
+ * for a distillery's house style answers from the semantic neighbourhood of
+ * its name — which is how `Tobermory`, an unpeated malt, was told it tasted of
+ * `Ledaig`, its peated sibling from the same site. Reporting them is not a
+ * judgement call the model gets to make. `{items}` is the numbered listing.
  */
 const PROMPT =
   `You are a whisky flavor classifier. For each product below, determine its
@@ -44,17 +51,25 @@ Fields of each object:
   distillery well enough to state its flavor profile; "low" when you have only
   a partial or general idea; "unknown" when you do not recognize the product or
   its distillery at all
-- "flavor_tags": an array drawn ONLY from this fixed list — peated, smoky,
-  sherry, bourbon-cask, vanilla, honey, fruity, chocolate, spicy, floral,
-  citrus, nutty, caramel, oak, maritime. Return an empty array together with
-  "unknown" confidence rather than inventing, translating or guessing a tag.
+- "flavor_tags": an array drawn ONLY from this fixed list — sherry,
+  bourbon-cask, vanilla, honey, fruity, chocolate, spicy, floral, citrus,
+  nutty, caramel, oak, maritime. Return an empty array together with "unknown"
+  confidence rather than inventing, translating or guessing a tag.
 
 Never return a tag outside that list. Answering "unknown" with an empty array
 is always safe and is preferred over guessing.
 
+Peat and smoke are NOT on the list and must never be reported, whatever you
+believe about the whisky. They are determined by a curated producer database,
+not by this classification, and any peat or smoke tag you return is discarded.
+Do not mention them, do not substitute a near synonym for them, and do not let
+a peated character change which of the thirteen tags above you choose.
+
 Each input line gives the product name followed by whatever is already known
-about it (type, country, the store's description). Use that context, but do not
-treat marketing prose as a statement of fact about the flavor.
+about it: the distillery and region come from the curated database and are
+reliable, while the type, country and the store's description come from the
+shop's own listing. Use the distillery to identify the whisky. Do not treat
+marketing prose as a statement of fact about the flavor.
 
 Products:
 {items}
@@ -97,10 +112,14 @@ export class LlmFlavorService {
   }
 
   /**
-   * Filters the model's tags down to the closed vocabulary, deduplicated and
-   * sorted. Fails closed: anything not in `FLAVOR_TAGS` — an invented tag, a
-   * translated one, a whole sentence — is dropped rather than stored, which is
-   * what keeps the open `flavor` lookup table clean.
+   * Filters the model's tags down to the thirteen it is allowed to report,
+   * deduplicated and sorted. Fails closed: anything not in `LLM_FLAVOR_TAGS` —
+   * an invented tag, a translated one, a whole sentence — is dropped rather
+   * than stored, which is what keeps the open `flavor` lookup table clean.
+   *
+   * `peated` and `smoky` are absent from that list, so the filter is also the
+   * last line of defence for the peat invariant: a model that reports peat
+   * anyway, against its instructions, is silently ignored.
    *
    * @param raw - The `flavor_tags` value as returned.
    * @returns The allowed tags, or an empty array when none survive.
@@ -110,7 +129,7 @@ export class LlmFlavorService {
       return [];
     }
 
-    const allowed = new Set(FLAVOR_TAGS);
+    const allowed = new Set(LLM_FLAVOR_TAGS);
 
     const tags = raw
       .map((tag) => String(tag).toLowerCase().trim())
@@ -209,6 +228,14 @@ export class LlmFlavorService {
   private describe(item: LlmFlavorCandidate): string {
     const bits = [item.name];
 
+    if (item.distillery) {
+      bits.push(`distillery: ${item.distillery}`);
+    }
+
+    if (item.region) {
+      bits.push(`region: ${item.region}`);
+    }
+
     if (item.whiskyType) {
       bits.push(`type: ${item.whiskyType}`);
     }
@@ -247,6 +274,11 @@ export class LlmFlavorService {
    * only for an answer that was actually present, so a short response leaves
    * the missing items to be retried rather than recorded as misses.
    *
+   * A tag the producer's curated house style forbids is dropped here rather
+   * than argued about in the prompt. The knowledge base is the authority, the
+   * model is evidence, and a post-filter is how that ordering is enforced
+   * without spending tokens explaining it per item.
+   *
    * @param item - The candidate to fill (mutated in place).
    * @param raw - The classification for this candidate, if any.
    */
@@ -258,10 +290,14 @@ export class LlmFlavorService {
     const info = raw as LlmFlavorInfo;
     const confidence = LlmFlavorService.confidence(info.confidence);
 
+    const forbidden = new Set(item.forbiddenTags ?? []);
+
     item.llmFlavorConfidence = confidence;
     item.llmFlavorTags = confidence === 'unknown'
       ? []
-      : LlmFlavorService.allowlist(info.flavor_tags);
+      : LlmFlavorService.allowlist(info.flavor_tags)
+        .filter((tag) => !forbidden.has(tag));
+
     item.llmFlavorChecked = true;
   }
 }

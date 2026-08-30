@@ -6,6 +6,7 @@ export * from './ctx.interfaces';
 export * from './dashboard.interfaces';
 export * from './entity.interfaces';
 export * from './jwt.interfaces';
+export * from './kb.interfaces';
 export * from './meta.interfaces';
 export * from './permission.interfaces';
 export * from './preference.interfaces';

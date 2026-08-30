@@ -1,0 +1,82 @@
+Jack Daniel's	jack-daniels	any	
+Jack Daniels	jack-daniels	any	sample spelling, no apostrophe
+Jura	jura	brand	under 5 characters per BRIEF.md rule despite being distinctive
+Dewar's	dewars	any	
+Dewars	dewars	any	common spelling without apostrophe
+Cutty Sark	cutty-sark	any	
+Glenlivet	glenlivet	any	
+The Glenlivet	glenlivet	any	common alternate form, seen in samples
+Tobermory	tobermory	any	
+Ledaig	ledaig	any	
+Westport	westport	brand	common English place name, ambiguous - brand scope only
+Wilson & Morgan	wilson-morgan	any	
+Wilson and Morgan	wilson-morgan	any	common '&'->'and' variant
+Caol Ila	caol-ila	any	
+Bowmore	bowmore	any	
+Benrinnes	benrinnes	any	
+Glen Moray	glen-moray	any	
+Compass Box	compass-box	any	
+Barrell	barrell	any	
+Barrel	barrell	brand	easy single-L misspelling; brand-scoped since 'barrel' alone is a generic word
+White Horse	white-horse	any	
+Highland Chief	highland-chief	any	
+Yellowstone	yellowstone	any	
+Dufftown Distillery	dufftown	any	exact catalogue brand string
+Dufftown	dufftown	brand	place name, kept brand-scoped
+Singleton of Dufftown	singleton-of-dufftown	any	
+The Singleton of Dufftown	singleton-of-dufftown	any	seen in samples
+Paddy	paddy	brand	generic name/word despite being 5 characters
+Cooley	cooley	brand	could read as a surname, kept brand-scoped
+Tyrconnell	tyrconnell	any	
+Nc Nean	nc-nean	any	exact catalogue brand string
+Nc'nean	nc-nean	any	correct apostrophe spelling
+1792	1792	brand	numeric/short, could collide with an unrelated founding-year mention
+Georgia Moon	georgia-moon	any	
+Proper No. Twelve	proper-no-twelve	any	
+Proper No Twelve	proper-no-twelve	any	no period variant
+Proper Twelve	proper-no-twelve	any	seen in samples, without 'No.'
+Proper № Twelve	proper-no-twelve	any	seen in samples, Unicode number-sign variant
+J P Wiser's	jp-wisers	any	exact catalogue brand string
+J.P. Wiser's	jp-wisers	any	seen in samples, standard periods form
+JP Wiser's	jp-wisers	any	no periods/spaces variant
+Wiser's	jp-wisers	brand	shorter/generic-adjacent form, brand-scoped
+Miltonduff	miltonduff	any	
+Corsaire	corsair	any	exact catalogue brand string - misspelling of Corsair
+Corsair	corsair	any	correct spelling, seen in samples
+Bulleit	bulleit	any	
+Drofa	drofa	any	exact catalogue brand string (Latin transliteration)
+Дрофа&Люди	drofa	any	full Cyrillic brand form seen in every sample
+Дрофа	drofa	brand	short Cyrillic form (also a common Ukrainian word for the bustard bird) - brand-scoped
+May Loag	may-loag	any	exact catalogue brand string
+May-Loag	may-loag	any	hyphenated form seen in every sample
+Shinobu	shinobu	any	
+Bulleit	bulleit	any	duplicate-safe: also listed above
+Fujimi	fujimi	any	
+Kindilan	kindilan	any	
+Proper No. Twelve	proper-no-twelve	any	duplicate-safe: also listed above
+Tyrconnell	tyrconnell	any	duplicate-safe: also listed above
+Bastille	bastille	any	
+Corsaire	corsair	any	duplicate-safe: also listed above
+Grave Digger	grave-digger	any	
+Johnny Cree	johnny-cree	brand	generic first-name + surname-like pattern, brand-scoped
+Miltonduff	miltonduff	any	duplicate-safe: also listed above
+Ruotker's	ruotkers	any	
+Ruotkers	ruotkers	any	no apostrophe variant
+The Story of Back To Black	back-to-black	any	exact catalogue brand string
+Back to Black	back-to-black	any	shorter form seen in samples
+1792	1792	brand	duplicate-safe: also listed above
+Bercloux	bercloux	brand	single unconfirmed product, kept brand-scoped out of caution
+Daddy Rack	daddy-rack	any	
+Georgia Moon	georgia-moon	any	duplicate-safe: also listed above
+Hamiltons	hamiltons	brand	generic surname
+Hamilton's	hamiltons	brand	apostrophe variant, generic surname
+J P Wiser's	jp-wisers	any	duplicate-safe: also listed above
+Marc De Champagne	marc-de-champagne	any	exact catalogue brand string
+Marc de Champagne	marc-de-champagne	any	lowercase 'de' seen in sample
+Nc Nean	nc-nean	any	duplicate-safe: also listed above
+Old Woody	old-woody	brand	two common English words, kept brand-scoped
+Reki	reki	brand	under 5 characters per BRIEF.md rule
+Shin	shin	brand	under 5 characters per BRIEF.md rule
+The Galtee Mountain Boy	galtee-mountain-boy	any	exact catalogue brand string
+Galtee Mountain Boy	galtee-mountain-boy	any	without leading 'The'
+Undone	undone	brand	common English word, kept brand-scoped

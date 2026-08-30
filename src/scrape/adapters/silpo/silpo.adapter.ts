@@ -378,8 +378,13 @@ export class SilpoAdapter extends HttpAdapterBase {
   /**
    * Stashes the store's own flavor attributes into `rawAttrs`, where the
    * keyword flavor pass reads them. They are not mapped to tags here — the
-   * shared `FLAVOR_KEYWORDS` vocabulary owns that decision, and it matches
-   * these values (`Димний, торф'яний` yields both `smoky` and `peated`).
+   * shared `FLAVOR_KEYWORDS` vocabulary owns that decision.
+   *
+   * Note that its peat words no longer produce a tag: a value like
+   * `Димний, торф'яний` used to yield `smoky` and `peated`, and now yields
+   * neither, because peat comes from the knowledge base alone. The text is
+   * still worth stashing — it feeds the other thirteen tags and the flavour
+   * prompt's grounding.
    *
    * @param attrs - The product's flattened attributes.
    * @param snap - The snapshot to fill; mutated in place.

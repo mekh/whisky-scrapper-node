@@ -1,4 +1,4 @@
-import { ListingStop } from '../enums';
+import { FactSource, ListingStop, ProductFactField } from '../enums';
 
 import { ID } from './entity.interfaces';
 
@@ -104,6 +104,19 @@ export interface ProductSnapshot {
   rawAttrs: Record<string, unknown>;
 
   /**
+   * Where each fact on this snapshot came from, filled as the pipeline runs:
+   * whatever the adapter or the detail page already carried is `store`,
+   * whatever the regex/keyword pass derives is `name`, whatever the enrichment
+   * model supplies is `llm`.
+   *
+   * Recording it here rather than at each adapter is what keeps provenance a
+   * three-file change instead of a fourteen-adapter one — the passes run in a
+   * known order, so "already set when normalization started" is a sufficient
+   * and exact test for `store`.
+   */
+  factSources: Partial<Record<ProductFactField, FactSource>>;
+
+  /**
    * Flavor tags the LLM classification pass returned, already filtered to the
    * closed vocabulary. Empty when the model did not recognize the product.
    * Persisted separately from {@link flavorTags} so a later sync's keyword pass
@@ -173,6 +186,33 @@ export interface FlavorCandidateRow {
    * Ukrainian country name when the row has one, as extra grounding.
    */
   country?: string | null;
+
+  /**
+   * The resolved distillery's name, when the knowledge base placed this
+   * bottling — the strongest grounding the prompt can be given.
+   */
+  distillery?: string | null;
+
+  /**
+   * The distillery's region, for the same reason.
+   */
+  region?: string | null;
+
+  /**
+   * Tags the producer's curated house style rules out, applied as a
+   * post-filter on whatever the model answers.
+   */
+  forbiddenTags?: string[];
+
+  /**
+   * Every bottling this one answer applies to — the whole
+   * `lower(name)` group, `id` included.
+   *
+   * Two sizes of one whisky are two bottlings and one flavour profile, so the
+   * answer is written to all of them. Asking per bottling paid twice and, when
+   * the two answers differed, left the catalogue disagreeing with itself.
+   */
+  groupIds?: ID[];
 
   /**
    * Result slot: the filtered tags the model returned.
@@ -451,6 +491,27 @@ export type ScrapeProgressEvent =
      * How many the store had in stock before the run.
      */
     baseline: number;
+  }
+  | {
+    /**
+     * The knowledge base was applied to the bottlings this run touched: their
+     * producer, country, type and flavor tags now state what the curated
+     * database says rather than what a listing or a model claimed.
+     */
+    kind: 'kb-applied';
+
+    /**
+     * How many distinct name groups the run resolved.
+     */
+    groups: number;
+
+    /**
+     * How many of those matched no producer. Not an error — an unrecognised
+     * bottling keeps its stored facts and loses only its peat tags, which is
+     * the safe direction — but the number is the coverage signal worth
+     * watching.
+     */
+    unresolved: number;
   };
 
 /**
@@ -689,6 +750,13 @@ export interface ProductCanonicalInput {
   countryId: ID | null;
 
   /**
+   * Where each of this bottling's facts came from, carried through from the
+   * snapshot so the row is created with its provenance rather than gaining it
+   * later. A field the map does not mention is taken to be the store's.
+   */
+  factSources: Partial<Record<ProductFactField, FactSource>>;
+
+  /**
    * Age statement in years, or null for a NAS bottling. A key component, so it
    * is written at creation and never updated.
    */
@@ -737,6 +805,27 @@ export interface ProductFillInput {
    * Resolved country id, or null to contribute nothing.
    */
   countryId: ID | null;
+
+  /**
+   * Where this run's `abv` came from. Decides whether it may replace a stored
+   * value rather than only fill a gap.
+   */
+  abvSource: FactSource;
+
+  /**
+   * Where this run's brand came from.
+   */
+  brandSource: FactSource;
+
+  /**
+   * Where this run's whisky type came from.
+   */
+  typeSource: FactSource;
+
+  /**
+   * Where this run's country came from.
+   */
+  countrySource: FactSource;
 }
 
 /**
@@ -879,6 +968,49 @@ export interface ProductScrapeFlavorLink {
 }
 
 /**
+ * One store's claim that contradicts what the catalogue holds, as observed
+ * during a scrape.
+ *
+ * Recorded at the moment the canonical write would otherwise discard it: the
+ * incoming value is real evidence, and once the run ends there is no way to
+ * recover it, because `rawAttrs` is never persisted.
+ */
+export interface ProductFactConflictInput {
+  /**
+   * The bottling whose stored fact is contradicted.
+   */
+  productId: ID;
+
+  /**
+   * The store making the claim.
+   */
+  storeId: ID;
+
+  /**
+   * Which fact is disputed. Only `type`, `country`, `brand` and `abv` are ever
+   * compared — `age` and `volume` are identity, so a difference there means a
+   * different bottling, not a wrong fact.
+   */
+  attribute: ProductFactField;
+
+  /**
+   * The catalogue's value, rendered for reading.
+   */
+  storedValue: string | null;
+
+  /**
+   * What this store's listing says instead.
+   */
+  claimedValue: string | null;
+
+  /**
+   * The provenance of the stored value, which is what tells a reviewer whether
+   * the claim is likely a correction or a store error.
+   */
+  storedSource: FactSource | null;
+}
+
+/**
  * One store's offer, ready to be written to the `store_product` table.
  */
 export interface StoreProductUpsertInput {
@@ -968,4 +1100,55 @@ export interface PriceSnapshotUpsertInput {
    * Whether the current price is a promo.
    */
   promo: boolean;
+}
+
+/**
+ * A bottling's stored facts and their provenance, read so a store's live claim
+ * can be compared against them.
+ */
+export interface ProductStoredFactsRow {
+  /**
+   * Canonical product id.
+   */
+  id: ID;
+
+  /**
+   * Stored brand FK.
+   */
+  brandId: ID | null;
+
+  /**
+   * Stored whisky type FK.
+   */
+  typeId: ID | null;
+
+  /**
+   * Stored country FK.
+   */
+  countryId: ID | null;
+
+  /**
+   * Stored strength.
+   */
+  abv: number | null;
+
+  /**
+   * Where the stored brand came from.
+   */
+  brandSource: FactSource | null;
+
+  /**
+   * Where the stored type came from.
+   */
+  typeSource: FactSource | null;
+
+  /**
+   * Where the stored country came from.
+   */
+  countrySource: FactSource | null;
+
+  /**
+   * Where the stored strength came from.
+   */
+  abvSource: FactSource | null;
 }

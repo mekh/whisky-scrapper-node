@@ -52,7 +52,7 @@ describe('LlmFlavorService.classify', () => {
   it('records the allowed tags the model returned', async () => {
     askJsonArray.mockResolvedValue([{
       confidence: 'high',
-      flavor_tags: ['Peated', 'maritime', 'smoky'],
+      flavor_tags: ['Sherry', 'maritime'],
     }]);
 
     const items = [candidate('Laphroaig 10')];
@@ -60,8 +60,71 @@ describe('LlmFlavorService.classify', () => {
     await makeService().classify(items);
 
     expect(items[0].llmFlavorConfidence).toBe('high');
-    expect(items[0].llmFlavorTags).toEqual(['maritime', 'peated', 'smoky']);
+    expect(items[0].llmFlavorTags).toEqual(['maritime', 'sherry']);
     expect(items[0].llmFlavorChecked).toBe(true);
+  });
+
+  /**
+   * The last line of defence for the peat invariant. The prompt tells the
+   * model not to report peat or smoke; this proves that a model which does it
+   * anyway changes nothing, because the two tags are not in the list the
+   * answer is filtered against.
+   */
+  it(
+    'discards peat and smoke however confidently they are reported',
+    async () => {
+      askJsonArray.mockResolvedValue([{
+        confidence: 'high',
+        flavor_tags: ['Peated', 'maritime', 'smoky'],
+      }]);
+
+      const items = [candidate('Laphroaig 10')];
+
+      await makeService().classify(items);
+
+      expect(items[0].llmFlavorTags).toEqual(['maritime']);
+    },
+  );
+
+  /**
+   * A tag the producer's curated house style rules out is dropped after the
+   * answer arrives rather than argued about in the prompt: the knowledge base
+   * is the authority and the model is evidence.
+   */
+  it('drops a tag the producer forbids', async () => {
+    askJsonArray.mockResolvedValue([{
+      confidence: 'high',
+      flavor_tags: ['sherry', 'maritime'],
+    }]);
+
+    const items = [candidate('Some Bottling')];
+
+    items[0].forbiddenTags = ['sherry'];
+
+    await makeService().classify(items);
+
+    expect(items[0].llmFlavorTags).toEqual(['maritime']);
+  });
+
+  /**
+   * The producer's own name and region are handed to the model outright, so it
+   * does not have to work out whose whisky an independent bottling is.
+   */
+  it('grounds the prompt on the resolved distillery', async () => {
+    askJsonArray.mockResolvedValue([{ confidence: 'low', flavor_tags: [] }]);
+
+    const items = [candidate('Gordon & MacPhail Ledaig Discovery')];
+
+    items[0].distillery = 'Ledaig';
+    items[0].region = 'islands';
+
+    await makeService().classify(items);
+
+    const calls = askJsonArray.mock.calls as unknown as string[][];
+    const sent = calls[0][0];
+
+    expect(sent).toContain('distillery: Ledaig');
+    expect(sent).toContain('region: islands');
   });
 
   it('drops tags outside the closed vocabulary', async () => {

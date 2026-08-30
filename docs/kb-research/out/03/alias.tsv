@@ -1,0 +1,71 @@
+Douglas Laing	douglas-laing	any	Exact catalogue brand string.
+Douglas Laing & Co	douglas-laing	any	Canonical company name.
+Big Peat	big-peat	any	
+Ardbeg	ardbeg	any	Exact catalogue brand string.
+Ардбег	ardbeg	any	Cyrillic spelling seen in this batch's samples.
+Hyde	hyde	brand	Exact catalogue brand string; under 5 characters so scope=brand.
+Kavalan	kavalan	any	Exact catalogue brand string.
+Chivas	chivas-regal	any	Exact catalogue brand string; all this brand's samples are Chivas Regal.
+Chivas Regal	chivas-regal	any	Canonical name.
+Chivas Brothers	chivas-regal	brand	Exact catalogue brand string; majority of samples under this string are Chivas Regal. Royal Salute resolves separately via its own distinctive alias.
+Royal Salute	royal-salute	any	
+Paul John	paul-john	any	Exact catalogue brand string.
+Tenjaku	tenjaku	any	Exact catalogue brand string.
+Writers Tear's	writers-tears	any	Exact catalogue brand string (as-spelled, apostrophe before final s).
+Writers Tears	writers-tears	any	Variant seen in samples, no apostrophe.
+Writers' Tears	writers-tears	any	Canonical correct spelling.
+Starward	starward	any	Exact catalogue brand string.
+Glenglassaugh	glenglassaugh	any	Exact catalogue brand string.
+The Singleton of Dufftown	the-singleton-of-dufftown	any	Exact catalogue brand string.
+Singleton of Dufftown	the-singleton-of-dufftown	any	Common variant without "The".
+Craigellachie	craigellachie	any	Exact catalogue brand string.
+Milam&greene	milam-greene	any	Exact catalogue brand string (as-spelled).
+Milam&Greene	milam-greene	any	Proper-case variant seen in samples.
+Milam & Greene	milam-greene	any	Canonical spaced form.
+Crazy Charley	crazy-charley	any	Exact catalogue brand string.
+Luxco	quiet-man	brand	Exact catalogue brand string; all this brand's samples are The Quiet Man. "Luxco" itself is a company that owns other unrelated brands, so scope=brand only.
+The Quiet Man	quiet-man	any	Canonical name.
+Quiet Man	quiet-man	any	Variant without "The".
+Scapa	scapa	any	Exact catalogue brand string.
+Angus Dundee	angus-dundee	any	Exact catalogue brand string.
+Elijah Craig	elijah-craig	any	Exact catalogue brand string.
+Kamiki	kamiki	any	Exact catalogue brand string.
+Peat's Beast	peats-beast	any	Exact catalogue brand string.
+Peats Beast	peats-beast	any	No-apostrophe variant common in retail listings.
+The Matsui	matsui	any	Exact catalogue brand string.
+Matsui	matsui	any	Exact catalogue brand string (second brand entry in this batch for the same producer).
+Bankhall	bankhall	any	Exact catalogue brand string.
+Conciere	conciere	any	Exact catalogue brand string.
+Gordonmacphail	gordon-macphail	any	Exact catalogue brand string (as-spelled, no space/ampersand).
+Gordon & MacPhail	gordon-macphail	any	Canonical name.
+Gordon and MacPhail	gordon-macphail	any	Common variant.
+Gordon&MacPhail	gordon-macphail	any	Spelling seen in this batch's product-name samples.
+Joe Got A Gun	joe-got-a-gun	any	Exact catalogue brand string.
+Royal Stag	royal-stag	any	Exact catalogue brand string.
+The Legacy Series	torabhaig	brand	Exact catalogue brand string; both its samples ("Torabhaig The Legacy", "Torabhaig Allt Gleann") are Torabhaig's Legacy Series. Generic phrase so scope=brand only.
+Torabhaig	torabhaig	any	Actual distillery/brand name behind this batch's "The Legacy Series" catalogue entry.
+Yellow Rose	yellow-rose	any	Exact catalogue brand string.
+Bank Note	bank-note	any	Exact catalogue brand string.
+Crater Lake	crater-lake	any	Exact catalogue brand string.
+Fordman	fordman	brand	Exact catalogue brand string; not researched, kept cautious.
+Gwalarn Pure	gwalarn-pure	brand	Exact catalogue brand string; not researched, kept cautious.
+Gwalarn	gwalarn-pure	brand	Shorter form seen in sample.
+Johnny Hepp	johnny-hepp	any	Exact catalogue brand string.
+Malt B	malt-b	brand	Exact catalogue brand string; very short/generic.
+Moulin	moulin	brand	Exact catalogue brand string; generic word, kept cautious.
+Old Smitty's	old-smittys	brand	Exact catalogue brand string; generic own-label naming, kept cautious.
+Ragtime Rye	ragtime-rye	any	Exact catalogue brand string.
+Shefford Manor	shefford-manor	any	Exact catalogue brand string.
+The Deveron	the-deveron	any	Exact catalogue brand string.
+Glen Deveron	the-deveron	any	Older name for the same brand, seen in sample.
+Macduff	macduff	any	Distillery name; only used by independent bottlers, not by the owner.
+Turning Point	turning-point	brand	Exact catalogue brand string; fairly generic phrase, kept cautious.
+Jura	jura	any	
+Arran	arran	brand	Short/ambiguous common word, kept cautious.
+Ardmore	ardmore	any	
+Bowmore	bowmore	any	
+Tormore	tormore	any	
+Glenlivet	glenlivet	any	
+The Glenlivet	glenlivet	any	
+Glencadam	glencadam	any	
+Heaven Hill	heaven-hill	any	

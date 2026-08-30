@@ -4,8 +4,8 @@ import { ConfigModule } from '~config';
 import { CoreWhiskyModule } from '~core/core-whisky.module';
 import { WebPushModule } from '~lib/web-push';
 
-import { PushController } from './push.controller';
 import { PushDigestService } from './push-digest.service';
+import { PushController } from './push.controller';
 import { PushService } from './push.service';
 
 @Module({

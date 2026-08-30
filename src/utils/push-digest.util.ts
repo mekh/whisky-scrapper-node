@@ -7,12 +7,7 @@ import {
   PUSH_TITLE_MANY,
   PUSH_TITLE_ONE,
 } from '~constants';
-import {
-  ID,
-  PushDigestItem,
-  PushDigestPayload,
-  PushDropRow,
-} from '~types';
+import { ID, PushDigestItem, PushDigestPayload, PushDropRow } from '~types';
 
 /**
  * Pure digest arithmetic for the push dispatch: groups claimed price drops,

@@ -20,10 +20,14 @@ import type {
   PushDispatchReport,
 } from '~types';
 
+import { PushDispatchDto, PushSubscribeDto, PushUnsubscribeDto } from './dto';
 import { PushDigestService } from './push-digest.service';
 import { PushService } from './push.service';
-import { PushDispatchDto, PushSubscribeDto, PushUnsubscribeDto } from './dto';
-import { PushConfigType, PushDevicesType, PushDispatchReportType } from './types';
+import {
+  PushConfigType,
+  PushDevicesType,
+  PushDispatchReportType,
+} from './types';
 
 /**
  * `POST /push/digest` reuses `store:sync` rather than adding a `Resource`

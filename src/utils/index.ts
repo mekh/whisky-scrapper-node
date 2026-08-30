@@ -8,6 +8,6 @@ export { Hash } from './hash.util';
 export { KbGateUtils } from './kb-gate.util';
 export { KbKeyUtils } from './kb-key.util';
 export { ProductMatchUtils } from './product-match.util';
-export { PushDigestUtils } from './push-digest.util';
 export { NAME_TAG_WORDS, ProductNameUtils } from './product-name.util';
+export { PushDigestUtils } from './push-digest.util';
 export { SearchTermUtils } from './search-term.util';

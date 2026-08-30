@@ -1,8 +1,8 @@
 import { TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 
-import { CoreProducerService } from '~core/producer';
 import { CorePriceSnapshotService } from '~core/price-snapshot';
+import { CoreProducerService } from '~core/producer';
 import { CoreProductService } from '~core/product';
 import { CoreStoreProductService } from '~core/store-product';
 import { ReportKind, ReportWindow, SortOrder } from '~enums';

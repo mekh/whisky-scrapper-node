@@ -5,4 +5,5 @@ export enum ErrorCodes {
   NOT_FOUND = 404,
   DUPLICATE = 409,
   SERVER_ERROR = 500,
+  SERVICE_UNAVAILABLE = 503,
 }

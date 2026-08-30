@@ -1,4 +1,9 @@
-import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 
 import { AuthService } from '~domain/auth';
 import { NotAuthenticatedError } from '~errors';
@@ -7,6 +12,8 @@ import { ClsService, ContextManager } from '../context';
 
 @Injectable()
 export class AuthJwtGuard implements CanActivate {
+  private readonly logger = new Logger(AuthJwtGuard.name);
+
   public constructor(
     private readonly authService: AuthService,
     private readonly cls: ClsService,
@@ -18,17 +25,29 @@ export class AuthJwtGuard implements CanActivate {
    * by the `@CurrentUser` decorator). For public resources a missing or
    * invalid token is tolerated.
    *
+   * Every branch is traced. Guards run before any interceptor, so until this
+   * returns, the request has left no trace anywhere else — which is precisely
+   * how a stall here (2026-08-30) became an outage with an empty log.
+   *
    * @param ctx - The Nest execution context for the request.
    * @returns `true` when the request may proceed.
    */
   public async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const context = ContextManager.create(ctx);
 
+    this.logger.verbose('Guard entered');
+
     if (context.user?.id) {
+      this.logger.verbose('User already on the context');
+
       return true;
     }
 
-    return context.isResourcePublic()
+    const isPublic = context.isResourcePublic();
+
+    this.logger.verbose('Resource is public - %s', isPublic);
+
+    return isPublic
       ? this.verify(context).catch(() => true)
       : this.verify(context);
   }
@@ -45,10 +64,22 @@ export class AuthJwtGuard implements CanActivate {
     const token = context.accessToken;
 
     if (!token) {
+      this.logger.verbose('No access token on the request');
+
       throw new NotAuthenticatedError();
     }
 
+    const startedAt = Date.now();
+
+    this.logger.verbose('Authenticating the access token');
+
     const user = await this.authService.authenticate(token);
+
+    this.logger.verbose(
+      'Authenticated %s in %d ms',
+      user.id,
+      Date.now() - startedAt,
+    );
 
     this.cls.user = user;
     context.user = user;

@@ -155,7 +155,7 @@ describe('quick filters (integration)', () => {
     await expect(quickFilters.findByUserId(userB)).resolves.toHaveLength(1);
   });
 
-  it('allows a rename to the set\'s own current name', async () => {
+  it("allows a rename to the set's own current name", async () => {
     const [saved] = await quickFilters.createForUser(userA, {
       name: 'Same',
       filters: {},
@@ -195,7 +195,7 @@ describe('quick filters (integration)', () => {
       .toEqual(['Alpha', 'bravo', 'charlie']);
   });
 
-  it('hides another user\'s set behind a 404 rather than a 403', async () => {
+  it("hides another user's set behind a 404 rather than a 403", async () => {
     /**
      * Ownership is a `WHERE` clause, not a check: the row simply matches
      * nothing, so nothing confirms it exists.

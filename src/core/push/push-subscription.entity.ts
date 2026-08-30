@@ -1,9 +1,4 @@
-import {
-  IsDate,
-  IsOptional,
-  IsString,
-  MaxLength,
-} from 'class-validator';
+import { IsDate, IsOptional, IsString, MaxLength } from 'class-validator';
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 
 import {

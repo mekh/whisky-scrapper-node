@@ -9,8 +9,8 @@ import {
   PushUserTarget,
 } from '~types';
 
-import { PushRepository } from './push.repository';
 import { PushSubscriptionEntity } from './push-subscription.entity';
+import { PushRepository } from './push.repository';
 
 /**
  * Persistence-layer public API for push subscriptions and the digest dedup

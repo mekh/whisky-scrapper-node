@@ -164,7 +164,7 @@ describe('PreferenceController delegation', () => {
       .toHaveBeenCalledWith(USER.id, blacklist);
   });
 
-  it('reads another user\'s details by the route parameter', async () => {
+  it("reads another user's details by the route parameter", async () => {
     const { controller, service } = makeController();
 
     await controller.byUserDetails({ userId: 'user-2' as ID });

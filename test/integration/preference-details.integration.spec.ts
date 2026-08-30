@@ -203,7 +203,7 @@ describe('preference details over the live query (integration)', () => {
     });
   });
 
-  it('partitions one user\'s favorite and blacklist rows', async () => {
+  it("partitions one user's favorite and blacklist rows", async () => {
     await preferences.addFavorites(userA, [namedId]);
     await preferences.addToBlacklist(userA, {
       productIds: [namelessId],

@@ -1,11 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  IsBoolean,
-  IsInt,
-  IsPositive,
-  IsString,
-  Min,
-} from 'class-validator';
+import { IsBoolean, IsInt, IsPositive, IsString, Min } from 'class-validator';
 
 import { BaseConfig } from '../base.config';
 
@@ -36,16 +30,15 @@ export class PushConfig extends BaseConfig {
    * every stored subscription.
    */
   @IsString()
-  public readonly vapidPublicKey =
-    this.asString('PUSH_VAPID_PUBLIC_KEY') ?? '';
+  public readonly vapidPublicKey = this.asString('PUSH_VAPID_PUBLIC_KEY') ?? '';
 
   /**
    * VAPID private key, base64url. A secret — never logged, never sent to the
    * client.
    */
   @IsString()
-  public readonly vapidPrivateKey =
-    this.asString('PUSH_VAPID_PRIVATE_KEY') ?? '';
+  public readonly vapidPrivateKey = this.asString('PUSH_VAPID_PRIVATE_KEY') ??
+    '';
 
   /**
    * VAPID contact, a `mailto:` address or an `https://` URL. Push services
@@ -83,8 +76,8 @@ export class PushConfig extends BaseConfig {
    */
   @IsInt()
   @IsPositive()
-  public readonly logRetentionDays =
-    this.asNumber('PUSH_LOG_RETENTION_DAYS') ?? DEFAULT_LOG_RETENTION_DAYS;
+  public readonly logRetentionDays = this.asNumber('PUSH_LOG_RETENTION_DAYS') ??
+    DEFAULT_LOG_RETENTION_DAYS;
 
   /**
    * Whether the feature can actually send: enabled by config and holding both

@@ -840,13 +840,13 @@ describe('SyncOrchestratorService push dispatch hook', () => {
       makeStore({ id: 's1', slug: 'metro', group: 'zakaz' }),
       makeStore({ id: 's2', slug: 'maudau' }),
     ];
-    const { orchestrator, stores: storeFakes, pushDigest } =
-      makeOrchestrator(stores[0]);
+    const { orchestrator, stores: storeFakes, pushDigest } = makeOrchestrator(
+      stores[0],
+    );
 
     storeFakes.findAllWithConfig.mockResolvedValue(stores);
     storeFakes.findWithConfigBySlug.mockImplementation(
-      async (slug: string) =>
-        stores.find((item) => item.slug === slug) ?? null,
+      async (slug: string) => stores.find((item) => item.slug === slug) ?? null,
     );
 
     await orchestrator.runFullSync();

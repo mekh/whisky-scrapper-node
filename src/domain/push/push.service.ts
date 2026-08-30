@@ -1,11 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { PushConfig } from '~config';
-import {
-  PUSH_TEST_BODY,
-  PUSH_TEST_TITLE,
-  PUSH_TEST_URL,
-} from '~constants';
+import { PUSH_TEST_BODY, PUSH_TEST_TITLE, PUSH_TEST_URL } from '~constants';
 import { CorePushService } from '~core/push';
 import { WebPushService } from '~lib/web-push';
 import {

@@ -38,7 +38,7 @@ const MAX_SEARCH_LENGTH = 128;
 const PRODUCER_SEGMENTS = ['resolved', 'unresolved'];
 
 export class ReviewQueryDto
-  implements ReviewProducerQuery, ReviewFactQuery, ReviewConflictQuery {
+implements ReviewProducerQuery, ReviewFactQuery, ReviewConflictQuery {
   @IsOptional()
   @IsEnum(KbStatus)
   public status?: KbStatus;

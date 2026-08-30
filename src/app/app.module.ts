@@ -29,16 +29,23 @@ import { DomainStoreModule } from '~domain/store';
 import { DomainUserModule } from '~domain/user';
 import { ServerError } from '~errors';
 import { LoggerModule } from '~lib/logger';
+import { WatchdogModule } from '~lib/watchdog';
 import { ScrapeModule } from '~scrape';
 
 import { ContextModule } from './context';
 import { ExceptionFilter } from './filters';
 import { AuthJwtGuard, PermissionGuard } from './guards';
-import { LogInterceptor, ValidationInterceptor } from './interceptors';
+import {
+  LogInterceptor,
+  TimeoutInterceptor,
+  ValidationInterceptor,
+} from './interceptors';
+import { RequestDeadlineMiddleware } from './middleware';
 
 @Module({
   imports: [
     ContextModule,
+    ConfigModule,
     LoggerModule,
     /**
      * Registered here (it is a global module exporting `SchedulerRegistry`)
@@ -98,6 +105,11 @@ import { LogInterceptor, ValidationInterceptor } from './interceptors';
     DomainPushModule,
     DomainQuickFilterModule,
     ScrapeModule,
+    /**
+     * Last in the list on purpose: the heartbeat reads the data source and
+     * the cache, so it is armed once everything it observes exists.
+     */
+    WatchdogModule,
   ],
   providers: [
     {
@@ -107,6 +119,15 @@ import { LogInterceptor, ValidationInterceptor } from './interceptors';
     {
       provide: APP_GUARD,
       useClass: PermissionGuard,
+    },
+    /**
+     * Interceptor order is execution order, and the request budget has to
+     * wrap everything it is meant to bound — including logging and outgoing
+     * validation — so it is registered first.
+     */
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: TimeoutInterceptor,
     },
     {
       provide: APP_INTERCEPTOR,
@@ -132,7 +153,16 @@ import { LogInterceptor, ValidationInterceptor } from './interceptors';
   ],
 })
 export class AppModule implements NestModule {
+  /**
+   * The deadline is applied before the context middleware, and therefore
+   * before every guard: it is the only hook that runs early enough to bound a
+   * request that stalls in one.
+   *
+   * @param consumer - The middleware consumer to register on.
+   */
   public configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(ClsMiddleware).forRoutes('*');
+    consumer
+      .apply(RequestDeadlineMiddleware, ClsMiddleware)
+      .forRoutes('*');
   }
 }

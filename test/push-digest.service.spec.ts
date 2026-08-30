@@ -46,7 +46,7 @@ function makeService(options?: {
   service: PushDigestService;
   core: Record<string, jest.Mock>;
   webPush: { enabled: boolean; send: jest.Mock };
-  } {
+} {
   const outcomes = [...options?.outcomes ?? []];
 
   const core = {

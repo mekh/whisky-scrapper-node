@@ -117,7 +117,8 @@ be/
     │   ├── context/         # request context (nestjs-cls): ClsService, ContextManager
     │   ├── filters/         # global exception filter
     │   ├── guards/          # AuthJwtGuard, PermissionGuard
-    │   └── interceptors/    # LogInterceptor, ValidationInterceptor (outgoing)
+    │   ├── interceptors/    # TimeoutInterceptor, LogInterceptor, ValidationInterceptor
+    │   └── middleware/      # RequestDeadlineMiddleware (runs before the guards)
     ├── config/              # env-driven config classes
     │   ├── base.config.ts   # BaseConfig: asString/asNumber/asBoolean/asEnum/asArray + self-validation
     │   ├── parts/           # one class per concern: app, db, jwt-access, logger, validation
@@ -146,7 +147,8 @@ be/
     ├── interfaces/          # ALL shared interfaces/types (~types): *.interfaces.ts
     ├── lib/                 # thin wrappers around external infra packages
     │   ├── logger/          # wraps @toxicoder/nestjs-pino (redaction, msg formatting)
-    │   ├── valkey/          # wraps @toxicoder/nestjs-valkey
+    │   ├── valkey/          # wraps @toxicoder/nestjs-valkey (timeouts live here)
+    │   ├── watchdog/        # runtime heartbeat: loop lag, memory, pool, cache RTT
     │   └── web-push/        # wraps the web-push package (VAPID, outcome mapping)
     └── utils/               # pure stateless helpers (*.util.ts), e.g. Hash (argon2)
 ```
@@ -1651,6 +1653,85 @@ new secret-bearing paths in that redact list. Levels in practice: `error` for
 unexpected failures, `debug` for request-level info, `verbose` for payload
 dumps.
 
+## Resilience and observability (2026-08-30)
+
+Added after a 68-minute production outage in which the API accepted
+connections and answered none of them, while writing **nothing at all** to the
+log. Both halves of that sentence are the design brief: bound every wait, and
+make sure a stall says so.
+
+### What the outage taught
+
+Requests were stalling in `AuthJwtGuard`. Nest runs guards **before** every
+interceptor, so `LogInterceptor` never ran: there was no "incoming request"
+line, no error, no trace. The database went idle (PostgreSQL skipped its
+five-minute checkpoints for 52 minutes) because no request ever reached it.
+The only surviving evidence was outside the application — nginx's `while
+reading response header from upstream`, and Valkey's own save timestamps,
+which bracketed the window to the second.
+
+Two rules follow, and new code is expected to keep them:
+
+- **Every wait on anything external is bounded.** A default of "wait forever"
+  is not a neutral default; it converts any dependency's bad minute into an
+  unbounded outage of everything.
+- **Anything on the request path ahead of `LogInterceptor` logs its own
+  steps.** Nothing else will.
+
+### Timeouts
+
+| Layer    | Setting                             | Default | What it stops                          |
+| -------- | ----------------------------------- | ------- | -------------------------------------- |
+| Valkey   | `VALKEY_COMMAND_TIMEOUT_MS`         | 2000    | A session lookup that never returns    |
+| Valkey   | `VALKEY_KEEP_ALIVE_MS`              | 10000   | A socket whose peer vanished silently  |
+| Valkey   | `VALKEY_OFFLINE_QUEUE`              | `false` | Commands piling up while disconnected  |
+| Postgres | `DB_ACQUIRE_TIMEOUT_MS`             | 5000    | Queueing forever for a drained pool    |
+| Postgres | `DB_STATEMENT_TIMEOUT_MS`           | 60000   | A statement that never finishes        |
+| Postgres | `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS` | 120000  | An abandoned transaction holding locks |
+| HTTP     | `APP_REQUEST_TIMEOUT_MS`            | 30000   | A handler chain that overruns → `503`  |
+| HTTP     | `APP_REQUEST_DEADLINE_MS`           | 45000   | A request stalled **in a guard**       |
+| HTTP     | `APP_KEEP_ALIVE_TIMEOUT_MS`         | 72000   | Racing the proxy's pool into `502`s    |
+
+`TimeoutInterceptor` is registered **first** among the global interceptors so
+its clock covers logging, validation and serialization. It cannot cover
+guards, which is why `RequestDeadlineMiddleware` exists: middleware is the
+earliest hook Nest offers, and it arms a deadline on the request's own socket
+(lifted on `finish`, so idle keep-alive connections are never reaped — reaping
+those is what turns a proxy's pooled connection into a spurious `502`).
+
+`DbConfig.extra` is a **field, not a getter**: the config object is spread into
+the TypeORM options and a spread copies own properties only.
+
+### The heartbeat (`lib/watchdog`)
+
+One line every `WATCHDOG_INTERVAL_MS` (10 s, on by default):
+
+```
+heartbeat: loop lag 0.9/1.6 ms (mean/max), rss 216 MB, heap 97 MB,
+handles 4, db pool 1 open/1 idle/0 waiting, valkey 2 ms
+```
+
+Logged at `debug`, promoted to `warn` when the loop lags past
+`WATCHDOG_LAG_WARN_MS`, when anyone is queued for a connection, or when the
+Valkey ping does not answer within `WATCHDOG_PING_TIMEOUT_MS`. **A heartbeat
+that stops is itself a diagnosis** — it means the event loop is gone.
+
+Two details that are load-bearing:
+
+- The ping is raced against its own deadline. The watchdog never trusts the
+  client it is watching to come back.
+- `monitorEventLoopDelay` records the whole sampling interval, so an idle loop
+  reads back as the resolution; the resolution is subtracted before reporting.
+  Without that every heartbeat would claim ~20 ms of lag that is not there.
+
+### Tracing the auth path
+
+`AuthSessionService.track()` logs **before** each cache command, not only
+after. A command that never returns produces no completion line and no error,
+so the line proving it was ever sent has to be written first — that is exactly
+what was missing on 2026-08-30. `AuthJwtGuard` and `AuthService.authenticate`
+trace each step with elapsed times at `verbose`.
+
 ## Code style essentials
 
 Enforced by ESLint (strict + stylistic type-checked) and dprint:
@@ -1752,9 +1833,9 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 | `POST /product/review/apply` — re-resolve the whole catalogue against the knowledge base and write what it implies (producers, country/type, flavour links), answering `200` with what was written. **This is the other half of every review decision**: promoting a producer stores a claim and changes nothing a filter reads until this runs, and a store sync applies it only to the bottlings that run touched. Shares `KbReconcileService` verbatim with `pnpm reconcile-flavors`; idempotent, so a second call reports zeros                                                                                                                                                                                                                                              | `product:review`                             |
 | `POST /product/review/conflicts/resolve` `{productId, storeId, attribute}` — mark one settled, `204`. Records a decision, not a correction; the scrape un-resolves it if the claim arrives again                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `product:review`                             |
 | `GET /producer/unresolved?limit=` — brand keys nothing resolves, derived rather than stored                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `producer:read`                              |
-| `GET /producer/:id/products` — the display names behind one producer row, **grouped by name** and alphabetical: for a live (`verified`/`auto`) producer, everything that resolves to it today in either slot (made by it or bottled by it — the bottler slot matters because a bottler's `productCount` is structurally 0); for a withheld one, the what-if list its `potentialReach` came from, so the counts always sum to the number the queue ranked by. Each row is `{name, productCount, inStock}` — `name` falls back to the longest raw store name, `productCount` is how many bottlings share it (volumes, ages, boxes), and `inStock` is true when any of them is stocked anywhere | `producer:read` |
-| `POST /producer/:id/rule` — create one producer-scoped name-pattern rule **and apply it** (the catalogue is re-resolved in the same request; answers the reconcile summary). Body: `{pattern, matchMode?, priority?}` plus exactly one claim — `peatProfile` (never `unknown`) or `flavorName`+`effect` (`require`/`forbid`, never `baseline` — that belongs to the house style). The pattern is normalized via `KbKeyUtils.key`; an unknown flavour is 400, a duplicate `(producer, pattern, flavor)` is 409. Global rules cannot be created here — they stay migration-authored | `producer:update` |
-| `DELETE /producer/:id/rule/:ruleId` — delete one of the producer's own rules **and apply the removal** (answers the reconcile summary). Scoped to the producer, so a global rule is unreachable by construction; a foreign or unknown rule id is 404 | `producer:update` |
+| `GET /producer/:id/products` — the display names behind one producer row, **grouped by name** and alphabetical: for a live (`verified`/`auto`) producer, everything that resolves to it today in either slot (made by it or bottled by it — the bottler slot matters because a bottler's `productCount` is structurally 0); for a withheld one, the what-if list its `potentialReach` came from, so the counts always sum to the number the queue ranked by. Each row is `{name, productCount, inStock}` — `name` falls back to the longest raw store name, `productCount` is how many bottlings share it (volumes, ages, boxes), and `inStock` is true when any of them is stocked anywhere                                                                                     | `producer:read`                              |
+| `POST /producer/:id/rule` — create one producer-scoped name-pattern rule **and apply it** (the catalogue is re-resolved in the same request; answers the reconcile summary). Body: `{pattern, matchMode?, priority?}` plus exactly one claim — `peatProfile` (never `unknown`) or `flavorName`+`effect` (`require`/`forbid`, never `baseline` — that belongs to the house style). The pattern is normalized via `KbKeyUtils.key`; an unknown flavour is 400, a duplicate `(producer, pattern, flavor)` is 409. Global rules cannot be created here — they stay migration-authored                                                                                                                                                                                                | `producer:update`                            |
+| `DELETE /producer/:id/rule/:ruleId` — delete one of the producer's own rules **and apply the removal** (answers the reconcile summary). Scoped to the producer, so a global rule is unreachable by construction; a foreign or unknown rule id is 404                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `producer:update`                            |
 | `GET /producer/:id` — one producer plus the things that override its facts: its child lines (`parentId`), its own name-pattern rules, and the global peat rules as read-only context. A peat band cannot be judged without them                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `producer:read`                              |
 | `PATCH /producer/:id` — edit a producer **and apply it**: the catalogue is re-resolved in the same request and the response is `{producer, applied}`, where `applied` is what the pass wrote. Storing the decision alone changes nothing a filter reads, so the two are one action; the pass costs ~200 ms, is idempotent and never touches a `manual` value. Nullable fields come in pairs (value + a `clear*` flag) so a reviewer fixing one field cannot silently wipe another, and `status` carries the verdict: `verified` promotes the row, `rejected` rules it out as not a whisky producer, `unverified` puts it back in the queue                                                                                                                                       | `producer:update`                            |
 

@@ -22,3 +22,5 @@ export * from './store.interfaces';
 export * from './sync.interfaces';
 export * from './type.interfaces';
 export * from './user.interfaces';
+export * from './valkey.interfaces';
+export * from './watchdog.interfaces';

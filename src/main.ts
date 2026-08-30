@@ -19,9 +19,19 @@ initializeTransactionalContext();
 const run = async (): Promise<void> => {
   const config = new AppConfig();
 
+  /**
+   * `keepAliveTimeout` is deliberately longer than the reverse proxy's own
+   * keep-alive: whoever closes a pooled connection first wins the race, and
+   * when it is this server the proxy discovers the closed socket by failing
+   * the next request on it with a `502`.
+   *
+   * The per-request deadline is NOT set here — a server-wide socket timeout
+   * would also reap idle keep-alive connections. It is applied per in-flight
+   * request by `RequestDeadlineMiddleware` instead.
+   */
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter(),
+    new FastifyAdapter({ keepAliveTimeout: config.keepAliveTimeoutMs }),
     { bufferLogs: true },
   );
 

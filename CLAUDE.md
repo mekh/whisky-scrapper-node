@@ -497,6 +497,8 @@ entity/repository/service/module shape:
   component of a bottling's identity, frozen at creation, so a sweep can no
   longer change it. Run it on production _before_ the split migration, or a
   wrong age becomes a manual merge (`CURATION.md`).
+  **The age reader and the name stripper are one vocabulary, and drift between them merges whiskies.** `ProductNameUtils` deletes the age token from the display name; `extractAgeYears` lifts it into `product.age` and into the match key. A spelling only one of them knows is the worst case of all: the age disappears from the name **and** is recorded nowhere, so `ProductMatchUtils.key` signs the bottling `|a0` and every age of that expression collapses onto one row. That is exactly what the Cyrillic transliteration `уо` did — Rozetka and MauDau spell it that way, and the 12, 15, 18 and 30 year old Dalmore became one bottling the catalogue served as `Dalmore 12yo 43% 0,7л`, the 30 year old among them at nearly half a million hryvnia. The same asymmetry hid an age typed with a look-alike letter of the other alphabet (`Chivas Regal 12 рокiв` with a Latin `i`), which the stripper folds before matching and the reader did not, so `extractAgeYears` now reads from `ProductNameUtils.foldScripts(text)` too. Adding an age spelling to either file means adding it to both; `test/scrape/normalize.spec.ts` pins the two Dalmore cases and the guards that must survive a wider pattern (a vintage `2013 рік` is not an age, nor is the number in `Vat 69`).
+  **Fixing the reader does not fix the stored keys** — nothing on the scrape path re-keys an offer once its SKU is known — which is what the `age-regroup-cyrillic-yo` migration is for; see the migration list below.
   **`volumeMl` is the sum of a gift set's bottles.** `extractVolumeMl` used to
   take the first match in the name, so a set of three 0.7 л bottles was stored
   as 0.7 л — and because the report compares by volume, a three-bottle price
@@ -867,6 +869,50 @@ meaningless without it), `kb-schema` (`producer`, `producer_alias`,
 `product-fact-conflict` (the QA log) — all
 applied, formatted per the `typeorm-migration-format` skill, and drift-free
 against the entities.
+
+After them, `age-regroup-cyrillic-yo` (2026-09-01) repairs the bottlings the
+Cyrillic `уо` merged: the reader is fixed, but a match key is frozen at
+creation and nothing on the scrape path re-keys a known SKU, so the stored
+links had to be corrected on their own. It **works out what to do from the
+data it finds** rather than from a shipped list of ids — production's
+catalogue is not any other catalogue — and it asks `NormalizeService` for the
+age instead of re-implementing its patterns, so the repair is by construction
+what the fixed engine now derives. Three cases, and the boundary between them
+is the whole design:
+
+- **Split** — the group's offers state two or more ages, so the row is
+  provably several whiskies. Each age-stating offer moves to the bottling
+  carrying its age (created from the mixed row's own facts when absent);
+  offers stating no age stay behind, because nothing can tell which age such
+  a listing sells. The emptied source also gives up the age it inherited from
+  the merge, or a plain `Dalmore` listed tomorrow would join it and be served
+  as a 12 year old all over again.
+- **Merge** — the group agrees on one age and a bottling with that exact key
+  already exists: one whisky recorded twice because one shop spelled the age
+  in a way the reader understood and another did not. The whole group moves
+  onto it, flavour links copied (`ON CONFLICT DO NOTHING` — a tag is evidence
+  *for* a flavour, never against one) and favourites/blacklist entries
+  following the offers.
+- **Fact only** — the group agrees on one age, no such bottling exists, so the
+  age is stored as a `name`-sourced fact and **the key is left alone**.
+  Re-keying here would be a downgrade, not a fix: these are one shop stating
+  an age seven others omit, so signing the row with it would push every silent
+  listing off the bottling at the next sync and break the cross-store
+  comparison the catalogue exists for. It is the one place where
+  `product.age` and the key's `|aN` deliberately disagree; nothing reads the
+  key after creation, so the divergence is inert.
+
+**No `product` row is ever deleted** — a bottling no store lists is a shape
+`/preference/details` already renders and removes, and deleting instead would
+mean guessing which of a split's four targets a person's favourite meant. The
+pass asserts its own invariant before committing (no bottling left holding
+offers that state conflicting ages) and the run is one transaction, so a
+failure rolls all of it back; it is idempotent, and `down()` is a documented
+no-op because undoing it would re-merge whiskies that are genuinely different.
+Measured on a production-shaped copy: 2 splits (Dalmore 12/15/18/30, West Cork
+Bourbon Cask 3/5), 6 merges, 19 ages filled in, 27 offers re-linked (10 by
+split, 17 by merge), 1 bottling created, 7 rows left with no offers; snapshot
+and offer counts unchanged.
 
 **`flavor-llm-import` ships its data as a CSV beside the migration.** Flavors
 were classified per **distinct `product.name`**, not per product row: the same

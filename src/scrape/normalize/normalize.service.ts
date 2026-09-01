@@ -32,13 +32,22 @@ const VOLUME_L = new RegExp(
 // ABV: "40%", "43 %", "alc 46%".
 const ABV = /(\d{1,2}(?:[.,]\d)?)\s*%/g;
 
-// Age: "12 yo", "12 y.o.", "12 років", "aged 15 years", the Russian "11 лет"
-// a few listings use. Reading the number whole (\d{1,3}) keeps "250 років"
-// from being read as "50". Kept in step with `AGE_WORDS` in
-// `utils/product-name.util.ts`, which deletes the same token from the name.
+// Age: "12 yo", "12 y.o.", "12 уо", "12 років", "aged 15 years", the Russian
+// "11 лет" a few listings use. Reading the number whole (\d{1,3}) keeps
+// "250 років" from being read as "50".
+//
+// Kept in step with `AGE_YO`, `AGE_YO_CYRILLIC` and `AGE_WORDS` in
+// `utils/product-name.util.ts`, which delete the same tokens from the display
+// name -- and the pairing is load-bearing, not tidiness. A token this pattern
+// misses but the stripper deletes is an age that vanishes from the name
+// *and* never reaches `product.age`, so `ProductMatchUtils.key` signs the
+// bottling `|a0` and every age of that expression collapses onto one row.
+// The Cyrillic transliteration `уо` is exactly how that happened: Rozetka and
+// MauDau spell it that way, so "Dalmore 12уо", "15уо", "18уо" and "30 уо"
+// were one product listed as a 12-year-old.
 const AGE = new RegExp(
   '(?<!\\d)(\\d{1,3})\\s*'
-    + '(?:y\\.?o\\.?|yo|years?|років|роки|рік|year|лет|года|год)'
+    + '(?:y\\.?o\\.?|yo|уо|years?|років|роки|рік|year|лет|года|год)'
     + NOT_LETTER,
   'i',
 );
@@ -193,7 +202,16 @@ export class NormalizeService {
    * @returns The age in years, or null when none is found.
    */
   public extractAgeYears(text: string): number | null {
-    const age = AGE.exec(text);
+    /**
+     * Read from the folded text, the same view `ProductNameUtils` strips
+     * from. Several stores type a word with a stray look-alike letter of the
+     * other alphabet — `Вiскi Chivas Regal 12 рокiв` carries a Latin `i`
+     * inside a Cyrillic word -- and the raw string then matches the stripper
+     * (which folds first) but not this pattern, so the age is deleted from
+     * the name and recorded nowhere.
+     */
+    const folded = ProductNameUtils.foldScripts(text);
+    const age = AGE.exec(folded);
 
     if (age) {
       const value = Number.parseInt(age[1], 10);
@@ -203,7 +221,7 @@ export class NormalizeService {
       }
     }
 
-    const vytr = AGE_VYTR.exec(text);
+    const vytr = AGE_VYTR.exec(folded);
 
     if (vytr) {
       const value = Number.parseInt(vytr[1], 10);

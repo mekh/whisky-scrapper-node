@@ -120,6 +120,41 @@ describe('NormalizeService.extractAgeYears', () => {
     expect(n.extractAgeYears('Hart Brothers Dalmore 11 лет')).toBe(11);
     expect(n.extractAgeYears('Miltonduff Vintage 1990 21 год')).toBe(21);
   });
+
+  /**
+   * The spelling that collapsed a whole expression onto one bottling.
+   *
+   * `ProductNameUtils` deletes `12уо` from the display name, so before this
+   * pattern matched it the age was erased from the name and recorded nowhere:
+   * the key came out `dalmore|v700|a0` for the 12, 15, 18 and 30 year old
+   * alike, and all four were served as `Dalmore 12yo`.
+   */
+  it('reads the Cyrillic transliteration of "yo"', () => {
+    expect(n.extractAgeYears('Віскі Dalmore 12уо 0.7 л 40%')).toBe(12);
+    expect(n.extractAgeYears('Віскі The Dalmore 30 уо 43.8% 0.7 л')).toBe(30);
+    expect(n.extractAgeYears('Віскі Arran 10УО 0.05 л 46%')).toBe(10);
+    expect(n.extractAgeYears('Віскі West Cork Bourbon Cask 3 уо')).toBe(3);
+  });
+
+  /**
+   * The stripper folds a stray look-alike letter before it matches, so the
+   * reader has to as well or the age is deleted from the name and stored
+   * nowhere.
+   */
+  it('reads through a look-alike letter of the other alphabet', () => {
+    expect(n.extractAgeYears('Вiскi Chivas Regal 12 рокiв')).toBe(12);
+    expect(n.extractAgeYears('Вiскi «Хайленд Парк» 18 рокiв')).toBe(18);
+  });
+
+  /**
+   * The guards the wider pattern must not cost: a vintage is not an age, and
+   * a number that merely precedes a word is not one either.
+   */
+  it('still refuses a vintage and a bare number', () => {
+    expect(n.extractAgeYears('Islay Barley Bruichladdich 2013 рік')).toBeNull();
+    expect(n.extractAgeYears('Віскі Vat 69 1л')).toBeNull();
+    expect(n.extractAgeYears('Wild Turkey 101 Proof 0.7 л')).toBeNull();
+  });
 });
 
 describe('NormalizeService.normalize age handling', () => {
@@ -143,6 +178,41 @@ describe('NormalizeService.normalize age handling', () => {
     const aged = n.normalize(snap('Віскі Aberfeldy 12 років 40% 0,7л'));
 
     expect(aged.ageYears).toBe(12);
+  });
+});
+
+describe('NormalizeService.matchKey', () => {
+  /**
+   * The end-to-end shape of the reported defect: with the Cyrillic `уо`
+   * unread, every Dalmore in a 0.7 l bottle signed `dalmore|v700|a0`, so one
+   * `product` row carried the 12, 15, 18 and 30 year old and the catalogue
+   * showed the half-million-hryvnia 30 as `Dalmore 12yo 43% 0,7л`.
+   */
+  it('gives each age of one expression its own key', () => {
+    const keys = [
+      'Віскі Dalmore 12уо 0.7 л 40% у подарунковій коробці',
+      'Віскі Dalmore 15уо 0.7 л 40% у подарунковій коробці',
+      'Віскі Dalmore 18уо 0.7 л 43% у подарунковій коробці',
+      'Віскі Dalmore 30уо 0.7 л 43.8% у подарунковій коробці',
+    ].map((name) => n.matchKey(snap(name, { brand: 'Dalmore' })));
+
+    expect(keys).toEqual([
+      'dalmore|v700|a12',
+      'dalmore|v700|a15',
+      'dalmore|v700|a18',
+      'dalmore|v700|a30',
+    ]);
+  });
+
+  it('keeps two stores spelling one age on the same key', () => {
+    const latin = n.matchKey(
+      snap('Віскі Dalmore 18 yo 0.7 л 43%', { brand: 'Dalmore' }),
+    );
+    const cyrillic = n.matchKey(
+      snap('Віскі Dalmore 18уо 0.7 л 43%', { brand: 'Dalmore' }),
+    );
+
+    expect(cyrillic).toBe(latin);
   });
 });
 

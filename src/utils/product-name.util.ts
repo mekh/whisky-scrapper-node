@@ -841,10 +841,16 @@ export class ProductNameUtils {
    * look-alike, so `ВіскіOld` — a missing space, not a typo — is left for the
    * prefix rule to split.
    *
+   * Public because the spec readers in `NormalizeService` must see the same
+   * text this class strips from: they run on the raw scraped name, so a
+   * `рокiв` typed with a Latin `i` reads as an age here and as nothing there,
+   * and the age then disappears from the name without ever reaching
+   * `product.age`.
+   *
    * @param text - The text to fold.
    * @returns The text with each word in a single script.
    */
-  private static foldScripts(text: string): string {
+  public static foldScripts(text: string): string {
     return text.replace(WORD, (word) => {
       const letters = [...word];
       const latin = letters.filter((ch) => LATIN_LETTER.test(ch)).length;

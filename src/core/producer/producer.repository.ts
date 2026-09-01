@@ -14,6 +14,7 @@ import {
   ProducerRuleInput,
   ProducerRuleRow,
   ResearchedProducer,
+  TypeBrand,
   UnresearchedBrandRow,
   UnresolvedBrandRow,
 } from '~types';
@@ -22,6 +23,28 @@ import { ProducerEntity } from './producer.entity';
 
 import type { ProducerReviewPatch } from './producer-review.interfaces';
 import type { KbAliasRow, KbFlavorRuleRow } from './producer.interfaces';
+
+/**
+ * Autocomplete over producer names, reached through every spelling the
+ * catalogue has ever used.
+ *
+ * Grouped rather than `DISTINCT` because a producer usually carries several
+ * aliases and the picker wants one row per maker — and because `DISTINCT`
+ * cannot order by an expression it does not select, which the prefix ranking
+ * needs. That ranking is the one the brand autocomplete used before — prefix
+ * matches first, then the shortest name — so `glen` still offers `Glen Grant`
+ * above `Glenmorangie`.
+ */
+const SEARCH_SQL = `
+  SELECT p.name
+  FROM producer p
+  LEFT JOIN producer_alias a ON a."producerId" = p.id
+  WHERE p.status IN ('verified', 'auto')
+    AND (p.name ILIKE '%' || $1 || '%' OR a.key ILIKE '%' || $1 || '%')
+  GROUP BY p.name
+  ORDER BY (p.name ILIKE $1 || '%') DESC, length(p.name), p.name
+  LIMIT $2
+`;
 
 /**
  * Loads the alias match index, each alias carrying its producer's facts.
@@ -575,6 +598,65 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
   }
 
   /**
+   * Autocomplete over producer names, matched through their aliases.
+   *
+   * The alias join is what the blacklist picker gains from the retirement of
+   * the `brand` table: typing `isle of jura` now offers `Jura`, and `m&h`
+   * offers `M&H`, because every spelling the catalogue ever carried is a row
+   * of `producer_alias`. Only the live statuses are offered — a `rejected`
+   * producer is not a whisky maker, and an `unverified` one is withheld from
+   * the resolver, so hiding it would hide nothing.
+   *
+   * No stock filter, matching the read this replaces: a rule legitimately
+   * outlives the stock it was written against.
+   *
+   * @param term - The substring to look for; the caller enforces the minimum
+   *   length.
+   * @param limit - Rows to return at most.
+   * @returns Distinct producer names, prefix matches first, then shortest.
+   */
+  public async searchByName(
+    term: string,
+    limit: number,
+  ): Promise<TypeBrand[]> {
+    return this.query(SEARCH_SQL, [term, limit]) as Promise<TypeBrand[]>;
+  }
+
+  /**
+   * Resolves producer names to ids, creating nothing.
+   *
+   * The find-only counterpart a request path needs: a name nobody curated is
+   * a bad request, never a row to coin. Matching is case-insensitive on the
+   * producer's own name — an alias resolves a *scrape*, but a person picking
+   * from `searchByName` has been handed canonical names, so accepting an
+   * alias here would let two spellings of one rule exist again.
+   *
+   * @param names - Producer names; blanks and duplicates are ignored.
+   * @returns Map from each matched name to its id; unknown names are absent.
+   */
+  public async findIdsByName(names: string[]): Promise<Map<string, ID>> {
+    const keys = [
+      ...new Set(
+        names
+          .map((name) => name.trim())
+          .filter((name) => name.length > 0),
+      ),
+    ];
+
+    if (!keys.length) {
+      return new Map();
+    }
+
+    const rows = await this.query(
+      `SELECT p.id, p.name FROM producer p
+       WHERE lower(p.name) = ANY($1::text[])`,
+      [keys.map((name) => name.toLowerCase())],
+    ) as { id: ID; name: string }[];
+
+    return new Map(rows.map((row) => [row.name, row.id]));
+  }
+
+  /**
    * Counts producers by review status.
    *
    * @returns One entry per status present.
@@ -601,11 +683,10 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
     limit = 100,
   ): Promise<UnresolvedBrandRow[]> {
     return this.query(
-      `SELECT b.name AS brand, count(*)::int AS "productCount"
+      `SELECT p."brandOrig" AS brand, count(*)::int AS "productCount"
        FROM product p
-       JOIN brand b ON b.id = p."brandId"
-       WHERE p."producerId" IS NULL
-       GROUP BY b.name
+       WHERE p."producerId" IS NULL AND p."brandOrig" IS NOT NULL
+       GROUP BY p."brandOrig"
        ORDER BY 2 DESC, 1
        LIMIT $1`,
       [limit],

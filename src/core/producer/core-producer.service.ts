@@ -13,9 +13,12 @@ import {
   ProducerReviewRow,
   ProducerRuleInput,
   ResearchedProducer,
+  TypeBrand,
   UnresearchedBrandRow,
   UnresolvedBrandRow,
 } from '~types';
+
+import { KbAliasUtils } from '~utils';
 
 import { ProducerEntity } from './producer.entity';
 import { ProducerRepository } from './producer.repository';
@@ -46,6 +49,11 @@ export class CoreProducerService extends CoreBaseService<ProducerEntity> {
    * concurrently and a review can change the knowledge base between runs, so a
    * cached index would resolve against facts someone had already corrected.
    *
+   * Every index this service hands out is passed through
+   * `KbAliasUtils.usable` first, so an alias that names a category rather
+   * than a producer can never reach a matcher — see the note there for the
+   * `& Whisky` case that motivated it.
+   *
    * @returns The alias index, the rules, the house-style statements and the
    *   two peat tag ids.
    */
@@ -57,7 +65,12 @@ export class CoreProducerService extends CoreBaseService<ProducerEntity> {
       this.repo.findPeatFlavorIds(KB_PEAT_TAGS.peated, KB_PEAT_TAGS.smoky),
     ]);
 
-    return { aliases, rules, producerFlavors, peatFlavorIds };
+    return {
+      aliases: KbAliasUtils.usable(aliases),
+      rules,
+      producerFlavors,
+      peatFlavorIds,
+    };
   }
 
   /**
@@ -67,7 +80,9 @@ export class CoreProducerService extends CoreBaseService<ProducerEntity> {
    * @returns Alias entries, longest key first.
    */
   public async loadAliasIndex(): Promise<KbAliasEntry[]> {
-    return this.repo.findAliasIndex();
+    const aliases = await this.repo.findAliasIndex();
+
+    return KbAliasUtils.usable(aliases);
   }
 
   /**
@@ -238,7 +253,33 @@ export class CoreProducerService extends CoreBaseService<ProducerEntity> {
    * @returns Alias entries whose producers are `unverified`.
    */
   public async loadWithheldAliasIndex(): Promise<KbAliasEntry[]> {
-    return this.repo.findWithheldAliasIndex();
+    const aliases = await this.repo.findWithheldAliasIndex();
+
+    return KbAliasUtils.usable(aliases);
+  }
+
+  /**
+   * Autocomplete over producer names, matched through their aliases.
+   *
+   * @param term - The substring to look for.
+   * @param limit - Rows to return at most.
+   * @returns Matching producer names, best matches first.
+   */
+  public async searchByName(
+    term: string,
+    limit: number,
+  ): Promise<TypeBrand[]> {
+    return this.repo.searchByName(term, limit);
+  }
+
+  /**
+   * Resolves producer names to ids without creating the missing ones.
+   *
+   * @param names - Producer names; blanks and duplicates are ignored.
+   * @returns Map from each matched name to its id; unknown names are absent.
+   */
+  public async findIdsByName(names: string[]): Promise<Map<string, ID>> {
+    return this.repo.findIdsByName(names);
   }
 
   /**

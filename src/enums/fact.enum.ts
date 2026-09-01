@@ -100,11 +100,6 @@ export enum ProductFactField {
    */
   COUNTRY = 'country',
   /**
-   * Brand FK. Deliberately **not** knowledge-base-owned: the brand is a
-   * display and grouping label and a component of the frozen match key.
-   */
-  BRAND = 'brand',
-  /**
    * Alcohol by volume. Physical, per-bottling, so the knowledge base does not
    * curate it — it gets provenance and cross-store conflict logging instead.
    */

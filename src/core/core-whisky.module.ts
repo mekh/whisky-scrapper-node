@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 
-import { CoreBrandModule } from './brand';
 import { CoreCountryModule } from './country';
 import { CoreFlavorModule } from './flavor';
 import { CorePreferenceModule } from './preference';
@@ -22,7 +21,6 @@ import { CoreTypeModule } from './type';
  */
 @Module({
   imports: [
-    CoreBrandModule,
     CoreCountryModule,
     CoreFlavorModule,
     CorePreferenceModule,
@@ -38,7 +36,6 @@ import { CoreTypeModule } from './type';
     CoreTypeModule,
   ],
   exports: [
-    CoreBrandModule,
     CoreCountryModule,
     CoreFlavorModule,
     CorePreferenceModule,

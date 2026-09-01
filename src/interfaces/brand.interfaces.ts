@@ -5,8 +5,8 @@
  */
 export interface TypeBrand {
   /**
-   * Canonical brand name as `brand.name` holds it — the exact form the
-   * blacklist API accepts.
+   * Canonical name as `producer.name` holds it — the exact form the blacklist
+   * API accepts, and the same string `/report` prints as a row's `brand`.
    */
   name: string;
 }

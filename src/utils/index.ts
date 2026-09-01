@@ -5,6 +5,7 @@ export { DashboardMetricsUtils } from './dashboard-metrics.util';
 export { DurationUtils } from './duration.util';
 export { ErrorUtils } from './error.util';
 export { Hash } from './hash.util';
+export { KbAliasUtils } from './kb-alias.util';
 export { KbGateUtils } from './kb-gate.util';
 export { KbKeyUtils } from './kb-key.util';
 export { ProductMatchUtils } from './product-match.util';

@@ -25,7 +25,7 @@ const LIMIT = 40;
  * What a value has to look like before it is cast to a uuid.
  *
  * `storedValue` and `claimedValue` are text because they hold a foreign key
- * for `brand`, `type` and `country` and a number for `abv`. Casting inside a
+ * for `type` and `country` and a number for `abv`. Casting inside a
  * `CASE` guarded by this pattern is what keeps the ABV rows from aborting the
  * whole query — Postgres is free to evaluate a cast before the predicate that
  * was meant to exclude it, so the guard has to be on the value, not on the
@@ -145,15 +145,13 @@ async function reportQueue(
      SELECT q.attribute, st.slug AS store, q."seenCount" AS seen,
             q."storedSource" AS "storedSource",
             COALESCE(p.name, '(unnamed)') AS product,
-            COALESCE(sb.name, sty.name, sc.code, q."storedValue") AS stored,
-            COALESCE(cb.name, cty.name, cc.code, q."claimedValue") AS claimed
+            COALESCE(sty.name, sc.code, q."storedValue") AS stored,
+            COALESCE(cty.name, cc.code, q."claimedValue") AS claimed
      FROM q
      JOIN store st ON st.id = q."storeId"
      JOIN product p ON p.id = q."productId"
-     LEFT JOIN brand sb ON sb.id = q."storedId"
      LEFT JOIN type sty ON sty.id = q."storedId"
      LEFT JOIN country sc ON sc.id = q."storedId"
-     LEFT JOIN brand cb ON cb.id = q."claimedId"
      LEFT JOIN type cty ON cty.id = q."claimedId"
      LEFT JOIN country cc ON cc.id = q."claimedId"
      WHERE ($1::text IS NULL OR q.attribute = $1)

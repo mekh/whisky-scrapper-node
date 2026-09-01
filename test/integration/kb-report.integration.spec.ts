@@ -306,7 +306,7 @@ async function seedBottlings(
       factSources: {},
       matchKey: `${TOKEN}-${label}`,
       name,
-      brandId: null,
+      brandOrig: null,
       typeId: null,
       countryId: null,
       age: null,

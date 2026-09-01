@@ -735,9 +735,10 @@ export interface ProductCanonicalInput {
   name: string | null;
 
   /**
-   * Resolved brand id, or null when the brand could not be determined.
+   * The brand string the shop stated, canonicalized, or null when it stated
+   * none. Recorded so an unresolved maker stays findable; never a label.
    */
-  brandId: ID | null;
+  brandOrig: string | null;
 
   /**
    * Resolved whisky-type id, or null.
@@ -792,11 +793,6 @@ export interface ProductFillInput {
   abv: number | null;
 
   /**
-   * Resolved brand id, or null to contribute nothing.
-   */
-  brandId: ID | null;
-
-  /**
    * Resolved whisky-type id, or null to contribute nothing.
    */
   typeId: ID | null;
@@ -807,15 +803,16 @@ export interface ProductFillInput {
   countryId: ID | null;
 
   /**
+   * The brand string the shop stated, or null. Fills the column when the
+   * bottling has none and is never allowed to replace a stored value.
+   */
+  brandOrig: string | null;
+
+  /**
    * Where this run's `abv` came from. Decides whether it may replace a stored
    * value rather than only fill a gap.
    */
   abvSource: FactSource;
-
-  /**
-   * Where this run's brand came from.
-   */
-  brandSource: FactSource;
 
   /**
    * Where this run's whisky type came from.
@@ -937,9 +934,9 @@ export interface ProductStoreFieldsRow {
   volumeMl: number | null;
 
   /**
-   * Brand id, or null.
+   * The brand string the shop stated, or null.
    */
-  brandId: ID | null;
+  brandOrig: string | null;
 
   /**
    * Whisky-type id, or null.
@@ -1113,11 +1110,6 @@ export interface ProductStoredFactsRow {
   id: ID;
 
   /**
-   * Stored brand FK.
-   */
-  brandId: ID | null;
-
-  /**
    * Stored whisky type FK.
    */
   typeId: ID | null;
@@ -1131,11 +1123,6 @@ export interface ProductStoredFactsRow {
    * Stored strength.
    */
   abv: number | null;
-
-  /**
-   * Where the stored brand came from.
-   */
-  brandSource: FactSource | null;
 
   /**
    * Where the stored type came from.

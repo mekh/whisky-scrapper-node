@@ -20,7 +20,7 @@ import { PreferenceRepository } from './preference.repository';
  * side of the permission relation: registering the user without it leaves
  * `UserEntity#permissions` pointing at metadata that was never built.
  *
- * `BlacklistProductEntity` and `BlacklistBrandEntity` stay unregistered, as
+ * `BlacklistProductEntity` and `BlacklistProducerEntity` stay unregistered, as
  * `ProductFlavorEntity` does: raw SQL reaches them, and `typeorm.config.ts`
  * still feeds them to `migration:generate`.
  */

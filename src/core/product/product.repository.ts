@@ -55,14 +55,14 @@ import { ProductEntity } from './product.entity';
  */
 const FIND_OR_CREATE_SQL = `
   INSERT INTO product
-     ("matchKey", name, "brandId", "typeId", "countryId", age, abv, "volumeMl",
-      "nameSource", "brandSource", "typeSource", "countrySource",
+     ("matchKey", name, "brandOrig", "typeId", "countryId", age, abv,
+      "volumeMl", "nameSource", "typeSource", "countrySource",
       "ageSource", "abvSource", "volumeSource")
    SELECT * FROM unnest(
-     $1::text[], $2::text[], $3::uuid[], $4::uuid[], $5::uuid[],
+     $1::text[], $2::text[], $3::text[], $4::uuid[], $5::uuid[],
      $6::int[], $7::real[], $8::int[],
-     $9::text[], $10::text[], $11::text[], $12::text[],
-     $13::text[], $14::text[], $15::text[]
+     $9::text[], $10::text[], $11::text[],
+     $12::text[], $13::text[], $14::text[]
    )
    ON CONFLICT ("matchKey") DO UPDATE SET "matchKey" = EXCLUDED."matchKey"
    RETURNING id, "matchKey", (xmax = 0) AS "isNew"
@@ -155,12 +155,6 @@ const FILL_FIELDS = [
     src: 'v."abvSrc"',
   },
   {
-    column: 'brandId',
-    source: 'brandSource',
-    rank: 'v."brandRank"',
-    src: 'v."brandSrc"',
-  },
-  {
     column: 'typeId',
     source: 'typeSource',
     rank: 'v."typeRank"',
@@ -202,18 +196,20 @@ const FILL_MISSING_SQL = `
       fillAssignment(field.column, field.source, field.rank, field.src),
   ).join(',\n    ')
 },
+    "brandOrig" = COALESCE(p."brandOrig", v."brandOrig"),
     "updatedAt" = now()
   FROM unnest(
-    $1::uuid[], $2::real[], $3::uuid[], $4::uuid[], $5::uuid[],
-    $6::int[], $7::int[], $8::int[], $9::int[],
-    $10::text[], $11::text[], $12::text[], $13::text[]
+    $1::uuid[], $2::real[], $3::uuid[], $4::uuid[], $5::text[],
+    $6::int[], $7::int[], $8::int[],
+    $9::text[], $10::text[], $11::text[]
   ) AS v(
-    id, abv, "brandId", "typeId", "countryId",
-    "abvRank", "brandRank", "typeRank", "countryRank",
-    "abvSrc", "brandSrc", "typeSrc", "countrySrc"
+    id, abv, "typeId", "countryId", "brandOrig",
+    "abvRank", "typeRank", "countryRank",
+    "abvSrc", "typeSrc", "countrySrc"
   )
   WHERE p.id = v.id
-    AND (${
+    AND ((v."brandOrig" IS NOT NULL AND p."brandOrig" IS NULL)
+      OR ${
   FILL_FIELDS.map(
     (field) => `(${incomingWins(field.column, field.source, field.rank)})`,
   ).join('\n      OR ')
@@ -231,7 +227,7 @@ const FILL_MISSING_SQL = `
  * What a conflict value has to look like before it is cast to a uuid.
  *
  * `storedValue` and `claimedValue` are text because they hold a foreign key for
- * `brand`, `type` and `country` and a number for `abv`. The guard has to be on
+ * `type` and `country` and a number for `abv`. The guard has to be on
  * the value rather than on the attribute name: Postgres is free to evaluate a
  * cast before the predicate meant to exclude it, and one ABV row would
  * otherwise abort the whole query.
@@ -410,11 +406,13 @@ const APPLY_KB_FACTS_SQL = `
  * that.
  */
 const SEARCH_SQL = `
-  SELECT p.id AS "productId", p.name, o."nameOrig", b.name AS brand,
+  SELECT p.id AS "productId", p.name, o."nameOrig",
+         COALESCE(pr.name, bo.name) AS brand,
          p.age, p.abv::float8 AS abv, p."volumeMl",
          COALESCE(o."inStock", false) AS "inStock"
   FROM product p
-  LEFT JOIN brand b ON b.id = p."brandId"
+  LEFT JOIN producer pr ON pr.id = p."producerId"
+  LEFT JOIN producer bo ON bo.id = p."bottlerId"
   LEFT JOIN LATERAL (
     SELECT sp."nameOrig", sp."inStock"
     FROM store_product sp
@@ -542,7 +540,7 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
     const rows = await this.query(FIND_OR_CREATE_SQL, [
       inputs.map((input) => input.matchKey),
       inputs.map((input) => input.name),
-      inputs.map((input) => input.brandId),
+      inputs.map((input) => input.brandOrig),
       inputs.map((input) => input.typeId),
       inputs.map((input) => input.countryId),
       inputs.map((input) => input.age),
@@ -572,16 +570,16 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
 
     const rows = await this.query(
       `INSERT INTO product
-         ("matchKey", name, "brandId", "typeId", "countryId",
+         ("matchKey", name, "brandOrig", "typeId", "countryId",
           age, abv, "volumeMl",
-          "nameSource", "brandSource", "typeSource", "countrySource",
+          "nameSource", "typeSource", "countrySource",
           "ageSource", "abvSource", "volumeSource")
        VALUES (NULL, $1, $2, $3, $4, $5, $6, $7,
-               $8, $9, $10, $11, $12, $13, $14)
+               $8, $9, $10, $11, $12, $13)
        RETURNING id`,
       [
         input.name,
-        input.brandId,
+        input.brandOrig,
         input.typeId,
         input.countryId,
         input.age,
@@ -595,7 +593,8 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
   }
 
   /**
-   * Fills or corrects strength, brand, type and country on stored bottlings.
+   * Fills or corrects strength, type and country on stored bottlings, and
+   * fills `brandOrig` when the row has none.
    *
    * A gap is filled as it always was; what is new is that a better-trusted
    * source now replaces a worse-trusted one, so a store's spec page can
@@ -605,6 +604,11 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
    * Name, age and volume are deliberately not writable here: the name is the
    * catalogue's own decision, and age and volume are part of the identity, so
    * changing them would describe a different bottling.
+   *
+   * `brandOrig` is the one column here that is still plain fill-if-null. It
+   * carries no rank because it is not a curated fact — it is the string one
+   * shop happened to use, kept only so an unresearched maker stays findable —
+   * and the first shop to name a bottling is as good a witness as the tenth.
    *
    * @param inputs - One patch per canonical product; duplicates by id waste a
    *   row lock and should be merged by the caller.
@@ -618,15 +622,13 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
     const result = await this.query(FILL_MISSING_SQL, [
       inputs.map((input) => input.id),
       inputs.map((input) => input.abv),
-      inputs.map((input) => input.brandId),
       inputs.map((input) => input.typeId),
       inputs.map((input) => input.countryId),
+      inputs.map((input) => input.brandOrig),
       inputs.map((input) => FACT_SOURCE_RANK[input.abvSource]),
-      inputs.map((input) => FACT_SOURCE_RANK[input.brandSource]),
       inputs.map((input) => FACT_SOURCE_RANK[input.typeSource]),
       inputs.map((input) => FACT_SOURCE_RANK[input.countrySource]),
       inputs.map((input) => input.abvSource),
-      inputs.map((input) => input.brandSource),
       inputs.map((input) => input.typeSource),
       inputs.map((input) => input.countrySource),
     ]) as [unknown[], number];
@@ -792,8 +794,8 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
    * and the next real value would then be judged against it.
    *
    * @param inputs - The bottlings being inserted.
-   * @returns One array per provenance column: name, brand, type, country, age,
-   *   abv, volume.
+   * @returns One array per provenance column: name, type, country, age, abv,
+   *   volume.
    */
   private sourceColumns(
     inputs: ProductCanonicalInput[],
@@ -805,7 +807,6 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
       ) => unknown,
     ][] = [
       [ProductFactField.NAME, (input): unknown => input.name],
-      [ProductFactField.BRAND, (input): unknown => input.brandId],
       [ProductFactField.TYPE, (input): unknown => input.typeId],
       [ProductFactField.COUNTRY, (input): unknown => input.countryId],
       [ProductFactField.AGE, (input): unknown => input.age],
@@ -1037,7 +1038,7 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
   ): Promise<ProductStoreFieldsRow[]> {
     return this.query(
       `SELECT sp.sku, p.age, p.abv, p."volumeMl",
-              p."brandId", p."typeId", p."countryId"
+              p."typeId", p."countryId"
        FROM store_product sp
        JOIN product p ON p.id = sp."productId"
        WHERE sp."storeId" = $1`,
@@ -1061,8 +1062,8 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
     }
 
     return this.query(
-      `SELECT id, "brandId", "typeId", "countryId", abv,
-              "brandSource", "typeSource", "countrySource", "abvSource"
+      `SELECT id, "typeId", "countryId", abv,
+              "typeSource", "countrySource", "abvSource"
        FROM product WHERE id = ANY($1::uuid[])`,
       [ids],
     ) as Promise<ProductStoredFactsRow[]>;
@@ -1163,7 +1164,7 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
        )`;
 
     const rows = await this.query(
-      `SELECT p.id, p.name, b.name AS brand,
+      `SELECT p.id, p.name, COALESCE(pr.name, bo.name) AS brand,
               t.name AS type, p."typeSource",
               c.code AS "countryCode", c."nameUa" AS "countryName",
               c.icon AS "countryIcon", p."countrySource",
@@ -1175,10 +1176,10 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
                WHERE sp."productId" = p.id AND sp."inStock") AS "storeCount",
               (${STORE_LINKS_SQL}) AS stores
        FROM product p
-       LEFT JOIN brand b ON b.id = p."brandId"
        LEFT JOIN type t ON t.id = p."typeId"
        LEFT JOIN country c ON c.id = p."countryId"
        LEFT JOIN producer pr ON pr.id = p."producerId"
+       LEFT JOIN producer bo ON bo.id = p."bottlerId"
        WHERE (${where})${segment}
        ORDER BY (SELECT count(DISTINCT sp."storeId") FROM store_product sp
                  WHERE sp."productId" = p.id AND sp."inStock") DESC, p.id
@@ -1254,17 +1255,15 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
        SELECT q."productId", p.name AS "productName",
               q."storeId", st.slug AS "storeSlug",
               q.attribute, q."storedSource", q."seenCount", q."lastSeenAt",
-              COALESCE(sb.name, sty.name, sc.code, q."storedValue")
+              COALESCE(sty.name, sc.code, q."storedValue")
                 AS "storedValue",
-              COALESCE(cb.name, cty.name, cc.code, q."claimedValue")
+              COALESCE(cty.name, cc.code, q."claimedValue")
                 AS "claimedValue"
        FROM q
        JOIN store st ON st.id = q."storeId"
        JOIN product p ON p.id = q."productId"
-       LEFT JOIN brand sb ON sb.id = q."storedId"
        LEFT JOIN type sty ON sty.id = q."storedId"
        LEFT JOIN country sc ON sc.id = q."storedId"
-       LEFT JOIN brand cb ON cb.id = q."claimedId"
        LEFT JOIN type cty ON cty.id = q."claimedId"
        LEFT JOIN country cc ON cc.id = q."claimedId"
        WHERE ($1::text IS NULL OR q.attribute = $1)
@@ -1381,7 +1380,7 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
     ids?: ID[],
   ): Promise<KbReconcileRow[]> {
     return this.query(
-      `SELECT p.id, p.name, b.name AS brand,
+      `SELECT p.id, p.name, p."brandOrig" AS brand,
               p."countryId", p."countrySource",
               p."typeId", p."typeSource",
               p."producerId", p."bottlerId", p."flavorsCuratedAt",
@@ -1394,12 +1393,11 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
                 WHERE pf."productId" = p.id
               ), '[]'::json) AS flavors
        FROM product p
-       LEFT JOIN brand b ON b.id = p."brandId"
        WHERE ($1::text IS NULL OR EXISTS (
                SELECT 1 FROM store_product sp
                JOIN store st ON st.id = sp."storeId"
                WHERE sp."productId" = p.id AND st.slug = $1))
-         AND ($2::text IS NULL OR lower(b.name) = lower($2))
+         AND ($2::text IS NULL OR lower(p."brandOrig") = lower($2))
          AND ($3::uuid[] IS NULL OR p.id = ANY($3::uuid[]))
        ORDER BY lower(COALESCE(p.name, '')), p.id`,
       [storeSlug ?? null, brand ?? null, ids?.length ? ids : null],

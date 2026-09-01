@@ -29,7 +29,6 @@ import {
  */
 const FIELDS = [
   'abv',
-  'brandId',
   'typeId',
   'countryId',
 ] as const;
@@ -142,7 +141,10 @@ async function countNulls(
 /**
  * Counts, per column, how many of a store's null values the scraped items
  * carry a value for. An upper bound: a country the `country` table does not
- * know is never stored, and a scraped brand only lands once it is canonical.
+ * know is never stored.
+ *
+ * Brand is not among the columns: the label a report prints comes from the
+ * knowledge base's producer, and `pnpm reconcile-flavors` is what fills that.
  *
  * @param products - The product core service.
  * @param storeId - The store the items belong to.
@@ -170,7 +172,6 @@ async function countFillable(
 
     const offered: Record<typeof FIELDS[number], unknown> = {
       abv: item.abv,
-      brandId: item.brand,
       typeId: item.whiskyType,
       countryId: item.country,
     };

@@ -4,7 +4,6 @@ import { FactSource, ListingStop } from '~enums';
 
 import { ScrapePersistService } from '../../src/scrape/persist/scrape-persist.service';
 
-import type { CoreBrandService } from '~core/brand';
 import type { CoreCountryService } from '~core/country';
 import type { CoreFlavorService } from '~core/flavor';
 import type { CorePriceSnapshotService } from '~core/price-snapshot';
@@ -187,7 +186,6 @@ function makeService(
   };
 
   const service = new ScrapePersistService(
-    lookups as unknown as CoreBrandService,
     lookups as unknown as CoreTypeService,
     lookups as unknown as CoreFlavorService,
     lookups as unknown as CoreCountryService,
@@ -541,11 +539,10 @@ describe('ScrapePersistService — what may be written to a bottling', () => {
     expect(products.fillMissing).toHaveBeenCalledWith([{
       id: 'product-1',
       abv: 40,
-      brandId: null,
       typeId: null,
       countryId: null,
+      brandOrig: null,
       abvSource: FactSource.STORE,
-      brandSource: FactSource.STORE,
       typeSource: FactSource.STORE,
       countrySource: FactSource.STORE,
     }]);
@@ -656,7 +653,7 @@ describe('ScrapePersistService: the fact conflict log', () => {
 
     products.findFactsByIds.mockResolvedValue([{
       id: 'product-1',
-      brandId: null,
+      brandOrig: null,
       typeId: null,
       countryId: null,
       abv: 40,
@@ -689,7 +686,7 @@ describe('ScrapePersistService: the fact conflict log', () => {
 
     products.findFactsByIds.mockResolvedValue([{
       id: 'product-1',
-      brandId: null,
+      brandOrig: null,
       typeId: null,
       countryId: null,
       abv: 40,
@@ -715,7 +712,7 @@ describe('ScrapePersistService: the fact conflict log', () => {
 
     products.findFactsByIds.mockResolvedValue([{
       id: 'product-1',
-      brandId: null,
+      brandOrig: null,
       typeId: null,
       countryId: null,
       abv: null,

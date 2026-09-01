@@ -177,10 +177,44 @@ may be hit and is deliberately not taken here.
 
 ## 7. One brand is split across several `brand` rows
 
-**Status**: open, measured 2026-09-01 on a restored production dump. Deferred
-by decision while the `& Whisky` collision was fixed (see "Brand from the name"
-in [`CLAUDE.md`](CLAUDE.md) and the `brand-whisky-artifact` migration). The two
-defects share a cause — what a brand string reduces to — but not a fix.
+**Status**: CLOSED (2026-09-01) by retiring the `brand` table outright — see
+"The brand label" in [`CLAUDE.md`](CLAUDE.md) and the `brand-retire-prep` /
+`brand-canonical-regroup` / `brand-drop` migrations. Kept here because the
+measurement below is the evidence that decided it, and because the fix went
+further than this item proposed in one respect that is worth recording: it
+**does** re-key, which the last paragraph here argued against.
+
+The argument was that re-keying would detach offers already linked to a
+bottling. It would — unless the offers move with the key, which is what
+`brand-canonical-regroup` does, reusing the merge helper
+`age-regroup-cyrillic-yo` established. The alternative this item accepted is
+the one paragraph below: leaving the keys alone means a later SKU computes a
+different key and mints a second bottling for curation to merge, forever. The
+repair pays that cost once — 71 keys restated, 44 bottlings merged, 156 offers
+moved, 14 rows skipped as unreproducible — and the pass asserts its own
+idempotence before committing.
+
+The wider finding is that the duplicate-key groups measured here were the
+smaller half of the problem. Folding on `BrandUtils.key` finds 15 groups;
+folding through `producer_alias` finds **50**, including every pair no string
+normalization can reach: `M H` / `M&h Elements`, `Douglas Laing` /
+`Douglas Laingcompany`, `Chivas` / `Chivas Regal` / `Chivas Brothers`,
+`Isle of Jura` / `Jura`, and `Highiland Baron`, whose only correct spelling
+existed nowhere in the `brand` table at all.
+
+**One thing this closure leaves standing**, and it is a landmine rather than a
+defect today: `producer_alias` carries `luxco` as an alias of `quiet-man`. It
+is right for every bottling in the catalogue — all four are literally named
+`The Quiet Man` — but Luxco also owns Rebel Yell, Ezra Brooks, David Nicholson
+and Blood Oath, each of which is a separate producer here. A shop that puts
+`Luxco` in the brand field of one of those would resolve it to the wrong
+maker. `seagrams gin` -> `royal-stag` is the same shape, smaller. Both were
+left alone deliberately: repointing them would un-merge merges that are
+currently correct.
+
+---
+
+The measurement that decided it, kept as recorded on 2026-09-01:
 
 `BrandUtils.key` treats only whitespace, apostrophes, hyphens and underscores
 as separators. Every other matcher in the codebase (`brandHaystack`,

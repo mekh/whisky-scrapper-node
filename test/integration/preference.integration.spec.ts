@@ -1,9 +1,10 @@
 import { TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 
-import { CoreBrandService } from '~core/brand';
 import { CorePreferenceService } from '~core/preference';
+import { CoreProducerService } from '~core/producer';
 import { CoreProductService } from '~core/product';
+import { KbStatus, ProducerKind } from '~enums';
 import type { ID } from '~types';
 
 import {
@@ -14,6 +15,8 @@ import {
 const STAMP = Date.now();
 
 const BRAND = `__it_pref_brand_${STAMP}`;
+
+const BRAND_SLUG = `it-pref-brand-${STAMP}`;
 
 const MISSING_PRODUCT_ID = '0198d1f6-0000-7000-8000-00000000dead' as ID;
 
@@ -28,10 +31,10 @@ describe('user preferences (integration)', () => {
   let dataSource: DataSource;
   let preferences: CorePreferenceService;
   let products: CoreProductService;
-  let brands: CoreBrandService;
+  let producers: CoreProducerService;
   let userA: ID;
   let userB: ID;
-  let brandId: ID;
+  let producerId: ID;
   let productId: ID;
   let otherProductId: ID;
 
@@ -55,21 +58,32 @@ describe('user preferences (integration)', () => {
   /**
    * Creates a bottling with no match key, so nothing else can match it.
    *
-   * @param brand - Brand to attach, when the test needs one.
+   * @param producer - Producer to attach, when the test needs one. Written
+   *   after the insert because `createUnmatched` writes facts, not the
+   *   knowledge base's own columns — `SET_PRODUCERS_SQL` owns those.
    * @returns The new canonical product id.
    */
-  const makeBottling = async (brand?: ID): Promise<ID> => {
-    return products.createUnmatched({
+  const makeBottling = async (producer?: ID): Promise<ID> => {
+    const id = await products.createUnmatched({
       factSources: {},
       matchKey: null,
       name: `IT Pref ${STAMP}`,
-      brandId: brand ?? null,
+      brandOrig: null,
       typeId: null,
       countryId: null,
       age: null,
       abv: null,
       volumeMl: null,
     });
+
+    if (producer !== undefined) {
+      await dataSource.query(
+        'UPDATE product SET "producerId" = $1 WHERE id = $2',
+        [producer, id],
+      );
+    }
+
+    return id;
   };
 
   /**
@@ -93,18 +107,22 @@ describe('user preferences (integration)', () => {
     dataSource = moduleRef.get(DataSource);
     preferences = moduleRef.get(CorePreferenceService, { strict: false });
     products = moduleRef.get(CoreProductService, { strict: false });
-    brands = moduleRef.get(CoreBrandService, { strict: false });
+    producers = moduleRef.get(CoreProducerService, { strict: false });
 
     userA = await makeUser('a');
     userB = await makeUser('b');
 
-    const resolved = await brands.resolveByName([BRAND]);
+    const seeded = await dataSource.query(
+      `INSERT INTO producer (slug, name, kind, status)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [BRAND_SLUG, BRAND, ProducerKind.DISTILLERY, KbStatus.AUTO],
+    ) as { id: ID }[];
 
-    brandId = resolved.get(BRAND) as ID;
+    producerId = seeded[0].id;
   });
 
   beforeEach(async () => {
-    productId = await makeBottling(brandId);
+    productId = await makeBottling(producerId);
     otherProductId = await makeBottling();
   });
 
@@ -121,7 +139,10 @@ describe('user preferences (integration)', () => {
         'DELETE FROM "user" WHERE id = ANY($1::uuid[])',
         [[userA, userB]],
       );
-      await dataSource.query('DELETE FROM brand WHERE id = $1', [brandId]);
+      await dataSource.query(
+        'DELETE FROM producer WHERE id = $1',
+        [producerId],
+      );
 
       await closeIntegrationModule(moduleRef);
     }
@@ -151,7 +172,7 @@ describe('user preferences (integration)', () => {
     await preferences.addFavorites(userA, [productId]);
     await preferences.addToBlacklist(userA, {
       productIds: [otherProductId],
-      brandIds: [brandId],
+      producerIds: [producerId],
     });
 
     const state = await preferences.findByUserId(userA);
@@ -183,7 +204,7 @@ describe('user preferences (integration)', () => {
 
     const state = await preferences.addToBlacklist(userA, {
       productIds: [productId],
-      brandIds: [],
+      producerIds: [],
     });
 
     expect(state.favorites).toEqual([]);
@@ -195,7 +216,7 @@ describe('user preferences (integration)', () => {
 
     const state = await preferences.addToBlacklist(userA, {
       productIds: [],
-      brandIds: [brandId],
+      producerIds: [producerId],
     });
 
     /**
@@ -212,7 +233,7 @@ describe('user preferences (integration)', () => {
 
     const failure = preferences.addToBlacklist(userA, {
       productIds: [productId, MISSING_PRODUCT_ID],
-      brandIds: [],
+      producerIds: [],
     });
 
     /**
@@ -232,7 +253,7 @@ describe('user preferences (integration)', () => {
     await preferences.addFavorites(userB, [productId]);
     await preferences.addToBlacklist(userA, {
       productIds: [productId],
-      brandIds: [],
+      producerIds: [],
     });
 
     const other = await preferences.findByUserId(userB);
@@ -245,12 +266,12 @@ describe('user preferences (integration)', () => {
     await preferences.addFavorites(userA, [productId]);
     await preferences.addToBlacklist(userA, {
       productIds: [productId],
-      brandIds: [brandId],
+      producerIds: [producerId],
     });
 
     const state = await preferences.removeFromBlacklist(userA, {
       productIds: [productId],
-      brandIds: [brandId],
+      producerIds: [producerId],
     });
 
     expect(state.blacklistProducts).toEqual([]);
@@ -262,7 +283,7 @@ describe('user preferences (integration)', () => {
     await preferences.addFavorites(userA, [productId]);
     await preferences.addToBlacklist(userA, {
       productIds: [productId],
-      brandIds: [],
+      producerIds: [],
     });
 
     await dataSource.query('DELETE FROM product WHERE id = $1', [productId]);
@@ -277,25 +298,25 @@ describe('user preferences (integration)', () => {
     await preferences.addFavorites(doomed, [productId]);
     await preferences.addToBlacklist(doomed, {
       productIds: [otherProductId],
-      brandIds: [brandId],
+      producerIds: [producerId],
     });
 
     await dataSource.query('DELETE FROM "user" WHERE id = $1', [doomed]);
 
     expect(await countRows('favorite', doomed)).toBe(0);
     expect(await countRows('blacklist_product', doomed)).toBe(0);
-    expect(await countRows('blacklist_brand', doomed)).toBe(0);
+    expect(await countRows('blacklist_producer', doomed)).toBe(0);
   });
 
   it('resolves brand names without coining one', async () => {
     const novel = `__it_pref_absent_${STAMP}`;
 
-    const resolved = await brands.findIdsByName([novel]);
+    const resolved = await producers.findIdsByName([novel]);
 
     expect(resolved.size).toBe(0);
 
     const rows = await dataSource.query(
-      'SELECT count(*)::int AS count FROM brand WHERE name = $1',
+      'SELECT count(*)::int AS count FROM producer WHERE name = $1',
       [novel],
     ) as { count: number }[];
 

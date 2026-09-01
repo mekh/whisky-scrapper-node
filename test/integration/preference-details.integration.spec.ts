@@ -1,10 +1,10 @@
 import { TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 
-import { CoreBrandService } from '~core/brand';
 import { CorePreferenceService } from '~core/preference';
 import { CoreProductService } from '~core/product';
 import { CoreStoreProductService } from '~core/store-product';
+import { KbStatus, ProducerKind } from '~enums';
 import type { ID } from '~types';
 
 import {
@@ -19,6 +19,8 @@ const SLUG = `__it_pd_${STAMP}`;
 const TOKEN = `itpd${STAMP}`;
 
 const BRAND = `__it_pd_brand_${STAMP}`;
+
+const BRAND_SLUG = `it-pd-brand-${STAMP}`;
 
 const DAY = '2026-07-25';
 
@@ -38,11 +40,10 @@ describe('preference details over the live query (integration)', () => {
   let preferences: CorePreferenceService;
   let products: CoreProductService;
   let offers: CoreStoreProductService;
-  let brands: CoreBrandService;
   let storeId: ID;
   let userA: ID;
   let userB: ID;
-  let brandId: ID;
+  let producerId: ID;
   let namedId: ID;
   let namelessId: ID;
   let orphanId: ID;
@@ -68,24 +69,33 @@ describe('preference details over the live query (integration)', () => {
    * Creates a bottling with no match key, so nothing else can match it.
    *
    * @param name - Canonical name, or null for a nameless bottling.
-   * @param brand - Brand to attach, when the test needs one.
+   * @param producer - Producer to attach, when the test needs one.
    * @returns The new canonical product id.
    */
   const makeBottling = async (
     name: string | null,
-    brand?: ID,
+    producer?: ID,
   ): Promise<ID> => {
-    return products.createUnmatched({
+    const id = await products.createUnmatched({
       factSources: {},
       matchKey: null,
       name,
-      brandId: brand ?? null,
+      brandOrig: null,
       typeId: null,
       countryId: null,
       age: 12,
       abv: 43.5,
       volumeMl: 700,
     });
+
+    if (producer !== undefined) {
+      await dataSource.query(
+        'UPDATE product SET "producerId" = $1 WHERE id = $2',
+        [producer, id],
+      );
+    }
+
+    return id;
   };
 
   /**
@@ -132,7 +142,6 @@ describe('preference details over the live query (integration)', () => {
     preferences = moduleRef.get(CorePreferenceService, { strict: false });
     products = moduleRef.get(CoreProductService, { strict: false });
     offers = moduleRef.get(CoreStoreProductService, { strict: false });
-    brands = moduleRef.get(CoreBrandService, { strict: false });
 
     const stores = await dataSource.query(
       `INSERT INTO store (slug, name, "baseUrl", active)
@@ -145,11 +154,15 @@ describe('preference details over the live query (integration)', () => {
     userA = await makeUser('a');
     userB = await makeUser('b');
 
-    const resolved = await brands.resolveByName([BRAND]);
+    const seeded = await dataSource.query(
+      `INSERT INTO producer (slug, name, kind, status)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [BRAND_SLUG, BRAND, ProducerKind.DISTILLERY, KbStatus.AUTO],
+    ) as { id: ID }[];
 
-    brandId = resolved.get(BRAND) as ID;
+    producerId = seeded[0].id;
 
-    namedId = await makeBottling(`${TOKEN} Named`, brandId);
+    namedId = await makeBottling(`${TOKEN} Named`, producerId);
     namelessId = await makeBottling(null);
     orphanId = await makeBottling(`${TOKEN} Orphan`);
 
@@ -167,7 +180,7 @@ describe('preference details over the live query (integration)', () => {
       [[userA, userB]],
     );
     await dataSource.query(
-      'DELETE FROM blacklist_brand WHERE "userId" = ANY($1::uuid[])',
+      'DELETE FROM blacklist_producer WHERE "userId" = ANY($1::uuid[])',
       [[userA, userB]],
     );
   });
@@ -182,7 +195,10 @@ describe('preference details over the live query (integration)', () => {
         'DELETE FROM product WHERE id = ANY($1::uuid[])',
         [[namedId, namelessId, orphanId]],
       );
-      await dataSource.query('DELETE FROM brand WHERE id = $1', [brandId]);
+      await dataSource.query(
+        'DELETE FROM producer WHERE id = $1',
+        [producerId],
+      );
       await dataSource.query('DELETE FROM store WHERE id = $1', [storeId]);
       await dataSource.query(
         'DELETE FROM "user" WHERE id = ANY($1::uuid[])',
@@ -207,7 +223,7 @@ describe('preference details over the live query (integration)', () => {
     await preferences.addFavorites(userA, [namedId]);
     await preferences.addToBlacklist(userA, {
       productIds: [namelessId],
-      brandIds: [brandId],
+      producerIds: [producerId],
     });
 
     const details = await preferences.findDetailsByUserId(userA);
@@ -265,7 +281,7 @@ describe('preference details over the live query (integration)', () => {
      */
     await preferences.addToBlacklist(userA, {
       productIds: [orphanId],
-      brandIds: [],
+      producerIds: [],
     });
 
     const details = await preferences.findDetailsByUserId(userA);
@@ -290,7 +306,7 @@ describe('preference details over the live query (integration)', () => {
     await preferences.addFavorites(userB, [namedId]);
     await preferences.addToBlacklist(userB, {
       productIds: [namelessId],
-      brandIds: [brandId],
+      producerIds: [producerId],
     });
 
     const details = await preferences.findDetailsByUserId(userA);

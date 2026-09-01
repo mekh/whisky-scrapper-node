@@ -3,13 +3,21 @@ import 'reflect-metadata';
 import { NormalizeService } from '../../src/scrape/normalize/normalize.service';
 import { ScrapeService } from '../../src/scrape/scrape.service';
 
-import type { CoreBrandService } from '~core/brand';
+import { KbKeyUtils } from '~utils';
+
+import type { CoreProducerService } from '~core/producer';
 import type { CoreProductService } from '~core/product';
 import type { CoreStoreService } from '~core/store';
 import type { CoreStoreConfigService } from '~core/store-config';
 import type { CoreStoreProductService } from '~core/store-product';
-import { ListingStop } from '~enums';
+import {
+  ListingStop,
+  PeatProfile,
+  ProducerAliasScope,
+  ProducerKind,
+} from '~enums';
 import type {
+  KbAliasEntry,
   ListingResult,
   ProductMatchRow,
   ProductSnapshot,
@@ -45,7 +53,7 @@ const STORE: StoreListItem = {
 interface HarnessOptions {
   existingSkus: Set<string>;
   catalogue: Map<string, ProductMatchRow>;
-  brandNames: string[];
+  aliases: KbAliasEntry[];
   names: { enabled: boolean; extractNames: jest.Mock };
   llm: { enabled: boolean; enrich: jest.Mock };
   flavor: { enabled: boolean; classify: jest.Mock };
@@ -141,7 +149,7 @@ function makeHarness(
   const options: HarnessOptions = {
     existingSkus: new Set<string>(),
     catalogue: new Map<string, ProductMatchRow>(),
-    brandNames: [],
+    aliases: [],
     names: { enabled: false, extractNames: jest.fn() },
     llm: { enabled: false, enrich: jest.fn() },
     flavor: { enabled: false, classify: jest.fn() },
@@ -171,9 +179,9 @@ function makeHarness(
     existingSkus: jest.fn().mockResolvedValue(options.existingSkus),
   };
 
-  const brands = {
-    listNames: jest.fn().mockResolvedValue(options.brandNames),
-  } as unknown as CoreBrandService;
+  const producers = {
+    loadAliasIndex: jest.fn().mockResolvedValue(options.aliases),
+  } as unknown as CoreProducerService;
 
   const factory: ScrapeAdapterFactory = { create: () => adapter };
 
@@ -182,7 +190,7 @@ function makeHarness(
     storeConfigs,
     products as unknown as CoreProductService,
     offers as unknown as CoreStoreProductService,
-    brands,
+    producers,
     factory,
     new NormalizeService(),
     options.llm as unknown as LlmEnrichmentService,
@@ -776,7 +784,7 @@ describe('ScrapeService.collectStore', () => {
     expect(names.extractNames).not.toHaveBeenCalled();
   });
 
-  it('reads a missing brand off the name via the brand index', async () => {
+  it('keys a brandless listing through the alias index', async () => {
     const adapter: ScrapeAdapter = {
       slug: 'faux',
       supportsDetail: false,
@@ -787,12 +795,38 @@ describe('ScrapeService.collectStore', () => {
     };
 
     const service = makeService(adapter, {
-      brandNames: ['Aberlour', 'Highland Park'],
+      aliases: [
+        {
+          key: KbKeyUtils.key('Aberlour'),
+          scope: ProducerAliasScope.ANY,
+          producer: {
+            id: 'aberlour',
+            slug: 'aberlour',
+            name: 'Aberlour',
+            kind: ProducerKind.DISTILLERY,
+            countryId: null,
+            region: null,
+            legalRegion: null,
+            parentId: null,
+            bottlerId: null,
+            defaultTypeName: null,
+            peatProfile: PeatProfile.UNKNOWN,
+          },
+        },
+      ],
     });
 
     const result = await service.collectStore('faux', { dryRun: true });
 
-    expect(result.items?.[0].brand).toBe('Aberlour');
+    /**
+     * The shop stated no brand, so nothing is written to `snap.brand` -- that
+     * field now carries only what a shop said. What the alias index buys is
+     * the identity: the key is signed with the producer's slug, so the same
+     * whisky listed by a shop that *does* state `Aberlour` lands on the same
+     * bottling.
+     */
+    expect(result.items?.[0].brand).toBeNull();
+    expect(result.items?.[0].matchKey).toContain('aberlour');
   });
 });
 

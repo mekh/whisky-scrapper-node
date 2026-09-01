@@ -348,8 +348,24 @@ entity/repository/service/module shape:
   `KbBootApplyService` clears the 15 links at the next boot. `down()` is a
   documented no-op — re-creating the row would restore the defect, and the
   next sync re-derives every value it cleared.
+  Then the three that retire the table altogether (2026-09-01, see "The brand
+  label"): `brand-retire-prep` adds `product.brandOrig` and backfills it,
+  creates `blacklist_producer` and rewrites every brand rule as a producer
+  rule through `producer_alias` — failing closed if any blacklisted brand
+  resolves to nothing — and deletes the `product_fact_conflict` rows whose
+  `attribute` is `brand`, since their values are ids into a table that is
+  about to stop existing; `brand-canonical-regroup` re-signs every
+  reproducible match key with the resolved producer's slug and merges the
+  collisions (71 restated, 44 merged, 156 offers moved, 14 skipped as
+  unreproducible), asserting its own idempotence before it commits and
+  nulling the key of every emptied source so nothing can join it again; and
+  `brand-drop` drops `blacklist_brand`, `product.brandId`,
+  `product.brandSource` and `brand`. The first and third reverse
+  structurally, the middle one is a documented no-op — undoing it would put
+  one whisky back under several identities.
 - Lookups (dedup targets, unique `name`/`code`): `country` (`code`, `nameUa`,
-  `icon`), `brand` (`name`), `type` (`name`, whisky type), `flavor` (`name`).
+  `icon`), `type` (`name`, whisky type), `flavor` (`name`). There is no
+  `brand` lookup any more.
 - `store` (`slug` unique, `name`, `baseUrl`, `color?`, `active`) and
   `store-config` (1:1 → store via `storeId` unique + `fk_store_config_store`;
   `tier`, `delayFrom`/`delayTo` reals, `needsBrowser`, `retailChain?`,
@@ -360,9 +376,11 @@ entity/repository/service/module shape:
   unrelated to product category.
 - `product` — the **bottling**, independent of who sells it: `matchKey?`
   (unique), `name?`, `age?`, `abv?`, `volumeMl?`, FKs
-  `brandId?`/`typeId?`/`countryId?`/`producerId?`/`bottlerId?`,
+  `typeId?`/`countryId?`/`producerId?`/`bottlerId?`, `brandOrig?`,
   `lastLlmFlavorAt?`, plus one `<field>Source` column per fact (see
-  "Fact provenance" below). One row per whisky, so a correction, a flavor
+  "Fact provenance" below). There is no `brandId`: the label comes from the
+  knowledge base (see "The brand label"), and `brandOrig` is the shop's own
+  spelling, kept only to feed the research queue. One row per whisky, so a correction, a flavor
   classification and (next) a photo are stored once and read by every store.
 - `store-product` — one store's **offer** of a bottling: `storeId`,
   `productId` (FK → `product`, `RESTRICT`), `sku`, `url`, `nameOrig`,
@@ -557,7 +575,9 @@ entity/repository/service/module shape:
   parallelism, and the detail-page stores fetch far more pages than usual under
   the wider gate).
   Measured over a copy of production, 6 990 rows across the 17 stocked stores:
-  `brandId` 1 533 → 187, `typeId` 1 690 → 262, `countryId` 828 → 157, `abv`
+  `brandId` 1 533 → 187 (a column that no longer exists — see "The brand
+  label"; backfill fills type, country and abv only now), `typeId`
+  1 690 → 262, `countryId` 828 → 157, `abv`
   103 → 92, `volumeMl` 7 → 5. `age` barely moved (4 451 → 4 437) and that is
   the expected result — those rows are NAS bottlings, not gaps. Of what is
   left, roughly a third sits on out-of-stock rows the run never saw (only a
@@ -642,8 +662,10 @@ silently missing from every result.
   three to ten times, so the number would be a fact-shaped guess. The ordinal
   band carries the same information honestly.
 - `producer_alias` — every spelling that resolves to a producer, normalized by
-  `KbKeyUtils.key`, unique across all producers. **The resolver is keyed on this
-  table, never on `product.brandId`**, because the catalogue's brand names carry
+  `KbKeyUtils.key`, unique across all producers. **This table is the only
+  index anything matches a brand string against** — the resolver, the report's
+  label, the blacklist and the autocomplete alike — because the strings shops
+  print carry
   typos (`Isiay Mist`, `Douglas Laingcompany`), duplicate spellings (`Macallan`
   beside `The Macallan`) and secret labels (`An Orkney`, which is Highland
   Park) — all of which must reach one researched row. `scope`
@@ -800,11 +822,80 @@ catalogue and wired into every sync. What each piece does and why:
   wrong `llm` peat tag, runs the sync's own apply pass, and asserts that
   `excludeFlavors=peated` removes all eight peated brands and keeps Tobermory.
 
+### The brand label (2026-09-01) — `producer` is the brand
+
+There is no `brand` table. A report's `brand` is
+`COALESCE(producer.name, bottler.name)`, the blacklist names a producer, and
+`/brand/search` searches producers through `producer_alias`. **The wire
+contract is unchanged** — the field, the `brands` parameter and the route keep
+the word a shopper uses — so `../web` needed no change; only what the values
+mean is different.
+
+Why the table went, measured on a restored production dump (709 rows, 4 068
+bottlings): it was never curated. `ScrapePersistService` minted a row from
+whatever string a shop printed, through an `INSERT ... ON CONFLICT (name) DO
+NOTHING` whose unique index is case- and punctuation-sensitive, so one maker
+accumulated several rows — `Macallan[104]` beside `The Macallan[20]`,
+`M H[10]` beside `M&h Elements[4]`, `Chivas Regal[30]` beside `Chivas[13]`
+beside `Chivas Brothers[8]`. One user had blacklisted `Chivas` and
+`Chivas Regal` separately and still missed the eight filed under
+`Chivas Brothers`. **685 of the 709 rows already resolved to a knowledge-base
+producer**, and the 24 that did not carried two bottlings between them: the
+table was a second, worse registry of something `producer` and
+`producer_alias` already held.
+
+A `brand_alias` table was the obvious fix and was rejected for that reason —
+it would have been a second alias registry with a second normalization to keep
+in step, and `ProducerRepository.findUnresolvedBrands` had already refused the
+same shape once ("a second copy of what the alias table already states").
+Folding through `producer_alias` also finds strictly more: 50 groups against
+the 15 a string fold finds, including `M H` / `M&h Elements`,
+`Douglas Laingcompany` / `Douglas Laing`, `Isle of Jura` / `Jura`, and
+`Highiland Baron`, whose correct spelling existed nowhere in the table at all.
+
+Four things are load-bearing:
+
+- **The label is the distillery, not the bottler.** `COALESCE` puts
+  `producer.name` first, so `Gordon & MacPhail Macallan 1988` reads `Macallan`
+  — the bottler is already its own `ReportRow` field, and grouping every
+  Macallan together is the point. `kind` never selects the label; the _slot_
+  does, and `KbResolverService` guarantees a bottler never lands in the
+  producer slot (0 of 4 068 bottlings do).
+- **The blacklist tests both slots.** A rule naming Douglas Laing has to reach
+  the eighty-one bottlings that carry it as `bottlerId`, not `producerId`.
+  This is the predicate most likely to regress and has its own integration
+  test.
+- **18 bottlings lost their label, and for 17 that is correct.** They resolve
+  to producers the knowledge base has already `rejected` with a cited note —
+  `Vulson` (a rye eau-de-vie never rested in wood), `Yakusun`, `Undone`
+  (labelled "THIS IS NOT WHISKEY"), `Spice Monkey`, `Marc De Champagne`,
+  `Boulevardier`, `Bayadera`, `Kentucky`, `Moulin`. The eighteenth,
+  `Ice Drive`, is merely unresearched. A `brandOrig` fallback was considered
+  and dropped: it would have rescued exactly that one bottling and put the
+  other seventeen back.
+- **`product.brandOrig` is an observation, not a fact.** It holds the shop's
+  own spelling and exists so the makers the knowledge base is still missing
+  stay findable — a bottling with no `producerId` and a `brandOrig` is one row
+  of the `/producer/unresolved` queue `pnpm research-brands` works through.
+  Written on insert, filled when null, never displayed and never filtered.
+
+The match keys were re-signed once to match (`brand-canonical-regroup`); see
+"Brand identity comes from the knowledge base" under "Scraping engine" for how
+the engine derives them now, and `FOLLOWUPS.md` item 7 for the `luxco` alias
+this leaves as a landmine.
+
 ### Fact provenance (`product.<field>Source`)
 
 Every fact column on `product` has a `varchar(16)` sibling recording where the
 value came from (`FactSource`, `~enums/fact.enum.ts`), **ranked**:
 `manual`(60) > `kb`(50) > `store`(40) > `name`(30) > `llm`(20) > `legacy`(10).
+
+**Brand is not one of them any more.** It was, until the `brand` table was
+retired: the label is now derived from the resolved producer, which carries
+its own `producerSource`, and `product.brandOrig` is an observation rather
+than a fact — one shop's spelling, never displayed, never filtered, never
+ranked. `ProductFactField.BRAND` is gone with it, so `brand` is no longer a
+value `/product/review/conflicts?attribute=` accepts.
 
 **`fillMissing` is no longer fill-if-null.** It used to `COALESCE`, so whichever
 store or model spoke first owned the value forever: an LLM guess made on the day
@@ -902,7 +993,7 @@ is the whole design:
   already exists: one whisky recorded twice because one shop spelled the age
   in a way the reader understood and another did not. The whole group moves
   onto it, flavour links copied (`ON CONFLICT DO NOTHING` — a tag is evidence
-  *for* a flavour, never against one) and favourites/blacklist entries
+  _for_ a flavour, never against one) and favourites/blacklist entries
   following the offers.
 - **Fact only** — the group agrees on one age, no such bottling exists, so the
   age is stored as a `name`-sourced fact and **the key is left alone**.
@@ -1386,36 +1477,11 @@ wrappers): `scrape/` has its own internal layering.
   normal). One clean run accepts a store's adapter; a release sweep re-runs
   every store on another day right before the cutover. Results and per-store
   state live in [`PARITY.md`](PARITY.md).
-- **Brand from the name.** Only three adapters (`goodwine`, `winewine`,
-  `wine-point`) read a brand off the page, so `rozetka` and `okwine` stored none
-  at all. `ScrapeService` now loads the catalogue's brand names once per run and
-  hands `NormalizeService.normalize` a match index; a snapshot without a brand
-  gets one from its name (longest key first, both sides space-wrapped so a key
-  only matches whole words, apostrophes stripped on both sides so
-  `Jack Daniels` finds `Jack Daniel's`). The index is built from the **`brand`
-  table**, not from `BRAND_KEYS`: those keys are already stripped, and
-  title-casing one back would mint a second row beside the spelling the
-  catalogue uses. It is passed per call rather than cached on the service —
-  `NormalizeService` is a singleton and `runFullSync` collects stores
-  concurrently. Only the brand is new; `detectBrandInfo` still reads country and
-  type off `BRAND_INFO`, and now benefits from the brand being filled first.
-  **A brand that carries no identity of its own is kept out of the index**
-  (`ProductMatchUtils.carriesIdentity`, the same `MATCH_STOP_TOKENS` vocabulary
-  the match key is built from — a fourth stop list is exactly the drift those
-  paired vocabularies warn about). The guard is load-bearing: `brandHaystack`
-  deletes every non-alphanumeric run, so goodwine's category label `& Whisky`
-  — `&wine` / `&whisky` / `&food` name its departments, and a legacy import
-  left the string in the `brand` table — reduced to the bare key `whisky`. At
-  six characters it won the longest-key-first sort against every real brand no
-  longer than the word, so `Віскі Umiki Whisky` was stored as `& Whisky` while
-  its own `Umiki` row sat one character shorter in the same index. Measured
-  over the catalogue the collision was suppressing the right answer on **63
-  listings** (`Jura`, `Arran`, `Nikka`, `Bell's` among them) though only 14
-  bottlings had it stored, the rest having been given a brand by some other
-  store first. `BrandUtils.canonical` applies the same test, so such a value is
-  never minted as a row again — the live path being bayadera's category-prefix
-  strip, which turns `Віскі & whisky` into `& whisky`. The match keys were
-  never affected: `brandToken` already folded the artifact to nothing.
+- **Brand identity comes from the knowledge base, not from a brand table.**
+  Only three adapters (`goodwine`, `winewine`, `wine-point`) read a brand off the page, so `rozetka` and `okwine` state none at all — and the shops that do state one disagree with each other about how to spell it. `ScrapeService` loads `producers.loadAliasIndex()` once per run (it is passed per call rather than cached, since `NormalizeService` is a singleton and `runFullSync` collects stores concurrently) and `NormalizeService.resolveKeyBrand` answers the one question the identity layer needs: **which token does this bottling contribute to its match key**. A stated brand is matched whole against the alias index; a listing that states none has its _name_ searched, under the same scope rules and five-character floor `KbResolverService.matchInName` uses — both go through `KbAliasUtils`, so the two passes cannot answer differently.
+- **The resolved token is the producer's `slug`, never its `name`.** Both are curated, but `producer.name` is a display string that `PATCH /producer/:id` rewrites, and a match key that moved whenever a reviewer tidied a spelling would be no more stable than the shop strings this replaces. The slug is unique and never edited for display. It is also shorter: measured over a production dump, folding to the name restated **204** keys against the slug's **71**, for the same 44 merges — `TBWC` would have become `thatboutiqueycompany` and `Signatory` `signatoryvintage`. A brand the knowledge base does not know falls back to its own canonical spelling, so an unresearched brand keeps working and simply stops improving.
+- **`snap.brand` is now only what a shop said.** It used to be filled in from the product name too; that job moved to the knowledge base, which answers it twice over — for identity above and for the label below. What survives on the snapshot is the one thing neither records, and it is stored as `product.brandOrig`: the string a shop used, which is what puts an unresearched maker in the `/producer/unresolved` queue. `detectBrandInfo` still reads country and type off `BRAND_INFO`.
+- **An alias that carries no identity of its own never reaches a matcher.** `CoreProducerService` filters every index it hands out through `KbAliasUtils.usable`, which asks `ProductMatchUtils.carriesIdentity` — the same `MATCH_STOP_TOKENS` vocabulary the match key is built from, because a fourth stop list is exactly the drift those paired vocabularies warn about. The filter runs **once per index load, never inside a matcher**: the test folds and tokenizes, and a linear find over a thousand aliases per bottling would pay for it on every comparison. The case it exists for is `& Whisky`, goodwine's own department label (`&wine` / `&whisky` / `&food`), which `KbKeyUtils.key` reduces to the bare noun `whisky` — six characters, so the five-character floor cannot catch it, and brand scope is exempt from the floor anyway. The `brand` table's copy of that defect was removed by `brand-whisky-artifact` and `kb-merge` refuses to write a new one, but `research-brands` writes aliases too, so the index guards itself rather than trusting every writer.
 - **Regex gotcha**: JS `\b`/`\w` stay ASCII even under the `u` flag (Python's
   are Unicode). Cyrillic units use explicit lookaheads / classes — see the
   header of `normalize.service.ts`.
@@ -1899,7 +1965,7 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 | `PATCH /quick-filter/{id}` `{name?, filters?}` — rename and/or replace the filters; an absent field is left alone                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | any logged-in user                           |
 | `DELETE /quick-filter/{id}` — delete one of the caller's sets                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | any logged-in user                           |
 | `GET /product/search?q=&limit=` — lightweight autocomplete over the whole catalogue, one item per bottling; **ignores the caller's blacklist** (see "Catalogue search")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | any logged-in user                           |
-| `GET /brand/search?q=&limit=` — lightweight autocomplete over brand names (see "Catalogue search")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | any logged-in user                           |
+| `GET /brand/search?q=&limit=` — lightweight autocomplete over producer names, matched through their aliases (see "Catalogue search")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | any logged-in user                           |
 | `GET /product/review/summary` — counters for the curation screen's tabs. `untrustedFacts` is the **distinct** number of bottlings with either fact untrusted; `untrustedTypes`/`untrustedCountries` are the per-field counts and must never be summed (892 bottlings carry both); `untrustedFactsUnresolved` is how much of that queue resolves to no producer at all — the half that is a symptom rather than work                                                                                                                                                                                                                                                                                                                                                              | `product:review`                             |
 | `GET /product/review/producers?status=&name=&page=&perPage=` — producers by review status. The `unverified` page is ranked by `potentialReach` — how many bottlings would resolve to the row if the whole withheld queue went live — because `productCount` is structurally 0 for every withheld row and ranking by it ranks alphabetically. `potentialReach` is null on the other statuses, where `productCount` is a real answer. `name` is a case-insensitive substring of the producer's name or slug; rows carry the country's `countryName`/`countryIcon` beside the code                                                                                                                                                                                                  | `producer:read`                              |
 | `GET /product/review/facts?field=type\|country&producer=resolved\|unresolved&name=` — bottlings whose type or country the filters no longer trust, worst-first by how many shops carry them. Each row carries the country's `nameUa`/`icon`, the resolved `producerSlug` (null when nothing resolved) and up to five `stores` links (one per shop, in-stock first) to the listings that produced the fact. **`producer` splits the queue into its two jobs**: roughly nine rows in ten resolve to no producer and are a symptom cured a producer at a time, while the rest have one and are here because their producer's range spans several types, so nothing but a person can settle it. `name` is a case-insensitive substring of the canonical name or any store's raw name | `product:review`                             |
@@ -2061,36 +2127,36 @@ Consequences worth knowing:
 
 ### ReportRow (report item fields + `history.product`)
 
-| Field                       | Notes                                                                                                                                                                                                                     |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id` (uuid)                 | the **store offer** — one row per store × SKU. Unchanged by the catalogue split; still what `/report/history` and `/product/:id` take                                                                                     |
-| `productId` (uuid)          | the **bottling** this row is an offer of. Rows from different stores sharing it are the same whisky: that is how `best` groups them, and an edit through any of them applies to all                                       |
-| `storeName`                 |                                                                                                                                                                                                                           |
-| `storeSlug`                 |                                                                                                                                                                                                                           |
-| `sku`                       |                                                                                                                                                                                                                           |
-| `name`                      | the product alone — brand + expression (see the note below the table); **nullable** — `null` when cleaning left nothing, fall back to `nameOrig`                                                                          |
-| `nameOrig`                  | raw scraped name, always present; the display fallback for `name` and the value shown (read-only) in the edit modal                                                                                                       |
-| `url`                       |                                                                                                                                                                                                                           |
-| `price`                     |                                                                                                                                                                                                                           |
-| `previousPrice`             | price of the immediately previous snapshot                                                                                                                                                                                |
-| `referencePrice`            | the value the discount is measured against (previous observed price / window max / competing offer); report-specific, always from our own price history, never `oldPrice`                                                 |
-| `oldPrice`                  | store strike-through price from the latest snapshot                                                                                                                                                                       |
-| `discountPct`               |                                                                                                                                                                                                                           |
-| `age`                       |                                                                                                                                                                                                                           |
-| `abv`                       |                                                                                                                                                                                                                           |
-| `volumeMl`                  |                                                                                                                                                                                                                           |
-| `type`                      |                                                                                                                                                                                                                           |
-| `brand`                     |                                                                                                                                                                                                                           |
-| `countryName`               |                                                                                                                                                                                                                           |
-| `countryCode`               |                                                                                                                                                                                                                           |
-| `countryIcon`               |                                                                                                                                                                                                                           |
-| `currency`                  |                                                                                                                                                                                                                           |
-| `inStock`, `promo`          | `promo` comes from the latest snapshot. `inStock` is the offer's current availability: list endpoints only ever return `true` (out-of-stock products are filtered out, not deleted), `/report/history` can return `false` |
-| `flavors` (string[])        |                                                                                                                                                                                                                           |
-| `firstSeen`, `capturedDate` | `YYYY-MM-DD`                                                                                                                                                                                                              |
-| `isNew`                     |                                                                                                                                                                                                                           |
-| `daysNew`                   |                                                                                                                                                                                                                           |
-| `daysDiscount`              | days the current price has held (days since it was last higher); `drops` only, null elsewhere                                                                                                                             |
+| Field                       | Notes                                                                                                                                                                                                                                    |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id` (uuid)                 | the **store offer** — one row per store × SKU. Unchanged by the catalogue split; still what `/report/history` and `/product/:id` take                                                                                                    |
+| `productId` (uuid)          | the **bottling** this row is an offer of. Rows from different stores sharing it are the same whisky: that is how `best` groups them, and an edit through any of them applies to all                                                      |
+| `storeName`                 |                                                                                                                                                                                                                                          |
+| `storeSlug`                 |                                                                                                                                                                                                                                          |
+| `sku`                       |                                                                                                                                                                                                                                          |
+| `name`                      | the product alone — brand + expression (see the note below the table); **nullable** — `null` when cleaning left nothing, fall back to `nameOrig`                                                                                         |
+| `nameOrig`                  | raw scraped name, always present; the display fallback for `name` and the value shown (read-only) in the edit modal                                                                                                                      |
+| `url`                       |                                                                                                                                                                                                                                          |
+| `price`                     |                                                                                                                                                                                                                                          |
+| `previousPrice`             | price of the immediately previous snapshot                                                                                                                                                                                               |
+| `referencePrice`            | the value the discount is measured against (previous observed price / window max / competing offer); report-specific, always from our own price history, never `oldPrice`                                                                |
+| `oldPrice`                  | store strike-through price from the latest snapshot                                                                                                                                                                                      |
+| `discountPct`               |                                                                                                                                                                                                                                          |
+| `age`                       |                                                                                                                                                                                                                                          |
+| `abv`                       |                                                                                                                                                                                                                                          |
+| `volumeMl`                  |                                                                                                                                                                                                                                          |
+| `type`                      |                                                                                                                                                                                                                                          |
+| `brand`                     | `COALESCE(producer.name, bottler.name)` — the knowledge base's curated name, not a shop's spelling of it (see "The brand label"). Null only when the bottling resolves to no producer at all. Equal to `distillery` whenever that is set |
+| `countryName`               |                                                                                                                                                                                                                                          |
+| `countryCode`               |                                                                                                                                                                                                                                          |
+| `countryIcon`               |                                                                                                                                                                                                                                          |
+| `currency`                  |                                                                                                                                                                                                                                          |
+| `inStock`, `promo`          | `promo` comes from the latest snapshot. `inStock` is the offer's current availability: list endpoints only ever return `true` (out-of-stock products are filtered out, not deleted), `/report/history` can return `false`                |
+| `flavors` (string[])        |                                                                                                                                                                                                                                          |
+| `firstSeen`, `capturedDate` | `YYYY-MM-DD`                                                                                                                                                                                                                             |
+| `isNew`                     |                                                                                                                                                                                                                                          |
+| `daysNew`                   |                                                                                                                                                                                                                                          |
+| `daysDiscount`              | days the current price has held (days since it was last higher); `drops` only, null elsewhere                                                                                                                                            |
 
 **`name` holds the product alone.** The category prefix, age, ABV, volume,
 packaging and bundle descriptors are stripped at scrape/import time, so the
@@ -2174,7 +2240,14 @@ Four things are easy to get wrong:
   one shop's listing of it.)
 - **Brands are names in both directions**, spelled as the report's `brand`
   field spells them. An unknown name is `400 Unknown brand` listing the
-  offenders — it never coins a brand.
+  offenders — it never coins one.
+  Since 2026-09-01 a rule names a **producer** (see "The brand label"): the
+  names are `producer.name`, matched case-insensitively, and the rule is
+  tested against a bottling's distillery **and** its bottler, so hiding
+  `Douglas Laing` hides what it released. One consequence is visible to a
+  client: a maker can no longer be hidden twice under two spellings, so a
+  user who had blacklisted both `Chivas` and `Chivas Regal` now reads one
+  entry, `Chivas Regal`.
 - **A blacklist call must name something**: `{}` or two empty arrays is
   `400`. An empty `productIds` on the favorites endpoints is a documented
   no-op, so a client may post whatever selection it holds.
@@ -2371,6 +2444,17 @@ canonical name OR any store's raw name, plus the trailing-age pass
 matches, then the shortest name. Out-of-stock bottlings are deliberately
 included (a favorite is a property of the bottle, not of today's stock).
 
+**`/brand/search` searches producers, through their aliases** (2026-09-01).
+The route, the `{ name }` shape and the ranking are unchanged; what it reads
+is `producer.name` matched against the name **or** any `producer_alias.key`,
+restricted to `verified`/`auto` — a `rejected` producer is not a maker, and a
+withheld one is invisible to the resolver, so hiding it would hide nothing.
+Two things follow. Typing a spelling only the aliases carry now finds the
+maker (`isle of jura` offers `Jura`, `m&h` offers `M&H`), which is what the
+blacklist picker needed. And the picker can no longer offer two rows for one
+maker, which is how a user came to blacklist `Chivas` and `Chivas Regal`
+separately and hide neither properly.
+
 ### `/meta`
 
 Filter options and fixed client constants in one payload: `stores[]`
@@ -2536,7 +2620,7 @@ Pre-existing bugs fixed while wiring auth (context for future changes):
   predicates inside `findCurrentRows` that make every report kind personal.
   The load-bearing decisions:
   - **Three composite-keyed tables** (`favorite`, `blacklist_product`,
-    `blacklist_brand`), all `(userId, <target>)` with a `createdAt` and no
+    `blacklist_producer`), all `(userId, <target>)` with a `createdAt` and no
     `updatedAt` — a membership row has nothing to update. They follow the
     `product_flavor` pattern: an explicit entity so `migration:generate` stays
     drift-free, but every row is written in raw SQL by one repository
@@ -2560,9 +2644,11 @@ Pre-existing bugs fixed while wiring auth (context for future changes):
     safe**: a group is either wholly present or wholly gone, so `best`'s
     two-store comparison and its `selectionFilter` spread need no special case
     (contrast the offer-level price bounds, whose trap is documented above).
-    The brand predicate is UNKNOWN for a null `brandId`, so brandless bottlings
-    survive every brand rule — correct, since there is no "unknown brand" to
-    hide. `ReportFilter.userId` is **required**, deliberately: an optional
+    The brand predicate tests **both producer slots**
+    (`bp."producerId" IN (p."producerId", p."bottlerId")`), or a rule naming an
+    independent bottler would hide none of what it released; it is UNKNOWN when
+    neither is filled, so a bottling the knowledge base cannot place survives
+    every brand rule — correct, since there is no "unknown maker" to hide. `ReportFilter.userId` is **required**, deliberately: an optional
     field would let a future caller silently serve an unfiltered catalogue.
   - **`/report/history` and the single-offer path stay unfiltered by
     construction** — they take no `ReportFilter` — so the product card that

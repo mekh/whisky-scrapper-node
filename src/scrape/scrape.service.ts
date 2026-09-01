@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { SCRAPE_ADAPTER_FACTORY } from '~constants';
-import { CoreBrandService } from '~core/brand';
+import { CoreProducerService } from '~core/producer';
 import { CoreProductService } from '~core/product';
 import { CoreStoreService } from '~core/store';
 import { CoreStoreConfigService } from '~core/store-config';
@@ -9,6 +9,7 @@ import { CoreStoreProductService } from '~core/store-product';
 import { NotFoundError, ServerError } from '~errors';
 import type {
   CollectOptions,
+  KbAliasEntry,
   ListingResult,
   ProductMatchRow,
   ProductSnapshot,
@@ -20,8 +21,6 @@ import type {
   StoreScrapeSpec,
 } from '~types';
 import { ErrorUtils } from '~utils';
-
-import type { BrandMatchEntry } from './normalize/normalize.interfaces';
 
 import { LlmEnrichmentService } from './llm/llm-enrichment.service';
 import { LlmFlavorService } from './llm/llm-flavor.service';
@@ -132,7 +131,7 @@ export class ScrapeService {
 
   private readonly storeProducts: CoreStoreProductService;
 
-  private readonly brands: CoreBrandService;
+  private readonly producers: CoreProducerService;
 
   private readonly adapters: ScrapeAdapterFactory;
 
@@ -151,7 +150,7 @@ export class ScrapeService {
     storeConfigs: CoreStoreConfigService,
     products: CoreProductService,
     storeProducts: CoreStoreProductService,
-    brands: CoreBrandService,
+    producers: CoreProducerService,
     @Inject(SCRAPE_ADAPTER_FACTORY) adapters: ScrapeAdapterFactory,
     normalizer: NormalizeService,
     llm: LlmEnrichmentService,
@@ -163,7 +162,7 @@ export class ScrapeService {
     this.storeConfigs = storeConfigs;
     this.products = products;
     this.storeProducts = storeProducts;
-    this.brands = brands;
+    this.producers = producers;
     this.adapters = adapters;
     this.normalizer = normalizer;
     this.llm = llm;
@@ -193,8 +192,7 @@ export class ScrapeService {
 
     const backfill = options.backfill ?? false;
     const spec = await this.buildSpec(store);
-    const brandNames = await this.brands.listNames();
-    const brandIndex = this.normalizer.buildBrandIndex(brandNames);
+    const aliases = await this.producers.loadAliasIndex();
     const { deadline } = options;
 
     /**
@@ -218,14 +216,14 @@ export class ScrapeService {
       spec,
       known,
       backfill,
-      brandIndex,
+      aliases,
       options.reporter,
       deadline,
     );
 
     const snaps = listing.items;
 
-    snaps.forEach((snap) => this.normalizer.normalize(snap, brandIndex));
+    snaps.forEach((snap) => this.normalizer.normalize(snap));
 
     const found = snaps.length;
     const inStock = snaps.filter((snap) => snap.inStock);
@@ -237,7 +235,7 @@ export class ScrapeService {
       inStock: inStock.length,
     });
 
-    let canon = await this.loadCanonical(inStock, brandIndex);
+    let canon = await this.loadCanonical(inStock, aliases);
 
     await this.runLlm(
       known,
@@ -260,7 +258,7 @@ export class ScrapeService {
      * rewritten name is exactly the case that turns a miss into a hit, right
      * before the most expensive pass runs.
      */
-    canon = await this.loadCanonical(inStock, brandIndex);
+    canon = await this.loadCanonical(inStock, aliases);
 
     await this.runFlavorEnrichment(
       known,
@@ -312,15 +310,16 @@ export class ScrapeService {
    *
    * @param snaps - The snapshots to key (stamped in place, as the rest of this
    *   pipeline does).
-   * @param brandIndex - Known brand names, for a snapshot stating none.
+   * @param aliases - The knowledge base's alias index, which is what folds
+   *   nineteen shops' spellings of one maker onto a single key.
    * @returns What the catalogue knows, by match key.
    */
   private async loadCanonical(
     snaps: ProductSnapshot[],
-    brandIndex: BrandMatchEntry[],
+    aliases: KbAliasEntry[],
   ): Promise<Map<string, ProductMatchRow>> {
     snaps.forEach((snap) => {
-      snap.matchKey = this.normalizer.matchKey(snap, brandIndex);
+      snap.matchKey = this.normalizer.matchKey(snap, aliases);
     });
 
     const keys = snaps
@@ -367,7 +366,7 @@ export class ScrapeService {
    * @param spec - The scrape spec.
    * @param known - SKUs the store has already stored.
    * @param backfill - Whether the wider backfill detail gate applies.
-   * @param brandIndex - Known brand names, for keying the items.
+   * @param aliases - The knowledge base's alias index, for keying the items.
    * @param reporter - Optional progress reporter.
    * @param deadline - Optional soft deadline for the detail pass.
    * @returns The raw scraped snapshots.
@@ -376,7 +375,7 @@ export class ScrapeService {
     spec: StoreScrapeSpec,
     known: Set<string>,
     backfill: boolean,
-    brandIndex: BrandMatchEntry[],
+    aliases: KbAliasEntry[],
     reporter?: ScrapeProgressReporter,
     deadline?: AbortSignal,
   ): Promise<ListingResult> {
@@ -387,7 +386,7 @@ export class ScrapeService {
       const snaps = listing.items;
 
       if (adapter.supportsDetail && snaps.length > 0) {
-        const canon = await this.loadCanonical(snaps, brandIndex);
+        const canon = await this.loadCanonical(snaps, aliases);
 
         await this.enrichDetails(
           adapter,

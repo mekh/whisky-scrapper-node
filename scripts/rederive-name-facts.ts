@@ -188,11 +188,10 @@ async function main(): Promise<number> {
       fills.push({
         id: row.id as ID,
         abv: null,
-        brandId: null,
         typeId: writeType ? typeId : null,
         countryId: writeCountry ? countryId : null,
+        brandOrig: null,
         abvSource: FactSource.NAME,
-        brandSource: FactSource.NAME,
         typeSource: FactSource.NAME,
         countrySource: FactSource.NAME,
       });

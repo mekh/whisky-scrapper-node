@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 
-import { CoreBrandService } from '~core/brand';
+import type { CoreProducerService } from '~core/producer';
 
 import { BrandService } from '../src/domain/brand/brand.service';
 
@@ -11,24 +11,26 @@ import { BrandService } from '../src/domain/brand/brand.service';
  */
 function makeService(): {
   service: BrandService;
-  brands: { searchByName: jest.Mock };
+  producers: { searchByName: jest.Mock };
   } {
-  const brands = {
+  const producers = {
     searchByName: jest.fn().mockResolvedValue([{ name: 'Glenfiddich' }]),
   };
 
-  const service = new BrandService(brands as unknown as CoreBrandService);
+  const service = new BrandService(
+    producers as unknown as CoreProducerService,
+  );
 
-  return { service, brands };
+  return { service, producers };
 }
 
 describe('BrandService.search', () => {
   it('passes the term through with the requested limit', async () => {
-    const { service, brands } = makeService();
+    const { service, producers } = makeService();
 
     const result = await service.search({ q: 'glen', limit: 5 });
 
-    expect(brands.searchByName).toHaveBeenCalledWith('glen', 5);
+    expect(producers.searchByName).toHaveBeenCalledWith('glen', 5);
     expect(result).toEqual([{ name: 'Glenfiddich' }]);
   });
 
@@ -37,10 +39,10 @@ describe('BrandService.search', () => {
      * The default lives in the domain service, not the controller — this is
      * the test that keeps it from silently moving.
      */
-    const { service, brands } = makeService();
+    const { service, producers } = makeService();
 
     await service.search({ q: 'glen' });
 
-    expect(brands.searchByName).toHaveBeenCalledWith('glen', 10);
+    expect(producers.searchByName).toHaveBeenCalledWith('glen', 10);
   });
 });

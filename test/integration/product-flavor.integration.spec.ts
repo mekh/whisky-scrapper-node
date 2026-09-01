@@ -87,7 +87,7 @@ describe('product flavor links (integration)', () => {
       factSources: {},
       matchKey: null,
       name: 'Sample',
-      brandId: null,
+      brandOrig: null,
       typeId: null,
       countryId: null,
       age: null,

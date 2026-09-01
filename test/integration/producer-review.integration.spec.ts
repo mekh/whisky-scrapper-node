@@ -607,33 +607,23 @@ async function seedCatalogue(dataSource: DataSource): Promise<void> {
   );
 
   await dataSource.query(
-    `INSERT INTO brand (name)
-     SELECT v.name FROM (VALUES
-       ('${TAG} Widely Carried'),
-       ('${TAG} Plain')
-     ) AS v(name)`,
-  );
-
-  await dataSource.query(
     `INSERT INTO product
-       (name, "brandId", "typeId", "typeSource", "countryId", "countrySource",
-        "producerId")
-     SELECT v.name, b.id, $1::uuid, v."typeSource", $2::uuid,
+       (name, "brandOrig", "typeId", "typeSource", "countryId",
+        "countrySource", "producerId")
+     SELECT v.name, v.brand, $1::uuid, v."typeSource", $2::uuid,
             v."countrySource", CASE WHEN v.resolved THEN $3::uuid END
      FROM (VALUES
        ('${TAG} Widely Carried', '${TAG} Widely Carried', 'llm', 'store',
         true),
        ('${TAG} Untrusted Country', '${TAG} Plain', 'store', 'legacy', false),
        ('${TAG} Untrusted Both', '${TAG} Plain', 'llm', 'legacy', false)
-     ) AS v(name, brand, "typeSource", "countrySource", resolved)
-     LEFT JOIN brand b ON b.name = v.brand`,
+     ) AS v(name, brand, "typeSource", "countrySource", resolved)`,
     [typeId, countryId, parentId],
   );
 
   await dataSource.query(
-    `INSERT INTO product (name, "brandId")
-     SELECT '${TAG} parent Reserve', b.id
-     FROM brand b WHERE b.name = '${TAG} Plain'`,
+    `INSERT INTO product (name, "brandOrig")
+     VALUES ('${TAG} parent Reserve', '${TAG} Plain')`,
   );
 
   await seedReachBottlings(dataSource);

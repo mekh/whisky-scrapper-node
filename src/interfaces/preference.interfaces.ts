@@ -132,7 +132,9 @@ export interface PreferenceBlacklistIds {
   productIds: ID[];
 
   /**
-   * Brand ids to hide or unhide.
+   * Producer ids to hide or unhide. The API calls these brands; a rule names
+   * one curated producer and is matched against a bottling's distillery and
+   * its bottler alike.
    */
-  brandIds: ID[];
+  producerIds: ID[];
 }

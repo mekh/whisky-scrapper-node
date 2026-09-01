@@ -56,7 +56,7 @@ describe('product autocomplete search (integration)', () => {
       factSources: {},
       matchKey: null,
       name,
-      brandId: null,
+      brandOrig: null,
       typeId: null,
       countryId: null,
       age,
@@ -194,7 +194,7 @@ describe('product autocomplete search (integration)', () => {
   it('still finds a bottling somebody blacklisted', async () => {
     await preferences.addToBlacklist(userId, {
       productIds: [namedId],
-      brandIds: [],
+      producerIds: [],
     });
 
     const rows = await products.search(`${TOKEN} Named`, 10);

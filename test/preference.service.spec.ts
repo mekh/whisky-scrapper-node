@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 
-import { CoreBrandService } from '~core/brand';
+import { CoreProducerService } from '~core/producer';
 import { CorePreferenceService } from '~core/preference';
 import { CoreProductService } from '~core/product';
 import { CoreUserService } from '~core/user';
@@ -36,7 +36,7 @@ interface Mocks {
     addToBlacklist: jest.Mock;
     removeFromBlacklist: jest.Mock;
   };
-  brands: { findIdsByName: jest.Mock };
+  producers: { findIdsByName: jest.Mock };
   products: { findExistingIds: jest.Mock };
   users: { findByIdOrThrow: jest.Mock };
 }
@@ -62,7 +62,7 @@ function makeService(options: {
     removeFromBlacklist: jest.fn().mockResolvedValue(STORED),
   };
 
-  const brands = {
+  const producers = {
     findIdsByName: jest.fn().mockResolvedValue(options.brands ?? new Map()),
   };
 
@@ -78,12 +78,12 @@ function makeService(options: {
 
   const service = new PreferenceService(
     preferences as unknown as CorePreferenceService,
-    brands as unknown as CoreBrandService,
+    producers as unknown as CoreProducerService,
     products as unknown as CoreProductService,
     users as unknown as CoreUserService,
   );
 
-  return { service, preferences, brands, products, users };
+  return { service, preferences, producers, products, users };
 }
 
 describe('PreferenceService reads', () => {
@@ -183,16 +183,16 @@ describe('PreferenceService favorites', () => {
 
 describe('PreferenceService blacklist', () => {
   it('resolves brand names to ids before writing', async () => {
-    const { service, preferences, brands } = makeService({
+    const { service, preferences, producers } = makeService({
       brands: new Map([['Ardbeg', BRAND_ID]]),
     });
 
     await service.addToBlacklist(USER_ID, { brands: ['Ardbeg'] });
 
-    expect(brands.findIdsByName).toHaveBeenCalledWith(['Ardbeg']);
+    expect(producers.findIdsByName).toHaveBeenCalledWith(['Ardbeg']);
     expect(preferences.addToBlacklist).toHaveBeenCalledWith(USER_ID, {
       productIds: [],
-      brandIds: [BRAND_ID],
+      producerIds: [BRAND_ID],
     });
   });
 
@@ -220,7 +220,7 @@ describe('PreferenceService blacklist', () => {
 
     expect(preferences.addToBlacklist).toHaveBeenCalledWith(USER_ID, {
       productIds: [PRODUCT_ID],
-      brandIds: [BRAND_ID],
+      producerIds: [BRAND_ID],
     });
   });
 
@@ -239,7 +239,7 @@ describe('PreferenceService blacklist', () => {
   });
 
   it('removes with no product check but a strict brand lookup', async () => {
-    const { service, preferences, products, brands } = makeService({
+    const { service, preferences, products, producers } = makeService({
       products: [],
       brands: new Map([['Ardbeg', BRAND_ID]]),
     });
@@ -250,10 +250,10 @@ describe('PreferenceService blacklist', () => {
     });
 
     expect(products.findExistingIds).not.toHaveBeenCalled();
-    expect(brands.findIdsByName).toHaveBeenCalledWith(['Ardbeg']);
+    expect(producers.findIdsByName).toHaveBeenCalledWith(['Ardbeg']);
     expect(preferences.removeFromBlacklist).toHaveBeenCalledWith(USER_ID, {
       productIds: [PRODUCT_ID],
-      brandIds: [BRAND_ID],
+      producerIds: [BRAND_ID],
     });
   });
 
@@ -310,11 +310,11 @@ describe('PreferenceService per-user variants', () => {
       .toHaveBeenCalledWith(USER_ID, [PRODUCT_ID]);
     expect(preferences.addToBlacklist).toHaveBeenCalledWith(USER_ID, {
       productIds: [],
-      brandIds: [BRAND_ID],
+      producerIds: [BRAND_ID],
     });
     expect(preferences.removeFromBlacklist).toHaveBeenCalledWith(USER_ID, {
       productIds: [],
-      brandIds: [BRAND_ID],
+      producerIds: [BRAND_ID],
     });
   });
 

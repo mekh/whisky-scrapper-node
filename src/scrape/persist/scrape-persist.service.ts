@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Transactional } from 'typeorm-transactional';
 
 import { ABV_TOLERANCE, PERSIST_SWEEP_GUARD_RATIO } from '~constants';
-import { CoreBrandService } from '~core/brand';
 import { CoreCountryService } from '~core/country';
 import { CoreFlavorService } from '~core/flavor';
 import { CorePriceSnapshotService } from '~core/price-snapshot';
@@ -73,8 +72,6 @@ import type {
 export class ScrapePersistService {
   private readonly logger = new Logger(ScrapePersistService.name);
 
-  private readonly brands: CoreBrandService;
-
   private readonly types: CoreTypeService;
 
   private readonly flavors: CoreFlavorService;
@@ -92,7 +89,6 @@ export class ScrapePersistService {
   private readonly kb: KbApplyService;
 
   public constructor(
-    brands: CoreBrandService,
     types: CoreTypeService,
     flavors: CoreFlavorService,
     countries: CoreCountryService,
@@ -102,7 +98,6 @@ export class ScrapePersistService {
     producers: CoreProducerService,
     kb: KbApplyService,
   ) {
-    this.brands = brands;
     this.types = types;
     this.flavors = flavors;
     this.countries = countries;
@@ -140,9 +135,6 @@ export class ScrapePersistService {
   ): Promise<PersistCounts> {
     const inStockBefore = await this.storeProducts.countByStore(storeId);
 
-    const brandIds = await this.brands.resolveByName(
-      this.distinct(inStock.map((snap) => snap.brand)),
-    );
     const typeIds = await this.types.resolveByName(
       this.distinct(inStock.map((snap) => snap.whiskyType)),
     );
@@ -156,7 +148,7 @@ export class ScrapePersistService {
       this.distinct(inStock.map((snap) => snap.country)),
     );
 
-    const lookups = { brandIds, typeIds, countryIds };
+    const lookups = { typeIds, countryIds };
     const known = await this.storeProducts.existingSkus(storeId);
     const work = this.resolveKeys(inStock);
     const canonical = await this.resolveCanonical(work, known, lookups);
@@ -188,11 +180,10 @@ export class ScrapePersistService {
         fills.set(offer.productId, {
           id: offer.productId,
           abv: snap.abv,
-          brandId: this.brandId(snap, lookups.brandIds),
           typeId: this.typeId(snap, lookups.typeIds),
           countryId: this.countryId(snap, lookups.countryIds),
+          brandOrig: snap.brand,
           abvSource: this.factSource(snap, ProductFactField.ABV),
-          brandSource: this.factSource(snap, ProductFactField.BRAND),
           typeSource: this.factSource(snap, ProductFactField.TYPE),
           countrySource: this.factSource(snap, ProductFactField.COUNTRY),
         });
@@ -303,7 +294,7 @@ export class ScrapePersistService {
    *
    * @param work - The run's snapshots with their keys.
    * @param known - SKUs the store already lists.
-   * @param lookups - Resolved brand/type/country id maps.
+   * @param lookups - Resolved type/country id maps.
    * @returns The slot-to-id map and how many bottlings were created.
    */
   private async resolveCanonical(
@@ -365,7 +356,7 @@ export class ScrapePersistService {
    * Builds the canonical row a snapshot would create.
    *
    * @param item - The snapshot with its key.
-   * @param lookups - Resolved brand/type/country id maps.
+   * @param lookups - Resolved type/country id maps.
    * @returns The bottling to insert.
    */
   private canonicalInput(
@@ -377,7 +368,7 @@ export class ScrapePersistService {
     return {
       matchKey: item.matchKey,
       name: ProductNameUtils.resolve(snap.cleanName, snap.name),
-      brandId: this.brandId(snap, lookups.brandIds),
+      brandOrig: snap.brand,
       typeId: this.typeId(snap, lookups.typeIds),
       countryId: this.countryId(snap, lookups.countryIds),
       age: snap.ageYears,
@@ -397,7 +388,7 @@ export class ScrapePersistService {
    * @param proposed - The bottling to link a new SKU to, or null for a stored
    * one.
    * @param capturedOn - The capture day.
-   * @param lookups - Resolved brand/type/country id maps.
+   * @param lookups - Resolved type/country id maps.
    * @returns The written offer, and whether the fallback had to create a
    * bottling for it.
    */
@@ -679,10 +670,6 @@ export class ScrapePersistService {
       });
     };
 
-    if (fill.brandId && row.brandId && fill.brandId !== row.brandId) {
-      add(ProductFactField.BRAND, row.brandId, fill.brandId, row.brandSource);
-    }
-
     if (fill.typeId && row.typeId && fill.typeId !== row.typeId) {
       add(ProductFactField.TYPE, row.typeId, fill.typeId, row.typeSource);
     }
@@ -715,17 +702,6 @@ export class ScrapePersistService {
     }
 
     return out;
-  }
-
-  /**
-   * Resolves a snapshot's brand to an id.
-   *
-   * @param snap - The snapshot.
-   * @param ids - Resolved brand id map.
-   * @returns The brand id, or null.
-   */
-  private brandId(snap: ProductSnapshot, ids: Map<string, ID>): ID | null {
-    return snap.brand ? ids.get(snap.brand) ?? null : null;
   }
 
   /**

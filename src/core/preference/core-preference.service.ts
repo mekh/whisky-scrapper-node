@@ -118,10 +118,12 @@ export class CorePreferenceService {
     input: PreferenceBlacklistIds,
   ): Promise<Preference> {
     const productIds = CorePreferenceService.normalize(input.productIds);
-    const brandIds = CorePreferenceService.normalize(input.brandIds);
+    const producerIds = CorePreferenceService.normalize(
+      input.producerIds,
+    );
 
     await this.repo.addBlacklistProducts(userId, productIds);
-    await this.repo.addBlacklistBrands(userId, brandIds);
+    await this.repo.addBlacklistBrands(userId, producerIds);
     await this.repo.removeFavorites(userId, productIds);
 
     return this.repo.findByUserId(userId);
@@ -148,7 +150,7 @@ export class CorePreferenceService {
 
     await this.repo.removeBlacklistBrands(
       userId,
-      CorePreferenceService.normalize(input.brandIds),
+      CorePreferenceService.normalize(input.producerIds),
     );
 
     return this.repo.findByUserId(userId);

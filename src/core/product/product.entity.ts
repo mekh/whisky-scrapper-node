@@ -10,6 +10,7 @@ import {
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 
 import {
+  BRAND_NAME_MAX_LENGTH,
   KB_ENUM_MAX_LENGTH,
   PRODUCT_MATCH_KEY_MAX_LENGTH,
   PRODUCT_NAME_MAX_LENGTH,
@@ -17,7 +18,6 @@ import {
 import { GuidV7Column } from '~decorators/columns';
 import { FactSource } from '~enums';
 import type {
-  EntityBrand,
   EntityCountry,
   EntityProducer,
   EntityProduct,
@@ -75,8 +75,11 @@ export class ProductEntity extends BaseRichEntity implements EntityProduct {
   @Column({ type: 'int', nullable: true })
   public volumeMl?: number;
 
-  @GuidV7Column({ nullable: true })
-  public brandId?: ID;
+  @IsString()
+  @IsOptional()
+  @MaxLength(BRAND_NAME_MAX_LENGTH)
+  @Column({ length: BRAND_NAME_MAX_LENGTH, nullable: true })
+  public brandOrig?: string;
 
   @GuidV7Column({ nullable: true })
   public typeId?: ID;
@@ -118,11 +121,6 @@ export class ProductEntity extends BaseRichEntity implements EntityProduct {
   @IsOptional()
   @IsEnum(FactSource)
   @Column({ type: 'varchar', length: KB_ENUM_MAX_LENGTH, nullable: true })
-  public brandSource?: FactSource;
-
-  @IsOptional()
-  @IsEnum(FactSource)
-  @Column({ type: 'varchar', length: KB_ENUM_MAX_LENGTH, nullable: true })
   public abvSource?: FactSource;
 
   @IsOptional()
@@ -139,17 +137,6 @@ export class ProductEntity extends BaseRichEntity implements EntityProduct {
   @IsEnum(FactSource)
   @Column({ type: 'varchar', length: KB_ENUM_MAX_LENGTH, nullable: true })
   public producerSource?: FactSource;
-
-  @ManyToOne(
-    'BrandEntity',
-    (brand: EntityBrand) => brand.id,
-    { onDelete: 'SET NULL', nullable: true },
-  )
-  @JoinColumn({
-    foreignKeyConstraintName: 'fk_product_brand',
-    name: 'brandId',
-  })
-  public brand?: EntityBrand;
 
   @ManyToOne(
     'TypeEntity',

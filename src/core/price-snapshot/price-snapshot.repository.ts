@@ -28,7 +28,8 @@ import { PriceSnapshotEntity } from './price-snapshot.entity';
 const DAILY_SELECT = `
   COUNT(*)::int AS "inStockListings",
   COUNT(DISTINCT sp."productId")::int AS "distinctProducts",
-  COUNT(DISTINCT p."brandId")::int AS "distinctBrands",
+  COUNT(DISTINCT COALESCE(p."producerId", p."bottlerId"))::int
+    AS "distinctBrands",
   COUNT(DISTINCT sp."storeId")::int AS "activeStores",
   percentile_cont(0.25) WITHIN GROUP (ORDER BY ps.price)::float8
     AS "p25Price",

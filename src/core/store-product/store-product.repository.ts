@@ -62,7 +62,7 @@ const CURRENT_SQL = `
          sp."firstSeen"::text AS "firstSeen", sp."inStock",
          p.name, p.age, p.abv, p."volumeMl",
          st.slug AS "storeSlug", st.name AS "storeName",
-         b.name AS brand, t.name AS type,
+         COALESCE(pr.name, bo.name) AS brand, t.name AS type,
          c.code AS "countryCode", c."nameUa" AS "countryName",
          c.icon AS "countryIcon",
          r.price::float8 AS price,
@@ -82,7 +82,6 @@ const CURRENT_SQL = `
            'name', p."nameSource",
            'type', p."typeSource",
            'country', p."countrySource",
-           'brand', p."brandSource",
            'abv', p."abvSource",
            'age', p."ageSource",
            'volume', p."volumeSource",
@@ -92,7 +91,6 @@ const CURRENT_SQL = `
   JOIN store_product sp ON sp.id = r."storeProductId"
   JOIN product p ON p.id = sp."productId"
   JOIN store st ON st.id = sp."storeId"
-  LEFT JOIN brand b ON b.id = p."brandId"
   LEFT JOIN type t ON t.id = p."typeId"
   LEFT JOIN country c ON c.id = p."countryId"
   LEFT JOIN producer pr ON pr.id = p."producerId"
@@ -273,13 +271,19 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
    * The last three predicates are the running user's own, and all three filter
    * the bottling rather than the offer, so they compose with the report's
    * grouping for free: a group is either wholly present or wholly gone. The two
-   * blacklist ones are unconditional — a hidden product or brand is hidden on
-   * every report kind, and no query parameter turns them off. Note the brand
-   * one's NULL semantics: the comparison is UNKNOWN when the bottling has no
-   * brand, so the subquery finds nothing and `NOT EXISTS` holds — a brandless
-   * product survives every brand blacklist, which is the only sane reading,
-   * since there is no "unknown brand" to hide. `favoritesOnly` is the one that
-   * is opt-in, and with no favorites at all it correctly yields nothing.
+   * blacklist ones are unconditional — a hidden bottling or brand is hidden on
+   * every report kind, and no query parameter turns them off.
+   *
+   * The brand rule tests **both producer slots**, and that is load-bearing
+   * rather than thorough: an independently bottled whisky carries its bottler
+   * in `bottlerId` and the distillery in `producerId`, so a rule naming
+   * Douglas Laing would otherwise hide none of the eighty-one bottlings it
+   * released. Its NULL semantics are unchanged from the `brandId` version it
+   * replaces — `IN (NULL, NULL)` is UNKNOWN, so the subquery finds nothing and
+   * `NOT EXISTS` holds, and a bottling the knowledge base cannot place
+   * survives every brand rule. That is still the only sane reading: there is
+   * no "unknown brand" to hide. `favoritesOnly` is the one that is opt-in, and
+   * with no favorites at all it correctly yields nothing.
    *
    * @param filter - The report filter; empty fields mean no constraint.
    * @returns One row per matching offer.
@@ -357,8 +361,9 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
         SELECT 1 FROM blacklist_product bp
         WHERE bp."userId" = $14 AND bp."productId" = p.id)
       AND NOT EXISTS (
-        SELECT 1 FROM blacklist_brand bb
-        WHERE bb."userId" = $14 AND bb."brandId" = p."brandId")
+        SELECT 1 FROM blacklist_producer bp
+        WHERE bp."userId" = $14
+          AND bp."producerId" IN (p."producerId", p."bottlerId"))
       AND ($18::text[] IS NULL OR pr.region = ANY($18))
       AND ($19::text[] IS NULL
            OR pr.region IS NULL OR NOT (pr.region = ANY($19)))

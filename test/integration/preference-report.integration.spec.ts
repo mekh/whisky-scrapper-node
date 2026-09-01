@@ -1,12 +1,17 @@
 import { TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 
-import { CoreBrandService } from '~core/brand';
 import { CorePreferenceService } from '~core/preference';
 import { CorePriceSnapshotService } from '~core/price-snapshot';
 import { CoreProductService } from '~core/product';
 import { CoreStoreProductService } from '~core/store-product';
-import { ReportKind, ReportWindow, SortOrder } from '~enums';
+import {
+  KbStatus,
+  ProducerKind,
+  ReportKind,
+  ReportWindow,
+  SortOrder,
+} from '~enums';
 import type { ID, ReportFilter, ReportGroup, ReportOptions } from '~types';
 
 import { ReportService } from '../../src/domain/report/report.service';
@@ -30,6 +35,12 @@ const TOKEN = `itpr${STAMP}`;
 
 const BRAND = `__it_pr_brand_${STAMP}`;
 
+const BRAND_SLUG = `it-pr-brand-${STAMP}`;
+
+const BOTTLER = `__it_pr_bottler_${STAMP}`;
+
+const BOTTLER_SLUG = `it-pr-bottler-${STAMP}`;
+
 const DAY = '2026-07-25';
 
 const OPTIONS: ReportOptions = {
@@ -52,14 +63,17 @@ describe('preference filtering over the live report query', () => {
   let products: CoreProductService;
   let offers: CoreStoreProductService;
   let snapshots: CorePriceSnapshotService;
-  let brands: CoreBrandService;
   let preferences: CorePreferenceService;
   let service: ReportService;
   let storeA: ID;
   let storeB: ID;
   let userA: ID;
   let userB: ID;
-  let brandId: ID;
+  let producerId: ID;
+
+  let bottlerId: ID;
+
+  let bottledId: ID;
   let brandedId: ID;
   let siblingId: ID;
   let brandlessId: ID;
@@ -143,16 +157,20 @@ describe('preference filtering over the live report query', () => {
    * Creates a bottling whose name carries the suite token.
    *
    * @param key - Suffix of its match key.
-   * @param brand - Brand to attach, or null for a brandless bottling.
+   * @param producer - Producer to attach, or null for a bottling the
+   *   knowledge base cannot place.
    * @returns The new product id.
    */
-  const makeBottling = async (key: string, brand: ID | null): Promise<ID> => {
+  const makeBottling = async (
+    key: string,
+    producer: ID | null,
+  ): Promise<ID> => {
     const { ids } = await products.findOrCreateByMatchKeys([
       {
         factSources: {},
         matchKey: `${TOKEN}-${key}`,
         name: `${key} ${TOKEN} 0.7l`,
-        brandId: brand,
+        brandOrig: null,
         typeId: null,
         countryId: null,
         age: null,
@@ -161,7 +179,16 @@ describe('preference filtering over the live report query', () => {
       },
     ]);
 
-    return [...ids.values()][0];
+    const id = [...ids.values()][0];
+
+    if (producer !== null) {
+      await dataSource.query(
+        'UPDATE product SET "producerId" = $1 WHERE id = $2',
+        [producer, id],
+      );
+    }
+
+    return id;
   };
 
   /**
@@ -207,7 +234,6 @@ describe('preference filtering over the live report query', () => {
     products = moduleRef.get(CoreProductService, { strict: false });
     offers = moduleRef.get(CoreStoreProductService, { strict: false });
     snapshots = moduleRef.get(CorePriceSnapshotService, { strict: false });
-    brands = moduleRef.get(CoreBrandService, { strict: false });
     preferences = moduleRef.get(CorePreferenceService, { strict: false });
 
     service = new ReportService(offers, snapshots);
@@ -217,12 +243,24 @@ describe('preference filtering over the live report query', () => {
     userA = await makeUser('a');
     userB = await makeUser('b');
 
-    const resolved = await brands.resolveByName([BRAND]);
+    const seeded = await dataSource.query(
+      `INSERT INTO producer (slug, name, kind, status)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [BRAND_SLUG, BRAND, ProducerKind.DISTILLERY, KbStatus.AUTO],
+    ) as { id: ID }[];
 
-    brandId = resolved.get(BRAND) as ID;
+    producerId = seeded[0].id;
 
-    brandedId = await makeBottling('branded', brandId);
-    siblingId = await makeBottling('sibling', brandId);
+    const bottlerRows = await dataSource.query(
+      `INSERT INTO producer (slug, name, kind, status)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [BOTTLER_SLUG, BOTTLER, ProducerKind.BOTTLER, KbStatus.AUTO],
+    ) as { id: ID }[];
+
+    bottlerId = bottlerRows[0].id;
+
+    brandedId = await makeBottling('branded', producerId);
+    siblingId = await makeBottling('sibling', producerId);
     brandlessId = await makeBottling('brandless', null);
     plainId = await makeBottling('plain', null);
 
@@ -236,6 +274,19 @@ describe('preference filtering over the live report query', () => {
     await makeOffer(storeA, siblingId, 1300);
     await makeOffer(storeA, brandlessId, 1400);
     await makeOffer(storeA, plainId, 1500);
+
+    /**
+     * An independently bottled whisky: the distillery is unknown, the bottler
+     * is not. This is the shape that made the brand rule worth re-testing.
+     */
+    bottledId = await makeBottling('bottled', null);
+
+    await dataSource.query(
+      'UPDATE product SET "bottlerId" = $1 WHERE id = $2',
+      [bottlerId, bottledId],
+    );
+
+    await makeOffer(storeA, bottledId, 1600);
   });
 
   afterEach(async () => {
@@ -248,14 +299,20 @@ describe('preference filtering over the live report query', () => {
       [[userA, userB]],
     );
     await dataSource.query(
-      'DELETE FROM blacklist_brand WHERE "userId" = ANY($1::uuid[])',
+      'DELETE FROM blacklist_producer WHERE "userId" = ANY($1::uuid[])',
       [[userA, userB]],
     );
   });
 
   afterAll(async () => {
     if (dataSource?.isInitialized) {
-      const productIds = [brandedId, siblingId, brandlessId, plainId];
+      const productIds = [
+        brandedId,
+        siblingId,
+        brandlessId,
+        plainId,
+        bottledId,
+      ];
 
       await dataSource.query(
         'DELETE FROM store_product WHERE "storeId" = ANY($1::uuid[])',
@@ -265,7 +322,10 @@ describe('preference filtering over the live report query', () => {
         'DELETE FROM product WHERE id = ANY($1::uuid[])',
         [productIds],
       );
-      await dataSource.query('DELETE FROM brand WHERE id = $1', [brandId]);
+      await dataSource.query(
+        'DELETE FROM producer WHERE id = ANY($1::uuid[])',
+        [[producerId, bottlerId]],
+      );
       await dataSource.query(
         'DELETE FROM store WHERE id = ANY($1::uuid[])',
         [[storeA, storeB]],
@@ -283,14 +343,14 @@ describe('preference filtering over the live report query', () => {
     const groups = await run(userA);
 
     expect(idsOf(groups)).toEqual(
-      [brandedId, siblingId, brandlessId, plainId].sort(),
+      [brandedId, siblingId, brandlessId, plainId, bottledId].sort(),
     );
   });
 
   it('hides a blacklisted bottling for that user only', async () => {
     await preferences.addToBlacklist(userA, {
       productIds: [brandedId],
-      brandIds: [],
+      producerIds: [],
     });
 
     expect(idsOf(await run(userA))).not.toContain(brandedId);
@@ -302,7 +362,7 @@ describe('preference filtering over the live report query', () => {
     async (kind) => {
       await preferences.addToBlacklist(userA, {
         productIds: [brandedId],
-        brandIds: [],
+        producerIds: [],
       });
 
       const groups = await run(userA, {}, kind);
@@ -314,7 +374,7 @@ describe('preference filtering over the live report query', () => {
   it('hides a blacklisted brand, sparing the brandless', async () => {
     await preferences.addToBlacklist(userA, {
       productIds: [],
-      brandIds: [brandId],
+      producerIds: [producerId],
     });
 
     const ids = idsOf(await run(userA));
@@ -323,12 +383,34 @@ describe('preference filtering over the live report query', () => {
     expect(ids).not.toContain(siblingId);
 
     /**
-     * The brand comparison is UNKNOWN for a null `brandId`, so `NOT EXISTS`
-     * holds and a brandless bottling survives: there is no unknown brand
-     * to hide.
+     * The comparison is UNKNOWN when neither producer slot is filled, so
+     * `NOT EXISTS` holds and such a bottling survives: there is no unknown
+     * maker to hide.
      */
     expect(ids).toContain(brandlessId);
     expect(ids).toContain(plainId);
+  });
+
+  /**
+   * The predicate this change was most likely to break. A brand rule used to
+   * name a `brand` row, and an independently bottled whisky carried the
+   * bottler there — so hiding `Douglas Laing` hid its eighty-one bottlings.
+   * Naming a producer instead would have hidden none of them, because the
+   * distillery sits in `producerId` and the bottler in `bottlerId`, unless the
+   * rule tests both slots. It does.
+   */
+  it('hides a bottling whose blacklisted maker is its bottler', async () => {
+    await preferences.addToBlacklist(userA, {
+      productIds: [],
+      producerIds: [bottlerId],
+    });
+
+    const ids = idsOf(await run(userA));
+
+    expect(ids).not.toContain(bottledId);
+
+    expect(ids).toContain(brandedId);
+    expect(ids).toContain(brandlessId);
   });
 
   it('keeps only the favorites when the filter is on', async () => {
@@ -370,7 +452,7 @@ describe('preference filtering over the live report query', () => {
 
     await preferences.addToBlacklist(userA, {
       productIds: [brandedId],
-      brandIds: [],
+      producerIds: [],
     });
 
     /**

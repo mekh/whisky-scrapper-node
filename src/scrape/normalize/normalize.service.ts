@@ -1,7 +1,13 @@
 import { Injectable } from '@nestjs/common';
 
 import { FactSource, ProductFactField } from '~enums';
-import { BrandUtils, ProductMatchUtils, ProductNameUtils } from '~utils';
+import {
+  BrandUtils,
+  KbAliasUtils,
+  KbKeyUtils,
+  ProductMatchUtils,
+  ProductNameUtils,
+} from '~utils';
 
 import {
   BRAND_INFO,
@@ -12,8 +18,8 @@ import {
   UMBRELLA_COUNTRIES,
 } from './brand-info.constants';
 
-import type { ProductSnapshot } from '~types';
-import type { BrandDetection, BrandMatchEntry } from './normalize.interfaces';
+import type { KbAliasEntry, ProductSnapshot } from '~types';
+import type { BrandDetection } from './normalize.interfaces';
 
 // Cyrillic letters, used in place of ASCII-only \w / \b (JS keeps those ASCII
 // even under the u flag, unlike Python's Unicode-aware regex). The trailing
@@ -73,7 +79,6 @@ const STORE_FACT_FIELDS: [
   ProductFactField,
   (snap: ProductSnapshot) => unknown,
 ][] = [
-  [ProductFactField.BRAND, (snap): unknown => snap.brand],
   [ProductFactField.VOLUME, (snap): unknown => snap.volumeMl],
   [ProductFactField.ABV, (snap): unknown => snap.abv],
   [ProductFactField.AGE, (snap): unknown => snap.ageYears],
@@ -419,64 +424,54 @@ export class NormalizeService {
   }
 
   /**
-   * Builds the brand match index from the catalogue's known brand names. The
-   * table is the source, not the `BRAND_INFO` keys: those are stripped match
-   * keys, and title-casing one back into a brand would mint a second row next
-   * to the spelling the catalogue already uses ("Jack Daniels" beside
-   * "Jack Daniel's").
+   * The brand string that decides a bottling's identity.
    *
-   * A brand carrying no identity of its own is left out
-   * (`ProductMatchUtils.carriesIdentity`), and that guard is the whole reason
-   * this pass can be trusted: `brandHaystack` deletes every non-alphanumeric
-   * run, so the `& Whisky` row a legacy import left in the table — goodwine's
-   * own category label, not a brand — reduces to the bare key `whisky`. Six
-   * characters long, it then won the longest-key-first sort against real
-   * brands and handed itself to every product whose name ends in the word:
-   * `Віскі Umiki Whisky` was stored as `& Whisky` while its own `Umiki` row
-   * sat one character shorter in the same index. A brand recognisable only by
-   * punctuation the matcher deletes cannot be recognised from a name at all.
+   * **Not the brand a listing shows, and not the label a report prints.** It
+   * is the token `ProductMatchUtils.key` folds into the frozen match key, and
+   * it is resolved against the knowledge base so that nineteen shops spelling
+   * one maker nineteen ways still sign the same bottling: `The Macallan` and
+   * `Macallan`, `M H` and `M&h Elements`, `Chivas` and `Chivas Regal`,
+   * `Isle of Jura` and `Jura` all reduce to one producer here.
    *
-   * @param names - Canonical brand names, as stored in the `brand` table.
-   * @returns The index, longest key first; duplicate keys keep the first name.
+   * The resolved value is the producer's **slug**, never its name. Both are
+   * curated, but `producer.name` is a display string that
+   * `PATCH /producer/:id` rewrites, and a match key that moved whenever a
+   * reviewer tidied a spelling would be no more stable than the shop strings
+   * this replaces. The slug is unique, is never edited for display, and is
+   * short — folding to the name instead inflated the key with the producer's
+   * legal title (`TBWC` becomes `thatboutiqueycompany`) and restated three
+   * times as many keys for no gain.
+   *
+   * A brand the knowledge base does not know falls back to its own canonical
+   * spelling, which is exactly what the key used before, so an unresearched
+   * brand keeps working and simply stops improving.
+   *
+   * @param snap - The snapshot to identify.
+   * @param aliases - The knowledge base's alias index, longest key first.
+   * @returns The identity brand, or null when neither the brand field nor the
+   *   name names anything.
    */
-  public buildBrandIndex(names: string[]): BrandMatchEntry[] {
-    const seen = new Set<string>();
-    const entries: BrandMatchEntry[] = [];
-
-    names.forEach((name) => {
-      const key = this.brandHaystack(name).trim();
-
-      if (!key || seen.has(key) || !ProductMatchUtils.carriesIdentity(name)) {
-        return;
-      }
-
-      seen.add(key);
-      entries.push({ key, name });
-    });
-
-    return entries.sort((left, right) => right.key.length - left.key.length);
-  }
-
-  /**
-   * Finds the brand a product name states. Longest key first, so a specific
-   * brand wins over a shorter one contained in it ("Highland Park" over
-   * "Highland"), and both sides are space-wrapped, so a key only matches whole
-   * words ("Arran" never matches inside "arrangement"). Reads the name alone —
-   * a description mentions other brands.
-   *
-   * @param name - The product name.
-   * @param index - The brand index (see {@link buildBrandIndex}).
-   * @returns The canonical brand name, or null when none matched.
-   */
-  public detectBrandFromName(
-    name: string,
-    index: BrandMatchEntry[],
+  public resolveKeyBrand(
+    snap: ProductSnapshot,
+    aliases: KbAliasEntry[],
   ): string | null {
-    const haystack = this.brandHaystack(name);
+    const canonical = BrandUtils.canonical(snap.brand);
 
-    const match = index.find((entry) => haystack.includes(` ${entry.key} `));
+    if (canonical !== null) {
+      const stated = KbAliasUtils.matchByBrand(
+        KbKeyUtils.key(canonical),
+        aliases,
+      );
 
-    return match?.name ?? null;
+      return stated ? stated.producer.slug : canonical;
+    }
+
+    const named = KbAliasUtils.matchInName(
+      KbKeyUtils.normalize(snap.name),
+      aliases,
+    );
+
+    return named ? named.producer.slug : null;
   }
 
   /**
@@ -484,16 +479,20 @@ export class NormalizeService {
    * site already provided. Age and type are read only from the name (a
    * description's "N years" usually means brand history, not maturation).
    *
+   * `snap.brand` is left holding **what the shop stated**, canonicalized and
+   * nothing more. It used to be filled in from the product name when a shop
+   * stated none, and that job has moved: the name now reaches the knowledge
+   * base directly, through {@link resolveKeyBrand} for identity and through
+   * `KbResolverService` for the producer a report labels the bottling with.
+   * What survives here is the one thing neither of those records — the string
+   * a shop actually used — which is what `product.brandOrig` stores and what
+   * `pnpm research-brands` reads to find the makers the knowledge base is
+   * still missing.
+   *
    * @param snap - The snapshot to enrich (mutated in place).
-   * @param brandIndex - Known brand names to read a missing brand from; empty
-   * disables that pass. Passed in per run rather than cached here, since the
-   * service is a singleton and stores sync concurrently.
    * @returns The same snapshot.
    */
-  public normalize(
-    snap: ProductSnapshot,
-    brandIndex: BrandMatchEntry[] = [],
-  ): ProductSnapshot {
+  public normalize(snap: ProductSnapshot): ProductSnapshot {
     /**
      * Taken before anything is derived: whatever the snapshot already carries
      * at this point came from the store's listing or its detail page, because
@@ -504,12 +503,6 @@ export class NormalizeService {
     this.stampStoreSources(snap);
 
     snap.brand = BrandUtils.canonical(snap.brand);
-
-    if (snap.brand === null && brandIndex.length > 0) {
-      snap.brand = this.detectBrandFromName(snap.name, brandIndex);
-
-      this.stamp(snap, ProductFactField.BRAND, snap.brand);
-    }
 
     const haystack = this.haystack(snap);
 
@@ -552,17 +545,15 @@ export class NormalizeService {
    * anything guessed from a name.
    *
    * @param snap - The snapshot to identify.
-   * @param brandIndex - Known brand names, to read a missing brand from.
+   * @param aliases - The knowledge base's alias index; empty resolves nothing
+   *   and falls back to the shop's own spelling.
    * @returns The match key, or null when the name carries no identity.
    */
   public matchKey(
     snap: ProductSnapshot,
-    brandIndex: BrandMatchEntry[] = [],
+    aliases: KbAliasEntry[] = [],
   ): string | null {
-    const brand = BrandUtils.canonical(snap.brand)
-      ?? (brandIndex.length > 0
-        ? this.detectBrandFromName(snap.name, brandIndex)
-        : null);
+    const brand = this.resolveKeyBrand(snap, aliases);
 
     return ProductMatchUtils.key(
       ProductNameUtils.resolve(snap.cleanName, snap.name),

@@ -21,11 +21,6 @@ export interface ResolvedSnapshot {
  */
 export interface PersistLookups {
   /**
-   * Brand name to id.
-   */
-  brandIds: Map<string, ID>;
-
-  /**
    * Whisky-type name to id.
    */
   typeIds: Map<string, ID>;

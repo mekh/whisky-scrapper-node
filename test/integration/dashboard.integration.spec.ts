@@ -98,7 +98,7 @@ describe('dashboard aggregates over the live queries (integration)', () => {
         factSources: {},
         matchKey: `${TOKEN}-${key}`,
         name: `Dash ${TOKEN} ${key}`,
-        brandId: null,
+        brandOrig: null,
         typeId: null,
         countryId: null,
         age: null,

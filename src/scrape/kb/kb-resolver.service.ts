@@ -2,10 +2,8 @@ import { Injectable } from '@nestjs/common';
 
 import {
   FlavorRuleMatchMode,
-  KB_NAME_ALIAS_MIN_LENGTH,
   KbFlavorEffect,
   PeatProfile,
-  ProducerAliasScope,
   ProducerKind,
 } from '~enums';
 import {
@@ -18,7 +16,7 @@ import {
   KbResolution,
   KbResolveInput,
 } from '~types';
-import { KbKeyUtils } from '~utils';
+import { KbAliasUtils, KbKeyUtils } from '~utils';
 
 import type { KbProducerMatch } from './kb.interfaces';
 
@@ -140,9 +138,14 @@ export class KbResolverService {
     brandKey: string | null,
     aliases: KbAliasEntry[],
   ): KbProducerMatch {
-    const byBrand = this.matchByBrand(brandKey, aliases);
+    const byBrand = KbAliasUtils.matchByBrand(brandKey, aliases)?.producer
+      ?? null;
     const isBottlerBrand = byBrand?.kind === ProducerKind.BOTTLER;
-    const inName = this.matchInName(nameKey, aliases, byBrand);
+    const inName = KbAliasUtils.matchInName(
+      nameKey,
+      aliases,
+      byBrand?.id ?? null,
+    )?.producer ?? null;
     const chosen = isBottlerBrand
       ? inName
       : this.arbitrate(byBrand, inName);
@@ -227,57 +230,6 @@ export class KbResolverService {
     }
 
     return null;
-  }
-
-  /**
-   * Matches the brand value against the alias index, as a whole string.
-   *
-   * @param brandKey - The normalized brand value, or null.
-   * @param aliases - The alias index.
-   * @returns The producer, or null.
-   */
-  private matchByBrand(
-    brandKey: string | null,
-    aliases: KbAliasEntry[],
-  ): KbProducerFacts | null {
-    if (!brandKey) {
-      return null;
-    }
-
-    const hit = aliases.find((alias) =>
-      alias.key === brandKey
-      && alias.scope !== ProducerAliasScope.NAME
-    );
-
-    return hit?.producer ?? null;
-  }
-
-  /**
-   * Finds the most specific producer named inside a product name.
-   *
-   * Only aliases long enough to be unambiguous as a substring are considered,
-   * and the bottler already matched by the brand value is skipped so a title
-   * like `Douglas Laing Big Peat` does not resolve its own bottler as the
-   * distillery.
-   *
-   * @param nameKey - The normalized, space-wrapped product name.
-   * @param aliases - The alias index, longest key first.
-   * @param exclude - A producer to ignore, typically the matched bottler.
-   * @returns The producer, or null.
-   */
-  private matchInName(
-    nameKey: string,
-    aliases: KbAliasEntry[],
-    exclude: KbProducerFacts | null,
-  ): KbProducerFacts | null {
-    const hit = aliases.find((alias) =>
-      alias.scope !== ProducerAliasScope.BRAND
-      && alias.key.length >= KB_NAME_ALIAS_MIN_LENGTH
-      && alias.producer.id !== exclude?.id
-      && KbKeyUtils.matchesWord(nameKey, alias.key)
-    );
-
-    return hit?.producer ?? null;
   }
 
   /**

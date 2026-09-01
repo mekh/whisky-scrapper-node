@@ -122,7 +122,7 @@ describe('report grouping over the live query (integration)', () => {
         factSources: {},
         matchKey: `${TOKEN}-${key}`,
         name,
-        brandId: null,
+        brandOrig: null,
         typeId: null,
         countryId: null,
         age,

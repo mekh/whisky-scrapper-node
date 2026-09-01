@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import { CoreBrandService } from '~core/brand';
+import { CoreProducerService } from '~core/producer';
 import { CorePreferenceService } from '~core/preference';
 import { CoreProductService } from '~core/product';
 import { CoreUserService } from '~core/user';
@@ -36,7 +36,7 @@ export class PreferenceService {
 
   public constructor(
     private readonly preferences: CorePreferenceService,
-    private readonly brands: CoreBrandService,
+    private readonly producers: CoreProducerService,
     private readonly products: CoreProductService,
     private readonly users: CoreUserService,
   ) {}
@@ -187,9 +187,12 @@ export class PreferenceService {
     PreferenceService.assertNotEmpty(input);
     await this.assertProductsExist(productIds);
 
-    const brandIds = await this.resolveBrandIds(input.brands ?? []);
+    const producerIds = await this.resolveBrandIds(input.brands ?? []);
 
-    return this.preferences.addToBlacklist(userId, { productIds, brandIds });
+    return this.preferences.addToBlacklist(userId, {
+      productIds,
+      producerIds,
+    });
   }
 
   /**
@@ -233,11 +236,11 @@ export class PreferenceService {
   ): Promise<Preference> {
     PreferenceService.assertNotEmpty(input);
 
-    const brandIds = await this.resolveBrandIds(input.brands ?? []);
+    const producerIds = await this.resolveBrandIds(input.brands ?? []);
 
     return this.preferences.removeFromBlacklist(userId, {
       productIds: input.productIds ?? [],
-      brandIds,
+      producerIds,
     });
   }
 
@@ -262,18 +265,22 @@ export class PreferenceService {
   }
 
   /**
-   * Resolves brand names to ids, creating nothing.
+   * Resolves brand names to producer ids, creating nothing.
    *
-   * @param names - Canonical brand names as `/report` reports them.
-   * @returns The matching brand ids.
-   * @throws {BadRequestError} When a name matches no brand in the catalogue.
+   * The names are the ones `/report` prints and `/brand/search` offers, which
+   * are `producer.name` — so a rule names one curated maker rather than one of
+   * the several spellings the retired `brand` table carried it under.
+   *
+   * @param names - Producer names as `/report` reports them.
+   * @returns The matching producer ids.
+   * @throws {BadRequestError} When a name matches no producer.
    */
   private async resolveBrandIds(names: string[]): Promise<ID[]> {
     if (!names.length) {
       return [];
     }
 
-    const resolved = await this.brands.findIdsByName(names);
+    const resolved = await this.producers.findIdsByName(names);
 
     const unknown = names.filter((name) => !resolved.has(name.trim()));
 

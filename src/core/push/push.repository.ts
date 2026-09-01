@@ -107,8 +107,9 @@ const CLAIM_DROPS_SQL = `
         SELECT 1 FROM blacklist_product bp
         WHERE bp."userId" = f."userId" AND bp."productId" = sp."productId")
       AND NOT EXISTS (
-        SELECT 1 FROM blacklist_brand bb
-        WHERE bb."userId" = f."userId" AND bb."brandId" = p."brandId")
+        SELECT 1 FROM blacklist_producer bp2
+        WHERE bp2."userId" = f."userId"
+          AND bp2."producerId" IN (p."producerId", p."bottlerId"))
   ),
   claimed AS (
     INSERT INTO push_digest_log

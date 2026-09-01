@@ -1,10 +1,42 @@
 import 'reflect-metadata';
 
+import { PeatProfile, ProducerAliasScope, ProducerKind } from '~enums';
+import { KbAliasUtils, KbKeyUtils } from '~utils';
+
 import { NormalizeService } from '../../src/scrape/normalize/normalize.service';
 
-import type { ProductSnapshot } from '~types';
+import type { KbAliasEntry, ProductSnapshot } from '~types';
 
 const n = new NormalizeService();
+
+/**
+ * Builds the alias entries one producer would contribute to the index,
+ * normalizing each spelling the way the seed importer does.
+ *
+ * @param slug - The producer slug, which doubles as its id here.
+ * @param keys - The raw spellings that resolve to it.
+ * @param name - Its display name.
+ * @returns The alias entries, in the order given.
+ */
+function alias(slug: string, keys: string[], name: string): KbAliasEntry[] {
+  return keys.map((key) => ({
+    key: KbKeyUtils.key(key),
+    scope: ProducerAliasScope.ANY,
+    producer: {
+      id: slug,
+      slug,
+      name,
+      kind: ProducerKind.DISTILLERY,
+      countryId: null,
+      region: null,
+      legalRegion: null,
+      parentId: null,
+      bottlerId: null,
+      defaultTypeName: null,
+      peatProfile: PeatProfile.UNKNOWN,
+    },
+  }));
+}
 
 function snap(
   name: string,
@@ -333,94 +365,120 @@ describe('NormalizeService.detectBrandInfo', () => {
   });
 });
 
-describe('NormalizeService brand detection from the name', () => {
-  const index = n.buildBrandIndex([
-    'Highland',
-    'Highland Park',
-    "Jack Daniel's",
-    'Arran',
-    'Highland Park',
+describe('NormalizeService.resolveKeyBrand', () => {
+  const index = KbAliasUtils.usable([
+    ...alias('highland-park', ['Highland Park'], 'Highland Park'),
+    ...alias('jack-daniels', ["Jack Daniel's"], "Jack Daniel's"),
+    ...alias('macallan', ['Macallan', 'The Macallan'], 'Macallan'),
+    ...alias('m-h', ['M H', 'M&H Elements'], 'M&H'),
+    ...alias('arran', ['Arran'], 'Arran'),
+    ...alias('jb', ['J&B'], 'J&B'),
   ]);
 
-  it('builds a deduplicated index, longest key first', () => {
-    expect(index.map((entry) => entry.key)).toEqual([
-      'highland park',
-      'jack daniels',
-      'highland',
-      'arran',
-    ]);
+  /**
+   * The whole point of resolving against the knowledge base: two shops
+   * spelling one maker differently must sign the same bottling. The value is
+   * the producer's slug rather than its name, so the key does not move when a
+   * reviewer edits a display spelling.
+   */
+  it('folds every spelling of one producer onto its slug', () => {
+    expect(n.resolveKeyBrand(snap('x', { brand: 'Macallan' }), index))
+      .toBe('macallan');
+    expect(n.resolveKeyBrand(snap('x', { brand: 'The Macallan' }), index))
+      .toBe('macallan');
+    expect(n.resolveKeyBrand(snap('x', { brand: 'M H' }), index))
+      .toBe('m-h');
+    expect(n.resolveKeyBrand(snap('x', { brand: 'M&h Elements' }), index))
+      .toBe('m-h');
   });
 
-  it('prefers the longest matching brand', () => {
-    expect(n.detectBrandFromName('Віскі Highland Park 12yo 0,7л', index))
-      .toBe('Highland Park');
+  /**
+   * A brand field states the brand and nothing else, so it is matched whole.
+   * That is what lets `J&B` resolve at all — the five-character floor below
+   * applies only to the substring path.
+   */
+  it('matches a short brand value as a whole string', () => {
+    expect(n.resolveKeyBrand(snap('x', { brand: 'J&B' }), index)).toBe('jb');
   });
 
-  it('matches across apostrophe spelling', () => {
-    expect(n.detectBrandFromName('Jack Daniels Old No.7 40% 0,7л', index))
-      .toBe("Jack Daniel's");
+  it('reads a producer out of the name when the shop states none', () => {
+    expect(n.resolveKeyBrand(snap('Віскі Highland Park 12yo 0,7л'), index))
+      .toBe('highland-park');
+    expect(n.resolveKeyBrand(snap('Jack Daniels Old No.7 40% 0,7л'), index))
+      .toBe('jack-daniels');
   });
 
-  it('does not match a brand inside a longer word', () => {
-    expect(n.detectBrandFromName('Whisky arrangement gift box', index))
+  it('does not match a producer inside a longer word', () => {
+    expect(n.resolveKeyBrand(snap('Whisky arrangement gift box'), index))
       .toBeNull();
   });
 
   /**
-   * The reported defect, end to end. `& Whisky` is goodwine's own category
-   * label (`&wine` / `&whisky` / `&food` name its departments), left in the
-   * `brand` table by a legacy import. `brandHaystack` deletes every
-   * non-alphanumeric run, so it reduced to the bare key `whisky` — six
-   * characters, one more than `umiki`, so the longest-key-first sort handed
-   * `Віскі Umiki Whisky` a brand it has nothing to do with.
-   *
-   * Measured over the catalogue the same collision was suppressing the right
-   * answer on 63 listings, `Jura`, `Arran`, `Nikka` and `Bell's` among them —
-   * every real brand whose key is no longer than the word.
+   * A brand the knowledge base does not know keeps its own canonical
+   * spelling, which is exactly what the key used before this pass existed —
+   * an unresearched brand keeps working and simply stops improving.
    */
-  it('ignores a brand that is nothing but a category word', () => {
-    const poisoned = n.buildBrandIndex(['& Whisky', 'Umiki', 'Jura']);
-
-    expect(poisoned.map((entry) => entry.key)).toEqual(['umiki', 'jura']);
-
-    expect(n.detectBrandFromName('Віскі Umiki Whisky', poisoned))
-      .toBe('Umiki');
-    expect(
-      n.detectBrandFromName('Віскі Jura Seven Wood Scotch Whisky', poisoned),
-    ).toBe('Jura');
+  it('falls back to the shop spelling when nothing resolves', () => {
+    expect(n.resolveKeyBrand(snap('x', { brand: 'vulson' }), index))
+      .toBe('Vulson');
+    expect(n.resolveKeyBrand(snap('Віскі Vulson Rye 0,7л'), index))
+      .toBeNull();
   });
 
   /**
-   * The guard must not cost a brand that merely contains a category word:
-   * these are matched by their whole key, not by the word inside it.
+   * The `& Whisky` collision, now guarded one layer deeper. A researcher
+   * recorded goodwine's own department label verbatim and `KbKeyUtils.key`
+   * deleted the ampersand, storing the bare noun `whisky` — six characters,
+   * so the five-character floor cannot catch it, and sorted longest-first it
+   * outranked every real brand no longer than the word.
    */
-  it('keeps a real brand that contains a category word', () => {
-    const wide = n.buildBrandIndex(['Nikka Whisky', 'Malt & Grain']);
+  it('ignores an alias that is nothing but a category word', () => {
+    const poisoned = KbAliasUtils.usable([
+      ...alias('and-whisky', ['& Whisky'], '& Whisky'),
+      ...alias('umiki', ['Umiki'], 'Umiki'),
+      ...alias('jura', ['Jura'], 'Jura'),
+    ]);
+
+    expect(poisoned.map((entry) => entry.key)).toEqual(['umiki', 'jura']);
+
+    expect(n.resolveKeyBrand(snap('Віскі Umiki Whisky'), poisoned))
+      .toBe('umiki');
+  });
+
+  /**
+   * The guard must not cost a producer that merely contains a category word:
+   * those carry identity in their other tokens.
+   */
+  it('keeps a producer whose name contains a category word', () => {
+    const wide = KbAliasUtils.usable([
+      ...alias('nikka', ['Nikka Whisky'], 'Nikka Whisky'),
+      ...alias('compass-box', ['Malt & Grain'], 'Compass Box'),
+    ]);
 
     expect(wide.map((entry) => entry.key))
       .toEqual(['nikka whisky', 'malt grain']);
-
-    expect(n.detectBrandFromName('Віскі Nikka Whisky Days 0,7л', wide))
-      .toBe('Nikka Whisky');
-    expect(n.detectBrandFromName('Compass Box Malt & Grain 0,7л', wide))
-      .toBe('Malt & Grain');
   });
+});
 
-  it('fills only a missing brand, and only with an index', () => {
-    const detected = n.normalize(snap('Віскі Arran Quarter Cask 0,7л'), index);
-
-    expect(detected.brand).toBe('Arran');
-
-    const scraped = n.normalize(
+describe('NormalizeService.normalize brand handling', () => {
+  /**
+   * `normalize` no longer reads a brand out of the product name. That job
+   * moved to the knowledge base, which answers it twice over — once for
+   * identity in `resolveKeyBrand` and once for the label in
+   * `KbResolverService` — so what stays on the snapshot is the one thing
+   * neither records: the string the shop itself used, which is what
+   * `product.brandOrig` stores for `pnpm research-brands` to read.
+   */
+  it('keeps the shop spelling and derives nothing from the name', () => {
+    const stated = n.normalize(
       snap('Віскі Arran Quarter Cask 0,7л', { brand: 'arran distillery' }),
-      index,
     );
 
-    expect(scraped.brand).toBe('Arran Distillery');
+    expect(stated.brand).toBe('Arran Distillery');
 
-    const noIndex = n.normalize(snap('Віскі Arran Quarter Cask 0,7л'));
+    const silent = n.normalize(snap('Віскі Arran Quarter Cask 0,7л'));
 
-    expect(noIndex.brand).toBeNull();
+    expect(silent.brand).toBeNull();
   });
 });
 

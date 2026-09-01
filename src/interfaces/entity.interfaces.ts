@@ -70,10 +70,6 @@ export interface EntityCountry extends EntityBaseRich {
   icon?: string;
 }
 
-export interface EntityBrand extends EntityBaseRich {
-  name: string;
-}
-
 export interface EntityType extends EntityBaseRich {
   name: string;
 }
@@ -124,7 +120,18 @@ export interface EntityProduct extends EntityBaseRich {
   age?: number;
   abv?: number;
   volumeMl?: number;
-  brandId?: ID;
+  /**
+   * The brand string a shop stated for this bottling, canonicalized — the one
+   * thing the knowledge base does not record.
+   *
+   * It is **not** a label and **not** a filter dimension: a report prints
+   * `producer.name`, falling back to the bottler's. This column exists so the
+   * makers the knowledge base is still missing stay findable — a bottling
+   * with no `producerId` and a `brandOrig` is exactly one row of the
+   * `/producer/unresolved` queue that `pnpm research-brands` works through.
+   * Written on insert and filled when null, never overwritten.
+   */
+  brandOrig?: string;
   typeId?: ID;
   countryId?: ID;
   /**
@@ -172,11 +179,6 @@ export interface EntityProduct extends EntityBaseRich {
    * producer resolves — a distillery's country does not vary by bottling.
    */
   countrySource?: string;
-  /**
-   * Where `brandId` came from. The knowledge base never writes it: the brand
-   * is a display label and a component of the frozen match key.
-   */
-  brandSource?: string;
   /**
    * Where `abv` came from. Physical and per-bottling, so it is never
    * knowledge-base-owned; disagreements between stores are logged to
@@ -562,23 +564,29 @@ export interface EntityBlacklistProduct {
 }
 
 /**
- * A brand one user has hidden. Broader than a product entry: it removes every
- * bottling the brand is resolved on, including ones listed later.
+ * A producer one user has hidden. Broader than a product entry: it removes
+ * every bottling the producer is resolved on, including ones listed later.
+ *
+ * The API calls this a brand rule, and keeps doing so — what changed is that
+ * it now names one curated producer rather than one of the several `brand`
+ * rows a maker used to be spelled across.
  */
-export interface EntityBlacklistBrand {
+export interface EntityBlacklistProducer {
   /**
-   * The user who hid the brand.
+   * The user who hid the producer.
    */
   userId: ID;
 
   /**
-   * The hidden brand (`brand.id`). Products with no brand resolved are never
-   * matched by a brand entry — there is no "unknown brand" to hide.
+   * The hidden producer (`producer.id`). Matched against the bottling's
+   * distillery **and** its bottler, so hiding an independent bottler hides
+   * what it released. A bottling the knowledge base cannot place is never
+   * matched — there is no "unknown producer" to hide.
    */
-  brandId: ID;
+  producerId: ID;
 
   /**
-   * When the brand was hidden.
+   * When the producer was hidden.
    */
   createdAt: Date;
 }

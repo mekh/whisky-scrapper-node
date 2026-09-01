@@ -46,7 +46,7 @@ describe('persistence write path (integration)', () => {
     factSources: {},
     matchKey: `${SLUG}-key`,
     name: 'Sample 0.7l',
-    brandId: null,
+    brandOrig: null,
     typeId: null,
     countryId: null,
     age: null,
@@ -85,7 +85,7 @@ describe('persistence write path (integration)', () => {
       `SELECT sp."nameOrig", sp.url, sp."productId", sp."inStock",
               sp."firstSeen"::text AS "firstSeen",
               sp."lastSeen"::text AS "lastSeen",
-              p.name, p.abv, p.age, p."volumeMl", p."brandId"
+              p.name, p.abv, p.age, p."volumeMl", p."brandOrig"
        FROM store_product sp
        JOIN product p ON p.id = sp."productId"
        WHERE sp."storeId" = $1 AND sp.sku = $2`,
@@ -297,11 +297,10 @@ describe('persistence write path (integration)', () => {
   ): ProductFillInput => ({
     id: productId,
     abv: null,
-    brandId: null,
+    brandOrig: null,
     typeId: null,
     countryId: null,
     abvSource: FactSource.STORE,
-    brandSource: FactSource.STORE,
     typeSource: FactSource.STORE,
     countrySource: FactSource.STORE,
     ...over,

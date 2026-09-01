@@ -1,10 +1,10 @@
 import { TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 
-import { CoreBrandService } from '~core/brand';
 import { CorePreferenceService } from '~core/preference';
 import { CoreProductService } from '~core/product';
 import { CorePushService } from '~core/push';
+import { KbStatus, ProducerKind } from '~enums';
 import type { ID } from '~types';
 
 import {
@@ -15,6 +15,8 @@ import {
 const STAMP = Date.now();
 
 const BRAND = `__it_push_brand_${STAMP}`;
+
+const BRAND_SLUG = `it-push-brand-${STAMP}`;
 
 const MAX_GAP_DAYS = 30;
 
@@ -44,10 +46,9 @@ describe('push digest claim (integration)', () => {
   let push: CorePushService;
   let preferences: CorePreferenceService;
   let products: CoreProductService;
-  let brands: CoreBrandService;
   let userA: ID;
   let userB: ID;
-  let brandId: ID;
+  let producerId: ID;
   let storeId: ID;
   let productId: ID;
   let offerId: ID;
@@ -75,17 +76,24 @@ describe('push digest claim (integration)', () => {
    * @returns The new canonical product id.
    */
   const makeBottling = async (): Promise<ID> => {
-    return products.createUnmatched({
+    const id = await products.createUnmatched({
       factSources: {},
       matchKey: null,
       name: `IT Push ${STAMP}`,
-      brandId,
+      brandOrig: null,
       typeId: null,
       countryId: null,
       age: 10,
       abv: null,
       volumeMl: null,
     });
+
+    await dataSource.query(
+      'UPDATE product SET "producerId" = $1 WHERE id = $2',
+      [producerId, id],
+    );
+
+    return id;
   };
 
   /**
@@ -158,14 +166,17 @@ describe('push digest claim (integration)', () => {
     push = moduleRef.get(CorePushService, { strict: false });
     preferences = moduleRef.get(CorePreferenceService, { strict: false });
     products = moduleRef.get(CoreProductService, { strict: false });
-    brands = moduleRef.get(CoreBrandService, { strict: false });
 
     userA = await makeUser('a');
     userB = await makeUser('b');
 
-    const resolved = await brands.resolveByName([BRAND]);
+    const seeded = await dataSource.query(
+      `INSERT INTO producer (slug, name, kind, status)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [BRAND_SLUG, BRAND, ProducerKind.DISTILLERY, KbStatus.AUTO],
+    ) as { id: ID }[];
 
-    brandId = resolved.get(BRAND) as ID;
+    producerId = seeded[0].id;
 
     const stores = await dataSource.query(
       `INSERT INTO store (slug, name, "baseUrl", active)
@@ -204,7 +215,10 @@ describe('push digest claim (integration)', () => {
         [[userA, userB]],
       );
       await dataSource.query('DELETE FROM store WHERE id = $1', [storeId]);
-      await dataSource.query('DELETE FROM brand WHERE id = $1', [brandId]);
+      await dataSource.query(
+        'DELETE FROM producer WHERE id = $1',
+        [producerId],
+      );
 
       await closeIntegrationModule(moduleRef);
     }
@@ -267,7 +281,7 @@ describe('push digest claim (integration)', () => {
   it('respects the product blacklist', async () => {
     await preferences.addToBlacklist(userA, {
       productIds: [productId],
-      brandIds: [],
+      producerIds: [],
     });
     await makeSnapshot(offerId, daysAgo(1), 1000);
     await makeSnapshot(offerId, TODAY, 880);
@@ -278,7 +292,7 @@ describe('push digest claim (integration)', () => {
   it('respects the brand blacklist while keeping the favorite', async () => {
     await preferences.addToBlacklist(userA, {
       productIds: [],
-      brandIds: [brandId],
+      producerIds: [producerId],
     });
     await makeSnapshot(offerId, daysAgo(1), 1000);
     await makeSnapshot(offerId, TODAY, 880);
@@ -287,7 +301,7 @@ describe('push digest claim (integration)', () => {
 
     await preferences.removeFromBlacklist(userA, {
       productIds: [],
-      brandIds: [brandId],
+      producerIds: [producerId],
     });
   });
 

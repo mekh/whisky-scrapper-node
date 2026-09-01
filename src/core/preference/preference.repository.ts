@@ -28,17 +28,17 @@ const FIND_SQL = `
       FROM blacklist_product bp WHERE bp."userId" = $1
     ), '{}') AS "blacklistProducts",
     COALESCE((
-      SELECT array_agg(b.name ORDER BY b.name)
-      FROM blacklist_brand bb
-      JOIN brand b ON b.id = bb."brandId"
-      WHERE bb."userId" = $1
+      SELECT array_agg(pr.name ORDER BY pr.name)
+      FROM blacklist_producer bp2
+      JOIN producer pr ON pr.id = bp2."producerId"
+      WHERE bp2."userId" = $1
     ), '{}') AS "blacklistBrands"
 `;
 
 /**
  * Resolves both product lists in one pass, each row joined to what the
- * settings screen renders. Joining `product`, `brand` and `store_product`
- * here follows `FIND_SQL`, which already joins `brand` — the layering rule
+ * settings screen renders. Joining `product`, `producer` and `store_product`
+ * here follows `FIND_SQL`, which already joins `producer` — the layering rule
  * bars a foreign *service* from injecting this repository, not a join.
  *
  * Decisions that are easy to undo by accident:
@@ -67,12 +67,14 @@ const DETAILS_PRODUCTS_SQL = `
     FROM blacklist_product bp WHERE bp."userId" = $1
   )
   SELECT i.list, i."productId", p.name, o."nameOrig",
-         b.name AS brand, p.age, p.abv::float8 AS abv, p."volumeMl",
+         COALESCE(pr.name, bo.name) AS brand, p.age,
+         p.abv::float8 AS abv, p."volumeMl",
          COALESCE(o."inStock", false) AS "inStock",
          i."createdAt"::date::text AS "addedOn"
   FROM item i
   JOIN product p ON p.id = i."productId"
-  LEFT JOIN brand b ON b.id = p."brandId"
+  LEFT JOIN producer pr ON pr.id = p."producerId"
+  LEFT JOIN producer bo ON bo.id = p."bottlerId"
   LEFT JOIN LATERAL (
     SELECT sp."nameOrig", sp."inStock"
     FROM store_product sp
@@ -87,11 +89,11 @@ const DETAILS_PRODUCTS_SQL = `
  * Blacklisted brands with the day each rule was added, newest first.
  */
 const DETAILS_BRANDS_SQL = `
-  SELECT b.name, bb."createdAt"::date::text AS "addedOn"
-  FROM blacklist_brand bb
-  JOIN brand b ON b.id = bb."brandId"
-  WHERE bb."userId" = $1
-  ORDER BY bb."createdAt" DESC, b.name
+  SELECT pr.name, bp2."createdAt"::date::text AS "addedOn"
+  FROM blacklist_producer bp2
+  JOIN producer pr ON pr.id = bp2."producerId"
+  WHERE bp2."userId" = $1
+  ORDER BY bp2."createdAt" DESC, pr.name
 `;
 
 /**
@@ -217,14 +219,17 @@ export class PreferenceRepository extends Repository<FavoriteEntity> {
    * Hides brands from every report, ignoring the ones already hidden.
    *
    * @param userId - Whose blacklist to extend.
-   * @param brandIds - Brand ids, deduplicated and sorted.
+   * @param producerIds - Producer ids, deduplicated and sorted.
    */
-  public async addBlacklistBrands(userId: ID, brandIds: ID[]): Promise<void> {
+  public async addBlacklistBrands(
+    userId: ID,
+    producerIds: ID[],
+  ): Promise<void> {
     await this.insertMembership(
-      'blacklist_brand',
-      'brandId',
+      'blacklist_producer',
+      'producerId',
       userId,
-      brandIds,
+      producerIds,
     );
   }
 
@@ -232,17 +237,17 @@ export class PreferenceRepository extends Repository<FavoriteEntity> {
    * Un-hides brands; ids that were not hidden are ignored.
    *
    * @param userId - Whose blacklist to trim.
-   * @param brandIds - Brand ids to drop.
+   * @param producerIds - Producer ids to drop.
    */
   public async removeBlacklistBrands(
     userId: ID,
-    brandIds: ID[],
+    producerIds: ID[],
   ): Promise<void> {
     await this.deleteMembership(
-      'blacklist_brand',
-      'brandId',
+      'blacklist_producer',
+      'producerId',
       userId,
-      brandIds,
+      producerIds,
     );
   }
 

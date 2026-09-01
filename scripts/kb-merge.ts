@@ -20,7 +20,7 @@ import {
   ScotlandLegalRegion,
   ScotlandRegion,
 } from '~enums';
-import { KbGateUtils, KbKeyUtils } from '~utils';
+import { KbGateUtils, KbKeyUtils, ProductMatchUtils } from '~utils';
 
 import type {
   KbAliasRow,
@@ -509,6 +509,25 @@ function mergeAliases(
 
     if (!key) {
       report.rejected.push(`${origin}: alias '${row.key}' normalizes to empty`);
+
+      return;
+    }
+
+    /**
+     * An alias that normalizes to nothing but whisky category words is
+     * rejected, however long it is. This is the guard the seed round was
+     * missing: a researcher wrote the alias `& Whisky` *because* it was the
+     * exact catalogue string and said so in the note, and normalization then
+     * deleted the ampersand and stored the bare word `whisky` — a brand-scoped
+     * alias that matched goodwine's own category label and, through it,
+     * fourteen bottlings. The length floor below cannot see this: `whisky` is
+     * six characters, and brand scope is exempt from the floor anyway.
+     */
+    if (!ProductMatchUtils.carriesIdentity(key)) {
+      report.rejected.push(
+        `${origin}: alias '${row.key}' normalizes to the category word `
+          + `'${key}'`,
+      );
 
       return;
     }

@@ -366,6 +366,46 @@ describe('NormalizeService brand detection from the name', () => {
       .toBeNull();
   });
 
+  /**
+   * The reported defect, end to end. `& Whisky` is goodwine's own category
+   * label (`&wine` / `&whisky` / `&food` name its departments), left in the
+   * `brand` table by a legacy import. `brandHaystack` deletes every
+   * non-alphanumeric run, so it reduced to the bare key `whisky` — six
+   * characters, one more than `umiki`, so the longest-key-first sort handed
+   * `Віскі Umiki Whisky` a brand it has nothing to do with.
+   *
+   * Measured over the catalogue the same collision was suppressing the right
+   * answer on 63 listings, `Jura`, `Arran`, `Nikka` and `Bell's` among them —
+   * every real brand whose key is no longer than the word.
+   */
+  it('ignores a brand that is nothing but a category word', () => {
+    const poisoned = n.buildBrandIndex(['& Whisky', 'Umiki', 'Jura']);
+
+    expect(poisoned.map((entry) => entry.key)).toEqual(['umiki', 'jura']);
+
+    expect(n.detectBrandFromName('Віскі Umiki Whisky', poisoned))
+      .toBe('Umiki');
+    expect(
+      n.detectBrandFromName('Віскі Jura Seven Wood Scotch Whisky', poisoned),
+    ).toBe('Jura');
+  });
+
+  /**
+   * The guard must not cost a brand that merely contains a category word:
+   * these are matched by their whole key, not by the word inside it.
+   */
+  it('keeps a real brand that contains a category word', () => {
+    const wide = n.buildBrandIndex(['Nikka Whisky', 'Malt & Grain']);
+
+    expect(wide.map((entry) => entry.key))
+      .toEqual(['nikka whisky', 'malt grain']);
+
+    expect(n.detectBrandFromName('Віскі Nikka Whisky Days 0,7л', wide))
+      .toBe('Nikka Whisky');
+    expect(n.detectBrandFromName('Compass Box Malt & Grain 0,7л', wide))
+      .toBe('Malt & Grain');
+  });
+
   it('fills only a missing brand, and only with an index', () => {
     const detected = n.normalize(snap('Віскі Arran Quarter Cask 0,7л'), index);
 

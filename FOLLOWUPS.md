@@ -174,3 +174,65 @@ those ~724 offers simply carry no abv/volume/type/country until it has run.
 Lowering `goodwine`'s `store_config` delay towards the tier-1 stores' 4-8 s
 would halve both numbers, but that is a judgement call about how hard the store
 may be hit and is deliberately not taken here.
+
+## 7. One brand is split across several `brand` rows
+
+**Status**: open, measured 2026-09-01 on a restored production dump. Deferred
+by decision while the `& Whisky` collision was fixed (see "Brand from the name"
+in [`CLAUDE.md`](CLAUDE.md) and the `brand-whisky-artifact` migration). The two
+defects share a cause — what a brand string reduces to — but not a fix.
+
+`BrandUtils.key` treats only whitespace, apostrophes, hyphens and underscores
+as separators. Every other matcher in the codebase (`brandHaystack`,
+`KbKeyUtils.key`, `ProductMatchUtils.fold`) treats **every** non-alphanumeric
+run as one. So `&`, `+`, `.` and `!` survive into the canonical spelling, and
+one brand becomes several rows:
+
+```
+jack daniels   Jack Daniel's (49)  | Jack Daniels (0)
+grants         Grant's (35)        | Grants (0)
+whyte mackay   Whyte Mackay (10)   | Whyte & Mackay (2)  | Whyte&mackay (0)
+macarthurs     MacArthur's (4)     | Macarthurs (3)
+j b            J&b (4)             | J+b (0)
+lot no 40      Lot No 40 (2)       | Lot No. 40 (0)
+roe co         Roe&co (1)          | Roe & Co (0)        | Roe + Co (0)
+darkness       Darkness! (6)       | Darkness (0)
+writers tears  Writers Tear's (8)  | Writers Tears (0)
+```
+
+**15 duplicate-key groups in 708 rows.** The damage is smaller than the list
+looks: in 12 of the 15 the extra rows hold **zero** products — legacy import
+residue that `BrandUtils.canonical` would fold today. Only three genuinely
+split a catalogue: `whyte mackay` (10 + 2), `macarthurs` (4 + 3) and
+`rowans creek` (1 + 1).
+
+Three consequences, in order of severity:
+
+- **The brand-from-name pass is non-deterministic across these keys.**
+  `buildBrandIndex` dedups by key and keeps the _first_ name it sees, and
+  `CoreBrandService.listNames` issues no `ORDER BY` — so which spelling a
+  brandless listing is given depends on Postgres row order. Adding an explicit
+  order is a one-line partial mitigation that is worth doing whatever else is
+  decided.
+- Empty duplicates still surface in `/brand/search` and the settings
+  blacklist picker, where a user can pick the row that hides nothing.
+- A brand blacklist rule or a `brand` report filter only covers the row it
+  names, so a rule on `Whyte & Mackay` leaves 10 bottlings visible.
+
+**Why this is not a one-line fix.** `canonical` folds to a key and then
+_reconstructs_ a display spelling from it, so making `&` a separator would
+silently rename `Whyte & Mackay` to `Whyte Mackay` and `Malt & Grain` to
+`Malt Grain`. `Gordon & MacPhail` survives today only because it has a
+`DISPLAY_OVERRIDES` entry. Any separator widening therefore has to be paired
+with a rule for reconstructing the connector, or with an override per affected
+brand — decide that before touching the regex.
+
+**What the merge must not do.** `product.matchKey` is frozen at creation and
+the brand is one of its tokens, so a data migration that merges brand rows must
+re-point `product."brandId"` and `blacklist_brand."brandId"` and **leave every
+match key alone**. Re-keying would detach offers that are already linked. For
+the same reason `brandHaystack` must not gain folding it does not have — it
+feeds that frozen key. Note that a merge changes the brand token for _future_
+listings of the affected bottlings, so a later SKU can compute a different key
+and mint a second bottling for curation to merge; that is the accepted,
+already-documented cost of any brand change.

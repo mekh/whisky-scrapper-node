@@ -337,6 +337,17 @@ entity/repository/service/module shape:
   'unverified'`, inserting the parents/bottlers/aliases/house-styles/rules
   the round discovered, fail-closed like the seed importers; its `down()`
   removes only what it inserted — the updates are documented irreversible.
+  Then `brand-whisky-artifact` (2026-09-01) removes the `& Whisky` brand row
+  and rejects its `and-whisky` producer — goodwine's own category label, which
+  a legacy import turned into a brand and which the brand-from-name pass then
+  handed to every listing ending in the word (see "Brand from the name"). It
+  detaches the 14 bottlings explicitly rather than through the FK's
+  `ON DELETE SET NULL`, so no provenance column is left stating where a null
+  came from, and writes no `producerId`: `SET_PRODUCERS_SQL` is that column's
+  only writer, and a rejected producer leaves the resolver index, so
+  `KbBootApplyService` clears the 15 links at the next boot. `down()` is a
+  documented no-op — re-creating the row would restore the defect, and the
+  next sync re-derives every value it cleared.
 - Lookups (dedup targets, unique `name`/`code`): `country` (`code`, `nameUa`,
   `icon`), `brand` (`name`), `type` (`name`, whisky type), `flavor` (`name`).
 - `store` (`slug` unique, `name`, `baseUrl`, `color?`, `active`) and
@@ -1388,6 +1399,23 @@ wrappers): `scrape/` has its own internal layering.
   `NormalizeService` is a singleton and `runFullSync` collects stores
   concurrently. Only the brand is new; `detectBrandInfo` still reads country and
   type off `BRAND_INFO`, and now benefits from the brand being filled first.
+  **A brand that carries no identity of its own is kept out of the index**
+  (`ProductMatchUtils.carriesIdentity`, the same `MATCH_STOP_TOKENS` vocabulary
+  the match key is built from — a fourth stop list is exactly the drift those
+  paired vocabularies warn about). The guard is load-bearing: `brandHaystack`
+  deletes every non-alphanumeric run, so goodwine's category label `& Whisky`
+  — `&wine` / `&whisky` / `&food` name its departments, and a legacy import
+  left the string in the `brand` table — reduced to the bare key `whisky`. At
+  six characters it won the longest-key-first sort against every real brand no
+  longer than the word, so `Віскі Umiki Whisky` was stored as `& Whisky` while
+  its own `Umiki` row sat one character shorter in the same index. Measured
+  over the catalogue the collision was suppressing the right answer on **63
+  listings** (`Jura`, `Arran`, `Nikka`, `Bell's` among them) though only 14
+  bottlings had it stored, the rest having been given a brand by some other
+  store first. `BrandUtils.canonical` applies the same test, so such a value is
+  never minted as a row again — the live path being bayadera's category-prefix
+  strip, which turns `Віскі & whisky` into `& whisky`. The match keys were
+  never affected: `brandToken` already folded the artifact to nothing.
 - **Regex gotcha**: JS `\b`/`\w` stay ASCII even under the `u` flag (Python's
   are Unicode). Cyrillic units use explicit lookaheads / classes — see the
   header of `normalize.service.ts`.

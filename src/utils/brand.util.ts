@@ -1,3 +1,5 @@
+import { ProductMatchUtils } from './product-match.util';
+
 /**
  * Word separators inside a brand: whitespace, hyphen, underscore, and every
  * apostrophe/backtick variant. A lone trailing `s` left by an apostrophe slug
@@ -27,6 +29,9 @@ const LOWER_WORDS = new Set(['of', 'and']);
 
 /**
  * Non-brand placeholders some feeds put in the brand field, treated as absent.
+ * A value that names the *category* rather than the brand is rejected too, but
+ * by `ProductMatchUtils.carriesIdentity` rather than by this list — see
+ * `canonical`.
  */
 const JUNK = new Set(['no brand', 'nobrand', 'none', 'unknown']);
 
@@ -85,9 +90,20 @@ export class BrandUtils {
    * with trailing spaces, etc.) and maps the known Cyrillic trademarks back to
    * their Latin brand.
    *
+   * A value that carries no identity of its own is dropped rather than
+   * minted. Stores put their category label in the brand field, and once such
+   * a value becomes a `brand` row it is permanent and poisons the
+   * brand-from-name pass: goodwine's `Віскі & whisky` is how `& Whisky` — a
+   * brand whose every matcher reduces it to the bare word `whisky` — entered
+   * the catalogue, where it was applied to fourteen bottlings and suppressed
+   * the right answer on sixty-three listings. The live path today is
+   * bayadera's category-prefix strip, which turns that same string into
+   * `& whisky` before it reaches here.
+   *
    * @param raw - The raw brand value as scraped, or null/undefined.
    * @returns The canonical brand spelling, or null when the value is empty, a
-   *   junk placeholder, or an unmapped Cyrillic trademark.
+   *   junk placeholder, a whisky category word, or an unmapped Cyrillic
+   *   trademark.
    */
   public static canonical(raw: string | null | undefined): string | null {
     if (!raw) {
@@ -102,7 +118,7 @@ export class BrandUtils {
 
     const key = BrandUtils.key(text);
 
-    if (!key || JUNK.has(key)) {
+    if (!key || JUNK.has(key) || !ProductMatchUtils.carriesIdentity(key)) {
       return null;
     }
 

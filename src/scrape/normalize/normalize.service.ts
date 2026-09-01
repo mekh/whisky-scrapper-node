@@ -425,6 +425,17 @@ export class NormalizeService {
    * to the spelling the catalogue already uses ("Jack Daniels" beside
    * "Jack Daniel's").
    *
+   * A brand carrying no identity of its own is left out
+   * (`ProductMatchUtils.carriesIdentity`), and that guard is the whole reason
+   * this pass can be trusted: `brandHaystack` deletes every non-alphanumeric
+   * run, so the `& Whisky` row a legacy import left in the table — goodwine's
+   * own category label, not a brand — reduces to the bare key `whisky`. Six
+   * characters long, it then won the longest-key-first sort against real
+   * brands and handed itself to every product whose name ends in the word:
+   * `Віскі Umiki Whisky` was stored as `& Whisky` while its own `Umiki` row
+   * sat one character shorter in the same index. A brand recognisable only by
+   * punctuation the matcher deletes cannot be recognised from a name at all.
+   *
    * @param names - Canonical brand names, as stored in the `brand` table.
    * @returns The index, longest key first; duplicate keys keep the first name.
    */
@@ -435,10 +446,12 @@ export class NormalizeService {
     names.forEach((name) => {
       const key = this.brandHaystack(name).trim();
 
-      if (key && !seen.has(key)) {
-        seen.add(key);
-        entries.push({ key, name });
+      if (!key || seen.has(key) || !ProductMatchUtils.carriesIdentity(name)) {
+        return;
       }
+
+      seen.add(key);
+      entries.push({ key, name });
     });
 
     return entries.sort((left, right) => right.key.length - left.key.length);

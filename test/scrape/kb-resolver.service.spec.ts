@@ -503,3 +503,41 @@ describe('KbResolverService: unresolved input', () => {
     expect(result.producer?.slug).toBe('ledaig');
   });
 });
+
+/**
+ * Brand scope is the one place an alias is compared as a whole string rather
+ * than looked for inside a name, and the asymmetry is load-bearing: it is what
+ * keeps a short or generic alias unambiguous, and it is why the five-character
+ * floor exempts brand scope entirely.
+ *
+ * The seed shipped `whisky` (brand scope) for goodwine's category label — a
+ * researcher wrote the alias as the exact catalogue string `& Whisky` and
+ * `KbKeyUtils.key` deleted the ampersand. Exact matching is the only reason
+ * that row stayed confined to bottlings whose brand column was already wrong,
+ * instead of claiming every whisky in the catalogue the way its twin in the
+ * `brand` table did.
+ */
+describe('KbResolverService: brand-scoped aliases are exact', () => {
+  const BRAND_SCOPED = index({
+    aliases: [
+      ...aliases(TOBERMORY, ['Tobermory'], ProducerAliasScope.BRAND),
+      ...aliases(LEDAIG, ['Ledaig']),
+    ],
+    rules: [],
+  });
+
+  it('matches a brand-scoped alias only as the whole brand value', () => {
+    expect(resolve('Some Malt', 'Tobermory', BRAND_SCOPED).producer?.slug)
+      .toBe('tobermory');
+    expect(
+      resolve('Some Malt', 'Tobermory Distillery', BRAND_SCOPED).producer,
+    ).toBeNull();
+  });
+
+  it('never fires a brand-scoped alias from inside a product name', () => {
+    const result = resolve('Tobermory 12 Single Malt', null, BRAND_SCOPED);
+
+    expect(result.producer).toBeNull();
+    expect(result.peatReason).toBe(KbPeatReason.UNRESOLVED);
+  });
+});

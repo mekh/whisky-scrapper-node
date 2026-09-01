@@ -200,6 +200,30 @@ export class ProductMatchUtils {
   }
 
   /**
+   * Whether a brand name says *which* whisky this is rather than what kind of
+   * drink it is.
+   *
+   * The question is already answered by the key: a brand contributes exactly
+   * one token to a product's identity, and a brand made of nothing but
+   * category words contributes none. Exposing it lets the brand-from-name
+   * pass in `NormalizeService` ask the same question before it treats a brand
+   * as something recognisable inside a product name — the two layers agree on
+   * what a brand is, rather than each keeping its own list.
+   *
+   * The case this exists for is `& Whisky`, goodwine's own category label
+   * (`&wine` / `&whisky` / `&food` name its departments) that a legacy import
+   * left in the `brand` table. Every matcher in the codebase deletes the
+   * ampersand, so the row reduces to the bare word `whisky` and claims every
+   * whisky in the catalogue.
+   *
+   * @param brand - The canonical brand name.
+   * @returns True when the brand carries identity of its own.
+   */
+  public static carriesIdentity(brand: string): boolean {
+    return ProductMatchUtils.brandToken(brand).length > 0;
+  }
+
+  /**
    * Folds one string to the alphabet the key is built from.
    *
    * @param text - The raw name or brand.

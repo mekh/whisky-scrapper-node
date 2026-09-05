@@ -1,8 +1,14 @@
 # API unreachable during the daily sync — handoff
 
-**Status: UNRESOLVED.** The site becomes unreachable shortly after the daily
-sync starts and recovers on its own about an hour later. It has happened every
-day since 2026-08-30.
+**Status: RESOLVED 2026-09-05 — cause confirmed on the host, see §F15.** The
+host's **psad** auto-blocked the API container's address (`172.26.0.2`) every
+time the `rozetka` (Chromium) track ran, for 3600 s and finally without a
+timeout; the trigger was one ICMP packet from the container to a Facebook
+address, logged by the `DOCKER-USER` whitelist's `LOG` rule. The code side
+(browser request policy, `--disable-quic`) is deployed; the host side (psad
+`auto_dl` ignore entry) is listed in §G3. Sections S–G2 are kept as the record
+of how it was found. Between 2026-08-30 and 2026-09-05 it happened every day
+the browser track ran.
 
 This document contains measurements only. Hypotheses, predictions and
 suggested directions have been deliberately removed: the previous
@@ -551,3 +557,227 @@ If a ban tool is found, the container networks (`172.16.0.0/12`) belong in its
 ignore list (`ignoreip` in fail2ban's `jail.local`, `cscli allowlists` in
 CrowdSec) regardless of the code fix — the fix removes the trigger, the ignore
 list removes the failure mode.
+
+## G3. The two guards on the host: psad and fail2ban
+
+Learned 2026-09-05 after the deploy of the browser request policy: the host
+runs **psad** and **fail2ban**. Both act on log lines, both insert their own
+`DROP`/`REJECT` rules ahead of everything else, and both expire a block on a
+timer — the shape of every outage above. psad in particular consumes exactly
+the kernel log lines §F14 shows the `rozetka` track producing (`SRC=172.26.0.2`
+from the `DOCKER-USER` `LOG` rule), scores them into a danger level, and with
+`ENABLE_AUTO_IDS` blocks the source in `PSAD_BLOCK_INPUT` (jumped to from
+position 1 of `INPUT`, i.e. before the `LOG` rule that §F7 watched),
+`PSAD_BLOCK_OUTPUT` and `PSAD_BLOCK_FORWARD`. Its default
+`AUTO_BLOCK_TIMEOUT` is 3600 s, and `AUTO_BLOCK_DL1..5_TIMEOUT` can lengthen
+it per danger level — one hour, then four.
+
+Everything below is read-only unless marked **[changes state]**. Run it while
+the block is active if possible; the log-based commands work afterwards too.
+
+### 1. Is the container address blocked right now, and by whom
+
+```bash
+sudo iptables -L INPUT -nv --line-numbers | head -20        # PSAD_BLOCK_INPUT / f2b-* jumps sit at the top
+sudo iptables -S | grep -n -E '172\.26\.0\.|PSAD_BLOCK|f2b-'
+sudo iptables -L PSAD_BLOCK_INPUT -nv 2>/dev/null
+sudo iptables -L PSAD_BLOCK_FORWARD -nv 2>/dev/null
+sudo iptables -L PSAD_BLOCK_OUTPUT -nv 2>/dev/null
+```
+
+A `DROP all -- 172.26.0.2 0.0.0.0/0` line in `PSAD_BLOCK_INPUT`, or a
+`REJECT`/`DROP` for it in an `f2b-*` chain, is the answer to §0.
+
+### 2. psad
+
+```bash
+systemctl status psad --no-pager
+sudo psad -S | sed -n '1,80p'                                # status: currently blocked IPs with time left, top sources, danger levels
+sudo psad --fw-list                                          # the PSAD_BLOCK_* chains as psad sees them
+sudo grep -E '^(ENABLE_AUTO_IDS|AUTO_IDS_DANGER_LEVEL|AUTO_BLOCK_TIMEOUT|AUTO_BLOCK_DL[1-5]_TIMEOUT|AUTO_BLOCK_REGEX|ENABLE_AUTO_IDS_REGEX|IPT_AUTO_CHAIN|DANGER_LEVEL[1-5]|IGNORE_|EMAIL_ADDRESSES|HOME_NET|EXTERNAL_NET)' /etc/psad/psad.conf
+sudo cat /etc/psad/auto_dl                                   # per-IP/network danger-level overrides; 0 = never flag
+sudo journalctl -t psad --since '-3 days' | grep -E 'auto-block|172\.26\.0\.2' | tail -40
+sudo grep -a -E 'psad.*(auto-block|172\.26\.0\.2)' /var/log/syslog /var/log/messages 2>/dev/null | tail -40
+sudo ls -la /var/log/psad/172.26.0.2/ 2>/dev/null            # psad keeps one directory per flagged source
+sudo cat /var/log/psad/172.26.0.2/172.26.0.2_email_alert 2>/dev/null | head -80   # what it saw: protocols, ports, packet counts, danger level
+sudo cat /var/log/psad/172.26.0.2/danger_level 2>/dev/null
+sudo tail -50 /var/log/psad/fwdata                          # the raw firewall log lines psad parsed last
+```
+
+What to read off it:
+
+- `psad -S` → "Currently blocked IPs" naming `172.26.0.2` with the seconds
+  left, and the "added iptables auto-block against 172.26.0.2 for N seconds"
+  journal line, are the proof. The `N` against `AUTO_BLOCK_DL*_TIMEOUT` tells
+  which danger level fired and why one day was an hour and another four.
+- The `_email_alert` file lists the scanned ports and protocols. Expect
+  `udp 443` to Google addresses and a spread of third-party TCP 443
+  destinations — Chromium's QUIC and pixel traffic from §F14 — for the runs
+  before the policy was deployed; anything after the deploy points at a hole
+  in the policy and should be brought back to the code.
+- `IPT_AUTO_CHAIN1..3` show which chains psad blocks in. `INPUT` alone
+  explains §F5–F10 exactly (the container's SYN-ACKs refused, its own
+  outbound traffic still forwarded until §F7's log lines pushed the level over
+  the threshold at 15:11:5x, right after the two lines quoted there).
+
+Lift a block without a restart **[changes state]**:
+
+```bash
+sudo psad --fw-rm-block-ip 172.26.0.2
+```
+
+Keep psad from ever scoring the containers **[changes state]** — add to
+`/etc/psad/auto_dl` (danger level 0 = ignore), then `sudo psad -R`:
+
+```
+172.16.0.0/12    0;
+```
+
+Alternatively `IGNORE_LOG_PREFIXES` in `psad.conf` can exclude the
+`DOCKER-USER` `LOG` rule's `--log-prefix` wholesale, if the container traffic
+is the only thing that rule logs.
+
+### 3. fail2ban
+
+```bash
+systemctl status fail2ban --no-pager
+sudo fail2ban-client status                                  # the jails
+for j in $(sudo fail2ban-client status | sed -n 's/.*Jail list:\s*//p' | tr ',' ' '); do echo "== $j"; sudo fail2ban-client status "$j"; done
+sudo fail2ban-client banned 2>/dev/null                      # every banned IP per jail (fail2ban >= 0.11)
+for j in $(sudo fail2ban-client status | sed -n 's/.*Jail list:\s*//p' | tr ',' ' '); do echo "== $j"; sudo fail2ban-client get "$j" logpath; sudo fail2ban-client get "$j" actions; sudo fail2ban-client get "$j" bantime; sudo fail2ban-client get "$j" findtime; sudo fail2ban-client get "$j" maxretry; sudo fail2ban-client get "$j" ignoreip; done
+sudo grep -a -E 'Ban |Unban ' /var/log/fail2ban.log | tail -60
+sudo grep -a -E '172\.26\.0\.2' /var/log/fail2ban.log* | tail
+sudo grep -E '^\s*(bantime|findtime|maxretry|ignoreip|banaction|action|bantime\.increment|bantime\.factor|bantime\.maxtime)\s*=' /etc/fail2ban/jail.local /etc/fail2ban/jail.d/*.conf 2>/dev/null
+```
+
+What to read off it:
+
+- Any jail whose `logpath` is `kern.log`/`syslog`/`messages` is one that can
+  ban a container address from firewall log lines; `Ban 172.26.0.2` in
+  `fail2ban.log` at the §F1 times settles it. `bantime.increment = true`
+  doubles the ban per repeat offence — another way to get 1 h, then 2 h, 4 h.
+- The **403** of 2026-09-05 is fail2ban's territory more than psad's: psad
+  only drops packets, but a fail2ban action such as `nginx-block-map` (or a
+  `deny` list nginx includes) answers a banned _client_ with 403. So also look
+  for **your own public IP** in `fail2ban.log`, in the `nginx-*` jails'
+  status, and in the nginx config:
+
+```bash
+sudo grep -a "$(curl -s https://ifconfig.me)" /var/log/fail2ban.log | tail
+sudo nginx -T 2>/dev/null | grep -n -Ei 'block-map|blocklist|deny |include .*(ban|block)|return 403|error_page 403'
+sudo grep -a ' 403 ' /var/log/nginx/access.log | tail -30
+```
+
+Lift a ban without a restart **[changes state]**:
+
+```bash
+sudo fail2ban-client set <jail> unbanip 172.26.0.2
+```
+
+Keep fail2ban off the containers **[changes state]** — in
+`/etc/fail2ban/jail.local` under `[DEFAULT]`, then `sudo fail2ban-client
+reload`:
+
+```
+ignoreip = 127.0.0.1/8 ::1 172.16.0.0/12
+```
+
+### 4. What the firewall logged from the container during the sync
+
+The trigger for both guards. Run it over the window of a `rozetka` run
+(`sync_log.createdAt`/`finishedAt`, UTC) — before the policy deploy it should
+be busy, after it silent:
+
+```bash
+sudo journalctl -k --since '2026-09-05 13:30' --until '2026-09-05 13:45' | grep -c 'SRC=172.26.0.2'
+sudo journalctl -k --since '2026-09-05 13:30' --until '2026-09-05 13:45' | grep 'SRC=172.26.0.2' | grep -oE 'DST=[0-9.]+ .*PROTO=[A-Z]+ .*DPT=[0-9]+' | sed -E 's/ (LEN|TOS|PREC|TTL|ID|SPT|WINDOW|RES|URGP)=[^ ]*//g' | sort | uniq -c | sort -rn | head -30
+sudo iptables -L DOCKER-USER -nv --line-numbers               # the whitelist, and whether UDP 443 from the containers is allowed at all
+```
+
+If the second command still prints anything for a run made **after** the
+policy deploy, that traffic is escaping `browser-request.policy.ts` — capture
+the `DST`/`PROTO`/`DPT` summary and bring it back to the code before touching
+the guards' thresholds.
+
+---
+
+## F15. psad journal, read on the host 2026-09-05 (the confirmation)
+
+```
+sudo journalctl -t psad --since '-3 days' | grep -E '172\.26\.0\.2'
+```
+
+```
+Sep 03 09:13:09 psad[930]: scan detected 172.26.0.2 -> 157.240.0.6 icmp pkts: 1 DL: 4 total scan dsts: 1
+Sep 03 09:13:10 psad[930]: added iptables auto-block against 172.26.0.2 for 3600 seconds
+Sep 03 09:13:10 psad[930]: initiating tcpwrappers auto-block against 172.26.0.2 for 3600 seconds
+Sep 03 10:13:14 psad[930]: removed iptables auto-block against 172.26.0.2
+Sep 03 15:11:53 psad[930]: scan detected 172.26.0.2 -> 157.240.0.6 icmp pkts: 2 DL: 4 total scan dsts: 1
+Sep 03 15:11:53 psad[930]: added iptables auto-block against 172.26.0.2 for 3600 seconds
+Sep 03 16:11:54 psad[930]: removed iptables auto-block against 172.26.0.2
+Sep 04 14:02:25 psad[930]: scan detected 172.26.0.2 -> 157.240.0.6 icmp pkts: 1 DL: 4 total scan dsts: 1
+Sep 04 14:02:26 psad[930]: added iptables auto-block against 172.26.0.2 for 3600 seconds
+Sep 04 15:02:30 psad[930]: removed iptables auto-block against 172.26.0.2
+Sep 05 13:38:58 psad[930]: scan detected 172.26.0.2 -> 157.240.0.6 icmp pkts: 1 DL: 5 total scan dsts: 1
+Sep 05 13:38:59 psad[930]: added iptables auto-block against 172.26.0.2 (unlimited timeout)
+Sep 05 13:38:59 psad[930]: initiating tcpwrappers auto-block against 172.26.0.2 (unlimited timeout)
+Sep 05 17:25:44 psad[935]: could not delete rule for 172.26.0.2 -> 0.0.0.0/0
+Sep 05 17:25:45 psad[935]: warning: could not remove iptables block rule for 172.26.0.2
+```
+
+Against the record above:
+
+| psad block (UTC)                   | Timeout       | What was observed                                                    |
+| ---------------------------------- | ------------- | -------------------------------------------------------------------- |
+| 09-03 09:13:10 → 10:13:14          | 3600 s        | the morning outage                                                   |
+| 09-03 15:11:53 → 16:11:54          | 3600 s        | onset 15:11:56, recovery between 16:03 and 16:12 (§S, §F1)           |
+| 09-04 14:02:26 → 15:02:30          | 3600 s        | the isolated manual `rozetka` run 13:57–14:08 (§F14)                 |
+| 09-05 13:38:59 → host reboot 17:25 | **unlimited** | "403 for four hours", `systemctl restart docker` no help, reboot yes |
+
+- The block is inserted in `PSAD_BLOCK_INPUT`, jumped to from position 1 of
+  `INPUT` — ahead of the `LOG` rule §F7 watched and of every counter it read.
+  That is the mechanism §0 asked for: the SYN-ACKs of §F6 were dropped there.
+- The trigger is **one ICMP packet** from the container to `157.240.0.6`
+  (Facebook). Chromium sends no ICMP; the container's kernel does, answering
+  a UDP packet that arrives after the socket that opened the flow is gone —
+  the QUIC flows of §F14 to a third-party host, in a context that is closed
+  after every page. The `DOCKER-USER` whitelist does not pass ICMP, so the
+  packet was logged, and psad's signature for it scores danger level 4.
+- Danger level escalates per source across days (DL 4 on 09-03/09-04, DL 5 on
+  09-05), and `AUTO_BLOCK_DL5_TIMEOUT` was unlimited. **psad still holds that
+  history for `172.26.0.2`**: with the code fix deployed nothing should reach
+  the `LOG` rule any more, but a single stray packet would block the address
+  without a timeout again. Hence the host-side steps in §G3 are required,
+  not optional.
+- psad also writes the address into `/etc/hosts.deny` ("tcpwrappers
+  auto-block"); check that no stale entry survived the reboot.
+- The 2026-08-30 origin: `v1.1.0` was a coincidence in time. The journal
+  window read so far starts 09-03; the psad history for the address
+  (`/var/log/psad/172.26.0.2/`) will say whether the first block was 08-30.
+
+### Host-side steps (all **[change state]**)
+
+1. Keep psad off the container networks — danger level 0 means "ignore":
+
+   ```bash
+   echo '172.16.0.0/12    0;' | sudo tee -a /etc/psad/auto_dl && sudo psad -R
+   ```
+
+2. Verify nothing of the 09-05 block survived the reboot:
+
+   ```bash
+   sudo psad -S | sed -n '/[Bb]locked/,+6p'
+   sudo iptables -S | grep -c 172.26.0.2
+   sudo grep -n 172.26 /etc/hosts.deny
+   ```
+
+   Remove a `172.26.0.2` line from `/etc/hosts.deny` if one is there.
+
+3. Give `AUTO_BLOCK_DL5_TIMEOUT` in `/etc/psad/psad.conf` a finite value
+   (e.g. `3600`), so that no future false positive needs a reboot.
+   Optionally, with psad stopped, drop its memory of the address:
+   `sudo rm -r /var/log/psad/172.26.0.2`.
+
+4. Watch the next scheduled sync with §G3 step 4 (kernel log lines with
+   `SRC=172.26.0.2` during the `rozetka` run should now be zero) and with
+   `sudo journalctl -t psad -f`.

@@ -31,22 +31,29 @@ class FakeRozetkaAdapter extends RozetkaAdapter {
 
   private readonly pages: RozetkaRow[][];
 
-  public constructor(pages: RozetkaRow[][]) {
+  private readonly stated: number | null;
+
+  public constructor(pages: RozetkaRow[][], stated: number | null = null) {
     super(SPEC, 1);
 
     this.pages = pages;
+    this.stated = stated;
   }
 
   /**
-   * Serves the next canned page instead of rendering one.
+   * Serves the next canned page instead of rendering one, in the shape the
+   * in-page script produces: the tiles plus the count the listing states.
    *
    * @param url - The URL that would have been opened.
-   * @returns The canned rows for this call.
+   * @returns The canned page for this call.
    */
   protected renderEval(url: string): Promise<unknown> {
     this.urls.push(url);
 
-    return Promise.resolve(this.pages[this.urls.length - 1] ?? []);
+    return Promise.resolve({
+      tiles: this.pages[this.urls.length - 1] ?? [],
+      stated: this.stated,
+    });
   }
 }
 
@@ -80,6 +87,17 @@ function row(id: string, over: Partial<RozetkaRow> = {}): RozetkaRow {
  */
 function goneRow(id: string, over: Partial<RozetkaRow> = {}): RozetkaRow {
   return row(id, { inStock: false, outOfStock: true, ...over });
+}
+
+/**
+ * Builds a tile of the sold-out tail as the store renders it since 2026-09:
+ * gone, and with its price slot empty.
+ *
+ * @param id - Product id, which appears in the URL as `/p<id>/`.
+ * @returns The tile row.
+ */
+function pricelessRow(id: string): RozetkaRow {
+  return goneRow(id, { price: null, old: null });
 }
 
 describe('RozetkaAdapter.fetchListing', () => {
@@ -118,15 +136,39 @@ describe('RozetkaAdapter.fetchListing', () => {
     expect(snaps[2].promo).toBe(false);
   });
 
-  it('drops tiles without a link or a price', async () => {
+  it('drops link-less tiles and sold-out tiles without a price', async () => {
     const adapter = new FakeRozetkaAdapter([[
       row('1', { href: '' }),
-      row('2', { price: null }),
+      pricelessRow('2'),
     ]]);
 
     const { items } = await adapter.fetchListing();
 
     expect(items).toEqual([]);
+  });
+
+  /**
+   * A buy button with nothing to buy it for is a rendering the walk cannot
+   * record: `toSnapshot` needs a price, and dropping the tile silently would
+   * let a complete run's sweep flag an offer the store calls available as
+   * gone. It is treated like a tile with no signal at all — retried, then
+   * fatal.
+   */
+  it('fails the run when an available tile shows no price', async () => {
+    const adapter = new FakeRozetkaAdapter([
+      [row('1')],
+      [row('2', { price: null })],
+      [row('2', { price: null })],
+    ]);
+
+    await expect(adapter.fetchListing()).rejects.toThrow(
+      /markup changed/,
+    );
+    expect(adapter.urls).toEqual([
+      LISTING,
+      `${LISTING}page=2/`,
+      `${LISTING}page=2/`,
+    ]);
   });
 
   it('paginates with page=N and deduplicates promoted tiles', async () => {
@@ -214,6 +256,80 @@ describe('RozetkaAdapter.fetchListing', () => {
     expect(listing.items.map((snap) => snap.storeSku)).toEqual(['1', '2']);
     expect(listing.complete).toBe(true);
     expect(listing.stop).toBe(ListingStop.EXHAUSTED);
+    expect(listing.statedItems).toBeNull();
+  });
+
+  /**
+   * The 2026-09-04 regression: the sold-out tail renders no price, and it grew
+   * to fill the last page of the walk. Such a page yields no snapshot but its
+   * tiles are new to the walk, so it is a page of the catalogue, not the end
+   * of it — the end is still the redirect to page 1 that follows.
+   */
+  it('keeps walking past a tail page whose tiles show no price', async () => {
+    const adapter = new FakeRozetkaAdapter([
+      [row('1'), goneRow('2')],
+      [pricelessRow('3'), pricelessRow('4')],
+      [row('1'), goneRow('2')],
+    ]);
+
+    const listing = await adapter.fetchListing();
+
+    // The price-less tiles record nothing, but the walk went on past them.
+    expect(listing.items.map((snap) => snap.storeSku)).toEqual(['1', '2']);
+    expect(adapter.urls).toEqual([
+      LISTING,
+      `${LISTING}page=2/`,
+      `${LISTING}page=3/`,
+    ]);
+    expect(listing.complete).toBe(true);
+    expect(listing.stop).toBe(ListingStop.EXHAUSTED);
+  });
+
+  it('does not retry a page that holds only price-less tiles', async () => {
+    const adapter = new FakeRozetkaAdapter([
+      [pricelessRow('1')],
+      [pricelessRow('1')],
+    ]);
+
+    const listing = await adapter.fetchListing();
+
+    expect(listing.items).toEqual([]);
+    expect(adapter.urls).toEqual([LISTING, `${LISTING}page=2/`]);
+    expect(listing.complete).toBe(true);
+  });
+
+  /**
+   * The listing states its own size, and the base reconciles the walk against
+   * it: every tile the store handed over counts, repeats and price-less tiles
+   * included, because reconciling on the snapshots kept would read a store
+   * with a sold-out tail as permanently truncated.
+   */
+  it('is counted when the tiles served reach the stated size', async () => {
+    const adapter = new FakeRozetkaAdapter([
+      [row('1'), row('2')],
+      [pricelessRow('3')],
+      [row('1'), row('2')],
+    ], 3);
+
+    const listing = await adapter.fetchListing();
+
+    expect(listing.items.map((snap) => snap.storeSku)).toEqual(['1', '2']);
+    expect(listing.complete).toBe(true);
+    expect(listing.stop).toBe(ListingStop.COUNTED);
+    expect(listing.statedItems).toBe(3);
+  });
+
+  it('is short when the walk ends before the stated size', async () => {
+    const adapter = new FakeRozetkaAdapter([
+      [row('1'), row('2')],
+      [row('1'), row('2')],
+    ], 5);
+
+    const listing = await adapter.fetchListing();
+
+    expect(listing.complete).toBe(false);
+    expect(listing.stop).toBe(ListingStop.SHORT);
+    expect(listing.statedItems).toBe(5);
   });
 
   /**
@@ -228,6 +344,21 @@ describe('RozetkaAdapter.fetchListing', () => {
 
     expect(listing.items).toHaveLength(1);
     expect(listing.complete).toBe(false);
+    expect(listing.stop).toBe(ListingStop.AMBIGUOUS);
+  });
+
+  it('treats an unexpected evaluation result as an empty page', async () => {
+    class BrokenAdapter extends FakeRozetkaAdapter {
+      protected renderEval(url: string): Promise<unknown> {
+        this.urls.push(url);
+
+        return Promise.resolve('not a page');
+      }
+    }
+
+    const listing = await new BrokenAdapter([]).fetchListing();
+
+    expect(listing.items).toEqual([]);
     expect(listing.stop).toBe(ListingStop.AMBIGUOUS);
   });
 });

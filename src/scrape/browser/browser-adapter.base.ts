@@ -4,6 +4,7 @@ import {
   launchBrowser,
   newStealthContext,
 } from './browser-context.factory';
+import { firstPartyHostOf } from './browser-request.policy';
 
 import type { Browser, Page } from 'playwright';
 
@@ -16,6 +17,10 @@ const SELECTOR_TIMEOUT_MS = 35_000;
  * the trick that lets Rozetka paginate at all, since it blocks the second and
  * later navigations inside one context while a new context's first navigation
  * clears the challenge.
+ *
+ * Every context is confined to the store's own hosts (plus the Cloudflare
+ * challenge platform) by the browser request policy, so the only traffic the
+ * browser tier adds over a plain HTTP scraper is the store's own scripts.
  */
 export abstract class BrowserAdapterBase extends ScrapeAdapterBase {
   private browser: Browser | null = null;
@@ -83,7 +88,9 @@ export abstract class BrowserAdapterBase extends ScrapeAdapterBase {
     read: (page: Page) => Promise<T>,
   ): Promise<T> {
     const browser = await this.ensureBrowser();
-    const context = await newStealthContext(browser);
+    const context = await newStealthContext(browser, {
+      firstPartyHost: firstPartyHostOf(this.spec.baseUrl),
+    });
     const page = await context.newPage();
 
     try {

@@ -14,7 +14,10 @@ export interface RozetkaRow {
   title: string;
 
   /**
-   * Current price, or null when the tile shows none.
+   * Current price, or null when the tile shows none. Since 2026-09 the
+   * sold-out tail of the listing renders its price slot empty («Залишити
+   * відгук» sits where the price was), so a null price is a real tile the
+   * store handed over, not a broken one — it merely records nothing.
    */
   price: number | null;
 
@@ -35,4 +38,20 @@ export interface RozetkaRow {
    * not recognize, and is never treated as a stock signal.
    */
   outOfStock: boolean;
+}
+
+/**
+ * One rendered listing page as the in-page extractor returns it.
+ */
+export interface RozetkaPage {
+  /**
+   * Every catalogue tile the page rendered, priced or not.
+   */
+  tiles: RozetkaRow[];
+
+  /**
+   * The category size the page states above the tiles («Знайдено 2410
+   * товарів»), or null when the page carries no such figure.
+   */
+  stated: number | null;
 }

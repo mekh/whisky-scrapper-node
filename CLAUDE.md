@@ -1260,9 +1260,12 @@ wrappers): `scrape/` has its own internal layering.
   against the item count their API states (`total` / `count` / `count`, the
   last two newly modelled); maudau uses `x-last-page` or the available prefix
   running out, and deliberately **not** its `x-total` (~2500), which counts the
-  unavailable tail the walk never reaches; rozetka uses a page whose tiles are
-  all already collected, because a page past the end **redirects to page 1**
-  (verified live), while a page that rendered nothing is the Cloudflare
+  unavailable tail the walk never reaches; rozetka uses a page whose tiles the
+  walk has all seen before — priced or not, since the store's sold-out tail
+  renders tiles with an empty price slot (2026-09) — because a page past the
+  end **redirects to page 1** (verified live 2026-07-25 and 2026-09-05), and
+  reconciles the tiles handed over against the «Знайдено N товарів» figure the
+  listing states, while a page that rendered no tile at all is the Cloudflare
   challenge winning and reads as incomplete; the seven `PagedHtmlAdapterBase`
   stores use a 404/410 or a page with no new SKU — and `winebutik`
   additionally the first page carrying a known out-of-stock label, because
@@ -1411,6 +1414,29 @@ wrappers): `scrape/` has its own internal layering.
   page is rendered in a **fresh stealth context** (`BrowserAdapterBase`
   `renderEval`/`renderHtml`), with one retry per page and the challenge-title
   wait.
+  **Every context is confined to the store's own hosts** by
+  `browser/browser-request.policy.ts`, installed as a `context.route()` in
+  `newStealthContext`: a request may go to the store's host or a subdomain of
+  it (from `spec.baseUrl`) or to `challenges.cloudflare.com`; everything else
+  is aborted before it reaches the network, and images, media and fonts are
+  aborted even on the store's hosts — except under the store's own `/cdn-cgi/`
+  paths and on the challenge host, which pass whatever their type, so the
+  policy can never be what keeps a challenge from clearing. The context also
+  blocks service workers (their fetches bypass `context.route()`), and
+  Chromium is launched with `--disable-quic`. Both exist because of the production outages of 2026-08-30..09-05
+  (`docs/OUTAGE-2026-08-30-HANDOFF.md`, §F14): the browser tier is the one
+  scraper whose traffic the adapter does not author — one unfiltered Rozetka
+  page made ~360 requests to 16 hosts, among them Facebook, Google, Microsoft
+  Clarity and Sentry, and spoke HTTP/3 over **UDP 443** to Google addresses on
+  every page — which is traffic a host firewall whitelist written for HTTP
+  scrapers logs and drops, and the `rozetka` track alone took the site down
+  for one to four hours a day. With the policy in place the same pages make
+  ~305 requests, all to `*.rozetka.com.ua`, none over UDP, and extract
+  identically. Cloudflare's challenge platform is allowed by construction but
+  has not been observed clearing behind the policy yet (the store did not
+  challenge on 2026-09-05); if a run ever ends `ambiguous` on every page, that
+  is the first thing to check. `isRequestAllowed` is pure and unit-tested
+  (`test/scrape/browser-request.policy.spec.ts`).
   **Availability is read from a positive marker** — the tile's buy button
   (`button.buy-button`) — never from the absence of an out-of-stock phrase: the
   store has two such labels («Закінчився», «Немає в наявності») and the old
@@ -1423,8 +1449,25 @@ wrappers): `scrape/` has its own internal layering.
   wrong until the next good run). Keep that invariant in mind before touching
   `EXTRACT_JS`; the
   golden test (`test/scrape/rozetka-extract.integration.spec.ts`) runs the real
-  extractor in Chromium against captured tiles. The browser is launched lazily and closed by `adapter.close()` in
-  `ScrapeService`'s `finally`.
+  extractor in Chromium against captured tiles. **A tile is kept when it has a
+  link and a title; its price may be null.** Since 2026-09 the sold-out tail
+  renders tiles with an empty price slot, and on 2026-09-04 that tail grew to
+  fill the last page of the walk (page 41 of «Знайдено 2410 товарів»). The
+  extractor used to drop price-less tiles, so that page read as an empty page
+  — the Cloudflare-challenge signature — and every run from 2026-09-04 ended
+  `ambiguous` with the sweep skipped, freezing the store's `inStock` flags. Now
+  the extractor returns the tile, `toSnapshot` drops it (out of stock, nothing
+  to record), and the walk counts it as _seen_: the terminator is a page with
+  no tile the walk has not met, priced or not, which is still the redirect to
+  page 1. A tile that carries the buy button but no price is the one
+  combination `toSnapshot` could neither record nor safely drop (a complete
+  run's sweep would flag it gone), so `fetchPage` treats it like a tile with
+  no signal at all — retried once, then the run fails loudly. The page script also reads the stated figure (`COUNT_JS`,
+  `[data-testid="filters-found-goods"]`), which `listing()` reconciles against
+  every tile handed over (repeats and price-less tiles included) — `counted`
+  when the walk served at least that many, `short` otherwise. The browser is
+  launched lazily and closed by `adapter.close()` in `ScrapeService`'s
+  `finally`.
   Infrastructure: the `service_run` Docker stage installs Chromium
   (`playwright install --with-deps chromium`, `PLAYWRIGHT_BROWSERS_PATH=
   /ms-playwright`) and drops to a non-root `appuser` (uid 10001) because

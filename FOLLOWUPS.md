@@ -95,10 +95,17 @@ been proven — pages 9-19 and 21-38 were never sampled — so confirm it first 
 logging in-stock counts per page during a normal full run, which costs no extra
 requests.
 
-One consequence to settle before switching it on:
+Two consequences to settle before switching it on:
 
 - `total` (the `sync_log` counter and the `found` figure) drops from ~2330 to
   ~600, so any threshold or eyeballed comparison against history changes basis.
+- Since 2026-09-05 the adapter reads the listing's own «Знайдено N товарів»
+  figure and `listing()` reconciles the walk against it (`counted` / `short`).
+  An early stop hands over far fewer tiles than the stated ~2400, so it would
+  read as `short` — incomplete — and the sweep would be skipped on every run.
+  The early-stop variant therefore has to either stop passing the stated count
+  or prove completeness another way (the in-stock prefix is what the sweep
+  needs; the tail it skips is out of stock by construction).
 
 The other former blocker is gone (2026-08-08): products are no longer deleted
 on unavailability — the persist sweep flags everything not seen in stock this

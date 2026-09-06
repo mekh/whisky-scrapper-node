@@ -57,6 +57,12 @@ pnpm kb-verify-merge [--allow-partial] # gate the verification-round outputs
 # over a bad enrich-flavors run. A script, not a migration — the import
 # migration already shipped this data everywhere.
 pnpm restore-flavor-import [--dry-run]
+
+# NBU official exchange rates. Fills and refreshes `currency_rate`; the daily
+# job does the same on a schedule, so this is for the first fill and repairs.
+# Safe to re-run and to interrupt — every write is an upsert.
+pnpm rates [--full] [--from <YYYY-MM-DD>] [--to <YYYY-MM-DD>]
+           [--code <CODE>] [--dry-run]
 ```
 
 Because `scripts/` sits beside `src/`, `nest build` nests the output under
@@ -972,6 +978,13 @@ meaningless without it), `kb-schema` (`producer`, `producer_alias`,
 applied, formatted per the `typeorm-migration-format` skill, and drift-free
 against the entities.
 
+Then `currency-rate` (2026-09-06), which creates the `currency` lookup and the
+`currency_rate` series (`currencyId` → `currency.id`, `ON DELETE CASCADE`) and
+seeds the three currency rows (UAH, USD, EUR). It seeds **no rates**: those
+come from an HTTP API, and a migration gates every deploy, so `pnpm rates`
+fills them instead. Its `down()` drops both tables. See "API contract" →
+"Currency rates".
+
 After them, `age-regroup-cyrillic-yo` (2026-09-01) repairs the bottlings the
 Cyrillic `уо` merged: the reader is fixed, but a match key is frozen at
 creation and nothing on the scrape path re-keys a known SKU, so the stored
@@ -1795,7 +1808,16 @@ Push vars in `PushConfig` — `PUSH_ENABLED` (default false),
 missing keys degrade to "push off" rather than failing the boot),
 `PUSH_CONCURRENCY` (8), `PUSH_TTL_SEC` (86400) and `PUSH_LOG_RETENTION_DAYS`
 (30) — see "Push notifications" under "API contract".
-In production every `SYNC_*`/`PUSH_*` var is forwarded from the host `.env` by
+Currency vars in `CurrencyConfig` — `NBU_BASE_URL`
+(`https://bank.gov.ua`), `NBU_TIMEOUT_MS` (30000), `NBU_RETRIES` (3),
+`CURRENCY_RATE_CODES` (`USD,EUR` — the base currency is never among them, it
+has no rate against itself), `CURRENCY_RATE_CRON_ENABLED` (**true**, unlike
+`SYNC_CRON_ENABLED`; see "Currency rates"), `CURRENCY_RATE_CRON_EXPRESSION`
+(`30 16 * * *`), `CURRENCY_RATE_TIMEZONE` (`Europe/Kyiv`) and
+`CURRENCY_RATE_SYNC_WINDOW_DAYS` (7) — see "API contract" → "Currency rates".
+An unusable cron expression fails the boot, as the sync one does.
+
+In production every `SYNC_*`/`PUSH_*`/`CURRENCY_*`/`NBU_*` var is forwarded from the host `.env` by
 the `environment` block of `docker-compose.yaml` — compose reads `.env` only to
 interpolate `${...}` in that file, and the image carries no `.env` of its own
 (`.dockerignore` excludes it), so a var that is not listed there never reaches
@@ -2002,6 +2024,12 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 | `DELETE /push/subscription` `{endpoint}` — drop this browser's subscription (body on DELETE)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | any logged-in user                           |
 | `POST /push/test` — send a test notification to every device of the caller                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | any logged-in user                           |
 | `POST /push/digest` `{capturedOn?}` — manually run the price-drop digest dispatch (idempotent per day)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `store:sync`                                 |
+| `GET /currency` — the currencies prices can be displayed in (see "Currency rates")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | any logged-in user                           |
+| `GET /currency/rate/latest` — the newest stored rate of every currency                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | any logged-in user                           |
+| `GET /currency/rate?codes=USD,EUR&date=` — the rates of several currencies on one day                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | any logged-in user                           |
+| `GET /currency/rate/series?code=&from=&to=` — one currency's rates over a day range, span capped at 732 days                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | any logged-in user                           |
+| `GET /currency/convert?amount=&from=&to=&date=` — one amount at one day's official rate; `404` when no rate exists at or before that day                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | any logged-in user                           |
+| `POST /currency/rate/sync` `{codes?, from?, to?}` — run the rate sync by hand (idempotent, repeatable any number of times a day)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `store:sync`                                 |
 | `GET /quick-filter` — the caller's own saved filter sets (see "Quick filters")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | any logged-in user                           |
 | `GET /quick-filter/user/{userId}` — another user's saved filter sets                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `quick_filter:read` or self (admin bypasses) |
 | `POST /quick-filter` `{name, filters}` — save a new set, `200` + the caller's fresh list                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | any logged-in user                           |
@@ -2378,6 +2406,103 @@ run. The contract the pieces rely on:
   (30). Missing keys degrade to "push off" — `GET /push/config` answers
   `{enabled: false}` and the client renders its switch disabled. Rotating the
   public key invalidates every stored subscription.
+
+### Currency rates (2026-09-06)
+
+Official NBU exchange rates, so an amount stored in hryvnia can be displayed
+in another currency **at the rate of the day it belongs to**. Prices stay
+stored in UAH — that does not change; this is a display and reporting layer.
+
+Built for the personal collection (a purchase converts at its own purchase
+date), but the storage, the API and the conversion service are independent of
+it and usable by anything.
+
+- **Source**: the NBU's own documented open-data endpoint,
+  `bank.gov.ua/NBU_Exchange/exchange_site?start=&end=&valcode=&json`. No key,
+  no rate limit, and the whole history of a currency comes back in one request.
+- **`currency`** is the lookup (`code`, `numericCode`, `nameUa`, `symbol`,
+  `isBase`, `active`), seeded by migration with UAH (base), USD and EUR.
+  **`currency_rate`** is the series: `currencyId`, `rate`, `effectiveOn`,
+  unique on `(currencyId, effectiveOn)`, `currencyId` a foreign key to
+  `currency.id`. Every API still speaks ISO codes, so the reads join the
+  lookup in and `CoreCurrencyService.upsertRates` resolves a code to its id
+  once per batch — failing closed with a readable message on an unknown one,
+  rather than letting a join drop the row silently.
+- **`rate` is hryvnia per ONE unit of `code`.** `UAH -> code` divides by it,
+  `code -> UAH` multiplies. It is normalized on ingest from the source's
+  `rate / units`, and that normalization is the single most important line in
+  the feature: **until 2019-12-27 the NBU quoted USD and EUR per 100 units**,
+  so persisting its `rate` field unchanged would make every earlier row a
+  hundred times too large — silently, since the number still looks like a
+  plausible rate. `CurrencyUtils.normalize` divides and then requires the
+  result to equal the source's own `rate_per_unit`, so a payload that ever
+  changes shape fails loudly instead of writing a wrong rate.
+- **`numeric(18,6)`, not the shared `numeric(12,2)` of a price.** A normalized
+  rate carries up to six decimals in the hryvnia's high-inflation years
+  (15.768556 on 2014-12-31); the price scale would truncate them.
+- **The series is gap-free, by construction.** The source publishes **every
+  calendar day** — a weekend or a holiday simply repeats the preceding
+  business day's rate — with twelve exceptions in its own first years
+  (1996-11-18, 1997-11-08..11 and seven more, verified absent by asking for
+  those exact days). Those are filled on ingest by carrying the last known
+  rate forward (`CurrencyUtils.fillGaps`), which is the same rule the source
+  applies to weekends, so a filled day states what the bank would have stated:
+  the rate in force that day. Only the interior of a fetched range is bridged
+  — never past its first or last day — so the result depends on what the
+  source published and not on what happened to be asked for. `pnpm rates`
+  asserts afterwards that no currency's span holds a hole, and fails if one
+  does, since that could then only mean the stored copy lost days. Stored
+  today: USD from **1996-01-06**, EUR from **1999-01-01**, 21 315 rows.
+- **A missing rate is reported, never invented.** A lookup takes the exact day
+  or the most recent earlier one, and always states the `effectiveOn` it
+  actually used. With nothing at or before the day, `GET /currency/convert`
+  answers **404** and `CurrencyConversionService.convert` returns **null** — a
+  purchase older than the currency's published history has no official rate,
+  and substituting the nearest one would quietly make a number up.
+- **`convert` reports `fromRate` and `toRate`, not one "the rate".** A
+  conversion between two foreign currencies has two rates and no single number
+  is the answer; naming one would silently pick a side. Both are hryvnia per
+  unit, so the base currency's is exactly `1`, and a client showing "at the NBU
+  rate of N" takes whichever of the pair is not 1. Both are null for a
+  base-to-base conversion, which applies no rate at all.
+- **Re-syncing the same day is a first-class case.** The write is one
+  `INSERT ... ON CONFLICT (code, "effectiveOn") DO UPDATE`, so `pnpm rates`,
+  the cron and `POST /currency/rate/sync` may run any number of times a day,
+  concurrently, with the last write winning — which is also what repairs a
+  value stored wrongly. There is deliberately **no** day-lock and no "already
+  synced today" guard: unlike a scrape this costs one small request and is
+  perfectly idempotent, so a guard could only ever prevent a repair. Verified:
+  a hand-corrupted rate is corrected by a plain re-sync, four same-day runs
+  leave the row count unchanged, and `updatedAt` advances only for the days
+  actually fetched.
+- **Timing.** The NBU sets business day D's rate on business day D-1 and
+  publishes it after 15:30 Kyiv — its `calcdate` shows Monday's rate calculated
+  the preceding Friday. So the default schedule (`30 16 * * *`, Europe/Kyiv)
+  leaves the table holding the *next* business day's rate, and a failed run
+  costs nothing. `GET /currency/rate/latest` can therefore legitimately report
+  **tomorrow**; it is not clamped. The hour is not load-bearing anyway — each
+  run re-fetches a trailing window (`CURRENCY_RATE_SYNC_WINDOW_DAYS`, 7) and
+  the write is an upsert, so any run repairs what earlier ones missed.
+- **The cron ships enabled**, unlike `SYNC_CRON_ENABLED`. A scrape that starts
+  on its own is a surprise worth opting into; a rates table that quietly stops
+  updating shows wrong money on every screen that converts.
+- **`CurrencyConversionService` is what other features inject.**
+  `convert(request)` does one amount; **`convertMany(requests)` resolves every
+  distinct `(currency, day)` pair in one query** and returns results
+  positionally aligned with its input, nulls included. Converting a 200-row
+  collection must not be 200 queries, which a caller looping over `convert`
+  would make it. Rates for past days are immutable — the NBU never restates a
+  published one — so they are memoized in process indefinitely; anything on or
+  after today, or a fallback, gets a short TTL.
+- **The schema ships as a migration; the rates do not.** `currency-rate`
+  creates both tables and seeds the three currency rows. The historical fill is
+  `pnpm rates --full` (two requests per year-chunk, ~30 s for the whole
+  history), because migrations gate every deploy and must not depend on an
+  external API — the same rule `pnpm clean-names` follows.
+- **A lookup's `effectiveOn` fallback survives the gap filling.** With the
+  series complete it can no longer fire inside the stored history, but it
+  still covers a day past the last synced one, which is the case that matters
+  in production when a cron tick is missed.
 
 ### Quick filters (2026-08-27)
 
@@ -2770,6 +2895,24 @@ Pre-existing bugs fixed while wiring auth (context for future changes):
     re-thrown as `DuplicateError` so a second tab gets 409 rather than 500.
   - **Ownership is a `WHERE` clause, not a check**, so a foreign id matches no
     row and answers 404 — nothing confirms the set exists.
+
+- **NBU currency rates are built** (`core/currency`, `domain/currency`,
+  2026-09-06): the `currency` lookup and the `currency_rate` series, a
+  backfill (`pnpm rates`), a daily job, six endpoints under `/currency`, and
+  `CurrencyConversionService` for other features to inject. The full contract
+  is in "API contract" → "Currency rates". Built as the foundation the
+  personal collection needs to show a purchase price in the user's currency at
+  the rate of its purchase date; **nothing of the collection itself is in
+  here**, and the rates layer knows nothing about it. Load-bearing decisions,
+  each with its reasoning in that section: `rate` is normalized to hryvnia per
+  one unit (the source quoted USD and EUR per *100* until 2019-12-27),
+  `numeric(18,6)` rather than the price scale, re-syncing a day overwrites
+  rather than duplicating, the days the source omits are carried forward so
+  the series has no holes, and a rate that does not exist at all is reported
+  rather than invented. Backfilled locally over the full history (USD from
+  1996-01-06, EUR from 1999-01-01, 21 315 rows, gap-free) and verified against
+  the source across the units boundary; **not deployed to prod**, where
+  `pnpm rates --full` has to be run once after the migration.
 
 The endpoint inventory and every field map live in **"API contract"** above —
 update that section alongside any API contract change; `../web` reads it as the

@@ -1,6 +1,7 @@
 export { ArrayUtils } from './array.utils';
 export { BrandUtils } from './brand.util';
 export { ConcurrencyPool } from './concurrency-pool.util';
+export { CurrencyUtils } from './currency.util';
 export { DashboardMetricsUtils } from './dashboard-metrics.util';
 export { DurationUtils } from './duration.util';
 export { ErrorUtils } from './error.util';

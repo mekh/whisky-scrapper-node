@@ -20,6 +20,7 @@
     "init": "ts-node -r tsconfig-paths/register ./scripts/init.ts",
     "clean-names": "ts-node -r tsconfig-paths/register ./scripts/clean-product-names.ts",
     "backfill": "ts-node -r tsconfig-paths/register ./scripts/backfill-nulls.ts",
+    "rates": "ts-node -r tsconfig-paths/register ./scripts/currency-rates.ts",
     "enrich-flavors": "ts-node -r tsconfig-paths/register ./scripts/enrich-flavors.ts",
     "kb-merge": "ts-node -r tsconfig-paths/register ./scripts/kb-merge.ts",
     "openapi": "ts-node ./scripts/emit-openapi.ts",

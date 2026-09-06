@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { AppConfig } from './parts/app.config';
 import { AuthConfig } from './parts/auth.config';
+import { CurrencyConfig } from './parts/currency.config';
 import { DbConfig } from './parts/db.config';
 import { JwtAccessConfig } from './parts/jwt-access.config';
 import { LoggerConfig } from './parts/logger.config';
@@ -15,6 +16,7 @@ import { WatchdogConfig } from './parts/watchdog.config';
 const providers = [
   AppConfig,
   AuthConfig,
+  CurrencyConfig,
   DbConfig,
   JwtAccessConfig,
   LoggerConfig,

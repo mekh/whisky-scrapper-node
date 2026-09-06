@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { CoreCountryModule } from './country';
+import { CoreCurrencyModule } from './currency';
 import { CoreFlavorModule } from './flavor';
 import { CorePreferenceModule } from './preference';
 import { CorePriceSnapshotModule } from './price-snapshot';
@@ -22,6 +23,7 @@ import { CoreTypeModule } from './type';
 @Module({
   imports: [
     CoreCountryModule,
+    CoreCurrencyModule,
     CoreFlavorModule,
     CorePreferenceModule,
     CorePriceSnapshotModule,
@@ -37,6 +39,7 @@ import { CoreTypeModule } from './type';
   ],
   exports: [
     CoreCountryModule,
+    CoreCurrencyModule,
     CoreFlavorModule,
     CorePreferenceModule,
     CorePriceSnapshotModule,

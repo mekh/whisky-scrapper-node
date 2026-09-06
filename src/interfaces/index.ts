@@ -3,6 +3,7 @@ export * from './auth.interfaces';
 export * from './brand.interfaces';
 export * from './crud.interfaces';
 export * from './ctx.interfaces';
+export * from './currency.interfaces';
 export * from './dashboard.interfaces';
 export * from './entity.interfaces';
 export * from './jwt.interfaces';

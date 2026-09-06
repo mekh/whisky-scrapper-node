@@ -704,3 +704,87 @@ export interface EntitySyncLog extends EntityBaseRich {
   trigger?: string;
   logFile?: string;
 }
+
+/**
+ * A currency the application can display prices in.
+ *
+ * A lookup table rather than a `DISTINCT code` over the rates, for the same
+ * reason `country` is one: filter and picker options come from the database,
+ * a derived list cannot express the base currency (which has no rate rows at
+ * all), and it has nowhere to carry the name and symbol a client renders.
+ */
+export interface EntityCurrency extends EntityBaseRich {
+  /**
+   * ISO 4217 alphabetic code, upper-case (`UAH`, `USD`, `EUR`). Unique, and
+   * the value every API speaks in — `currency_rate` references the row by id.
+   */
+  code: string;
+
+  /**
+   * ISO 4217 numeric code (980, 840, 978). The NBU calls it `r030`. Stored
+   * because it is stable reference data that is tedious to add later; nothing
+   * reads it today.
+   */
+  numericCode: number;
+
+  /**
+   * Ukrainian display name, as the UI shows it.
+   */
+  nameUa: string;
+
+  /**
+   * Display symbol (`₴`, `$`, `€`).
+   */
+  symbol: string;
+
+  /**
+   * True for the one currency every price is stored in — the hryvnia.
+   * Converting to or from it is the identity, and it has no rate rows.
+   */
+  isBase: boolean;
+
+  /**
+   * Whether the currency is offered to users. A currency can be present (so
+   * its rates keep syncing and old records stay convertible) without being
+   * selectable.
+   */
+  active: boolean;
+}
+
+/**
+ * The NBU's official rate of one currency on one calendar day.
+ *
+ * One row per `(code, effectiveOn)`, enforced by a unique index — the same
+ * "one row per key per day" shape as `price_snapshot`, and what lets the sync
+ * be a single `INSERT ... ON CONFLICT DO UPDATE` that any number of runs a day
+ * may repeat.
+ */
+export interface EntityCurrencyRate extends EntityBaseRich {
+  /**
+   * The currency this rate belongs to.
+   */
+  currencyId: ID;
+
+  /**
+   * **Hryvnia per ONE unit of the currency.** So `UAH -> currency` divides by
+   * this and `currency -> UAH` multiplies by it.
+   *
+   * Normalized on ingest from the NBU's `rate / units`: until 2019-12-27 the
+   * bank quoted USD and EUR per *100* units, and persisting its `rate` field
+   * as-is would make every earlier row a hundred times too large.
+   */
+  rate: number;
+
+  /**
+   * The calendar day this rate applies to, as a UTC date. Weekends and
+   * holidays carry the preceding business day's value, because the source
+   * publishes every calendar day; the handful its own first years omit are
+   * filled the same way on ingest. So the series has no gaps and a lookup
+   * needs no interpolation.
+   *
+   * A day in the future is legitimate: the NBU publishes the next business
+   * day's rate after 15:30 Kyiv time.
+   */
+  effectiveOn: string;
+}
+

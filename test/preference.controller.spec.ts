@@ -51,7 +51,7 @@ function metaOf(handler: string): AuthPermissionMeta | undefined {
 function makeController(): {
   controller: PreferenceController;
   service: Record<string, jest.Mock>;
-  } {
+} {
   const service = {
     getOwn: jest.fn().mockResolvedValue('own'),
     getOwnDetails: jest.fn().mockResolvedValue('own-details'),

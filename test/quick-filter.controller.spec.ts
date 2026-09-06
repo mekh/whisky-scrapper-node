@@ -37,7 +37,7 @@ function metaOf(handler: string): AuthPermissionMeta | undefined {
 function makeController(): {
   controller: QuickFilterController;
   service: Record<string, jest.Mock>;
-  } {
+} {
   /**
    * Every handler is wrapped by `@Plain([QuickFilterType], …)`, which runs
    * `plainToInstance` over the result — so the mocks must answer with lists,

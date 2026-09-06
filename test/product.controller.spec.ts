@@ -33,7 +33,7 @@ function metaOf(handler: string): AuthPermissionMeta | undefined {
 function makeController(): {
   controller: ProductController;
   service: Record<string, jest.Mock>;
-  } {
+} {
   const service = {
     search: jest.fn().mockResolvedValue([]),
     update: jest.fn().mockResolvedValue('updated'),

@@ -17,7 +17,7 @@ import { IsoDate } from '~decorators/fields';
 import type { CollectionPurchaseUpdateInput } from '~types';
 
 export class CollectionPurchaseUpdateDto
-implements CollectionPurchaseUpdateInput {
+  implements CollectionPurchaseUpdateInput {
   @IsoDate(true)
   public purchasedOn?: string;
 

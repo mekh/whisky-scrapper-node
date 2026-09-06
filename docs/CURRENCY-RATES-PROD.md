@@ -107,7 +107,7 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://<host>/api/currency/rate/late
 curl -s -H "Authorization: Bearer $TOKEN" 'https://<host>/api/currency/convert?amount=1200&from=UAH&to=USD&date=2015-06-01'
 ```
 
-The second must answer `converted: 57.01`, `toRate: 21.048227`. **This is the check worth doing**: it exercises a pre-2020 date, and pre-2020 is where the NBU quoted USD per *100* units. If `toRate` ever comes back around `2104` instead of `21.05`, the normalization is broken and every historical amount is a hundred times off.
+The second must answer `converted: 57.01`, `toRate: 21.048227`. **This is the check worth doing**: it exercises a pre-2020 date, and pre-2020 is where the NBU quoted USD per _100_ units. If `toRate` ever comes back around `2104` instead of `21.05`, the normalization is broken and every historical amount is a hundred times off.
 
 And confirm the schedule armed, in the app log:
 
@@ -119,7 +119,7 @@ CurrencyRateCronService: Currency rate schedule armed: "30 16 * * *" (Europe/Kyi
 
 ## 4. The day after
 
-The daily job runs at **16:30 Kyiv** — after the bank's 15:30 publication cutoff, so each run stores the *next* business day's rate and a missed run costs nothing. Confirm one fired:
+The daily job runs at **16:30 Kyiv** — after the bank's 15:30 publication cutoff, so each run stores the _next_ business day's rate and a missed run costs nothing. Confirm one fired:
 
 ```bash
 docker compose logs service --since 24h | grep -i 'Currency rates synced'
@@ -135,15 +135,15 @@ If it never fires, `POST /currency/rate/sync` (permission `store:sync`) runs the
 
 Every variable has a working default and the feature runs with none of them set. They are forwarded by `docker-compose.yaml`, so setting one in the host `.env` is enough.
 
-| Variable | Default | When you would touch it |
-| --- | --- | --- |
-| `CURRENCY_RATE_CRON_ENABLED` | `true` | Set `false` to stop the daily job. |
-| `CURRENCY_RATE_CRON_EXPRESSION` | `30 16 * * *` | Move the hour. `30 9,16 * * *` for twice daily — free, since the write is an upsert. |
-| `CURRENCY_RATE_TIMEZONE` | `Europe/Kyiv` | |
-| `CURRENCY_RATE_SYNC_WINDOW_DAYS` | `7` | How many trailing days each run re-fetches. |
-| `CURRENCY_RATE_CODES` | `USD,EUR` | Adding a code needs a `currency` row too — a migration, not just this. |
-| `NBU_BASE_URL` | `https://bank.gov.ua` | |
-| `NBU_TIMEOUT_MS` / `NBU_RETRIES` | `30000` / `3` | |
+| Variable                         | Default               | When you would touch it                                                              |
+| -------------------------------- | --------------------- | ------------------------------------------------------------------------------------ |
+| `CURRENCY_RATE_CRON_ENABLED`     | `true`                | Set `false` to stop the daily job.                                                   |
+| `CURRENCY_RATE_CRON_EXPRESSION`  | `30 16 * * *`         | Move the hour. `30 9,16 * * *` for twice daily — free, since the write is an upsert. |
+| `CURRENCY_RATE_TIMEZONE`         | `Europe/Kyiv`         |                                                                                      |
+| `CURRENCY_RATE_SYNC_WINDOW_DAYS` | `7`                   | How many trailing days each run re-fetches.                                          |
+| `CURRENCY_RATE_CODES`            | `USD,EUR`             | Adding a code needs a `currency` row too — a migration, not just this.               |
+| `NBU_BASE_URL`                   | `https://bank.gov.ua` |                                                                                      |
+| `NBU_TIMEOUT_MS` / `NBU_RETRIES` | `30000` / `3`         |                                                                                      |
 
 **Note the cron ships enabled**, unlike `SYNC_CRON_ENABLED`. A scrape that starts on its own is a surprise worth opting into; a rates table that quietly stops updating shows wrong money on every screen that converts. An unusable cron expression fails the boot on purpose — a schedule that silently never fires is the worse failure.
 

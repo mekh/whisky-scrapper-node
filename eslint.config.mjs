@@ -25,15 +25,27 @@ export default [
       'class-methods-use-this': 'off',
       'arrow-parens': 'off',
       'no-unused-vars': 'off',
-      indent: ['error', 2, {
-        SwitchCase: 1,
-        ignoredNodes: [
-          'TSTypeParameterInstantiation',
-          'TSUnionType',
-          'TSIntersectionType',
-          'ClassBody.body > PropertyDefinition[decorators.length>0]>Identifier',
-        ],
-      }],
+      /**
+       * Indentation is dprint's, not ESLint's.
+       *
+       * The two disagree on exactly one construct — a wrapped `implements`
+       * clause, which dprint indents and this rule wanted flush left — and the
+       * disagreement is unresolvable from here: the `implements` keyword
+       * belongs to the `ClassDeclaration`, so no `ignoredNodes` selector can
+       * reach it without also silencing the whole class body. The result was
+       * ten files that `pnpm lint` and `dprint fmt` rewrote back and forth
+       * forever, dirtying every unrelated diff.
+       *
+       * Turning the rule off rather than fighting it is what CLAUDE.md already
+       * states this project does: "dprint owns formatting. ESLint carries no
+       * formatting rules to avoid conflicts." A formatter that rewrites every
+       * file leaves this rule nothing to catch anyway — it can only ever be
+       * silent or wrong.
+       *
+       * The other stylistic rules below stay: they agree with dprint today and
+       * are not what this removes.
+       */
+      indent: 'off',
       quotes: ['error', 'single', { avoidEscape: true }],
       semi: ['error', 'always'],
       'no-return-assign': 'error',

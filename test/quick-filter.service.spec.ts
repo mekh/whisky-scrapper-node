@@ -18,7 +18,7 @@ function makeService(): {
   service: QuickFilterService;
   quickFilters: Record<string, jest.Mock>;
   users: Record<string, jest.Mock>;
-  } {
+} {
   const quickFilters = {
     findByUserId: jest.fn().mockResolvedValue([]),
     createForUser: jest.fn().mockResolvedValue([]),

@@ -91,13 +91,57 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
   }
 
   /**
-   * Creates a bottling with no match key, which nothing can ever match.
+   * Creates a bottling with no match key. Nothing matches it by key; a later
+   * listing can still reach it by identity, since the find-or-create step
+   * compares name, volume and age before it creates anything.
    *
    * @param input - The bottling to create.
    * @returns The new canonical id.
    */
   public async createUnmatched(input: ProductCanonicalInput): Promise<ID> {
     return this.repo.createUnmatched(input);
+  }
+
+  /**
+   * Every other bottling with the same identity — name, volume and age.
+   *
+   * @param name - The display name, or null, which matches nothing.
+   * @param volumeMl - The volume, or null.
+   * @param age - The age statement, or null for NAS.
+   * @param exceptId - A bottling to leave out.
+   * @returns The twins' ids, most-listed first.
+   */
+  public async findIdentityTwins(
+    name: string | null,
+    volumeMl: number | null,
+    age: number | null,
+    exceptId: ID | null = null,
+  ): Promise<ID[]> {
+    return this.repo.findIdentityTwins(name, volumeMl, age, exceptId);
+  }
+
+  /**
+   * Folds one bottling into another that is the same whisky and deletes it;
+   * offers, prices, flavors, conflicts, every user's lists and the retired
+   * key all move to the survivor. Runs in the caller's transaction.
+   *
+   * @param loserId - The bottling to fold away.
+   * @param survivorId - The bottling to keep.
+   * @returns Resolves once the vanishing row is gone.
+   */
+  public async mergeInto(loserId: ID, survivorId: ID): Promise<void> {
+    return this.repo.mergeInto(loserId, survivorId);
+  }
+
+  /**
+   * Deletes a bottling nothing refers to any more; a row somebody still lists
+   * or holds is kept.
+   *
+   * @param id - The bottling to delete if it is unreferenced.
+   * @returns True when the row was deleted.
+   */
+  public async deleteIfUnreferenced(id: ID): Promise<boolean> {
+    return this.repo.deleteIfUnreferenced(id);
   }
 
   /**

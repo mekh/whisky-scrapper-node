@@ -277,3 +277,29 @@ feeds that frozen key. Note that a merge changes the brand token for _future_
 listings of the affected bottlings, so a later SKU can compute a different key
 and mint a second bottling for curation to merge; that is the accepted,
 already-documented cost of any brand change.
+
+## 8. Barcodes are the strongest identity signal and the scrape ignores them
+
+**Status**: open (2026-09-06). **Blocked by**: nothing — scoped out of the
+duplicate-merge work to keep it reviewable.
+
+The `product-duplicate-merge` migration found that a retail barcode is a
+better cross-store identity than anything the match key folds: 12 of 22
+stores state one (the Zakaz.ua networks in the URL suffix, Rozetka and MauDau in
+parentheses in the name — 5 000-odd offers), and 187 barcodes were each held by
+two or more bottlings, 132 of them merged on that evidence. Nothing on the
+scrape path reads them, so the same split can happen again for a new SKU whose
+key and cleaned name both miss.
+
+**Fix**: a `store_product.barcode` column (nullable, indexed), filled by the
+adapters that have it (Zakaz's JSON carries `ean`; Rozetka's is in the name) and
+backfilled from the URL/name by the same expression the migration used, and a
+barcode step in `findOrCreateByMatchKeys` ahead of the identity step: a new
+listing whose barcode an existing offer already carries is that offer's
+bottling. Guard it the way the migration did — equal volume, compatible names —
+since a shop occasionally reuses a code (`Clan Denny Islay`/`Speyside`,
+`Hyde №3`/`№4`, `Kilchoman Machir Bay`/`Sanaig` on the 2026-09-06 dump). The
+40 barcode groups the migration refused are the first review list for a
+person; the differing-name ones are mostly spellings (`Whyte & Mackay` vs
+`Whyte&Mackey`, `Faunder's` vs `Founder's`, a Cyrillic `Dewar's Спешел
+Резерв`) that the edit-then-merge flow now settles in one rename each.

@@ -178,6 +178,31 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
   }
 
   /**
+   * Moves one offer onto another bottling, leaving every other offer of its
+   * group where it is. The price history stays with the offer.
+   *
+   * The link is the one column the scrape upsert never rewrites, so what is
+   * written here holds until somebody moves the offer again.
+   *
+   * @param id - The store-offer id.
+   * @param productId - The bottling to link it to.
+   * @returns The bottling the offer was linked to before, or null when the id
+   *   names no offer.
+   */
+  public async relink(id: ID, productId: ID): Promise<ID | null> {
+    const rows = await this.query(
+      `UPDATE store_product sp
+       SET "productId" = $2, "updatedAt" = now()
+       FROM store_product old
+       WHERE sp.id = $1 AND old.id = sp.id
+       RETURNING old."productId" AS "previousProductId"`,
+      [id, productId],
+    ) as [{ previousProductId: ID }[], number];
+
+    return rows[0][0]?.previousProductId ?? null;
+  }
+
+  /**
    * SKUs a store already lists, whatever their stock state. The enrichment
    * passes use it to tell a genuinely new listing from one the catalogue has
    * already been asked about.

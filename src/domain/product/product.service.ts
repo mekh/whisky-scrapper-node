@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Transactional } from 'typeorm-transactional';
 
 import { SEARCH_DEFAULT_LIMIT } from '~constants';
 import { CoreCountryService } from '~core/country';
@@ -8,9 +9,11 @@ import { CoreStoreProductService } from '~core/store-product';
 import { CoreTypeService } from '~core/type';
 import { FactSource, ProductFactField } from '~enums';
 import { BadRequestError, NotFoundError } from '~errors';
-import {
+import type {
   ID,
+  ProductCanonicalInput,
   ProductManualPatch,
+  ProductRelinkInput,
   ProductSearchItem,
   ProductUpdateInput,
   SearchQuery,
@@ -53,10 +56,22 @@ export class ProductService {
    * a report row (a store offer, which is what the client has) or a canonical
    * product; both resolve to the same bottling.
    *
+   * **An edit that makes two rows one whisky merges them.** After the patch
+   * the bottling is compared against the rest of the catalogue by identity —
+   * name, volume and age — and every row that now agrees on all three is
+   * folded into one: the edited row moves onto the most-listed twin, taking
+   * its offers, its lists and the fields the person just set with it (a
+   * `manual` value wins the merge). That is what turns "rename `Arran Amarone
+   * Casc` to `Arran Amarone Cask`" into a one-step correction instead of a
+   * rename followed by a SQL merge. The check runs on every edit, not only
+   * when an identity field changed, so an older duplicate is folded away the
+   * first time either row is touched.
+   *
    * Editing `age` or `volumeMl` does **not** re-derive the bottling's match
-   * key. The key is frozen when the row is created (see `EntityProduct`), so a
-   * correction here changes what is displayed and filtered without detaching
-   * the offers already linked; re-matching is a manual operation.
+   * key. The key is frozen when the row is created (see `EntityProduct`); the
+   * merge above is what reconciles the catalogue instead, and the vanishing
+   * row's key is retired into `product_match_alias` so a later listing keyed
+   * like it lands on the survivor.
    *
    * `flavors` is the one field that is not a column on `product`: it replaces
    * the bottling's whole tag set and marks it curated, so the automatic passes
@@ -65,12 +80,14 @@ export class ProductService {
    * new tags and an old country.
    *
    * @param input - The product or offer id plus the fields to update.
-   * @returns The requested id with the updated name and a raw fallback.
+   * @returns The requested id, the bottling it now belongs to, the updated
+   * name and a raw fallback.
    * @throws {NotFoundError} When the id matches neither an offer nor a
    * product.
    * @throws {BadRequestError} When a country code, type name or flavor name is
    * unknown.
    */
+  @Transactional()
   public async update(input: ProductUpdateInput): Promise<TypeProduct> {
     const ref = await this.offers.findOfferRefById(input.id);
 
@@ -78,6 +95,104 @@ export class ProductService {
       throw new NotFoundError('Product not found', { id: input.id });
     }
 
+    const patch = await this.buildPatch(input);
+
+    const updated = await this.products.updateByIdOrThrow(
+      ref.productId,
+      patch as never,
+    );
+
+    if (input.flavors !== undefined) {
+      await this.setFlavors(ref.productId, input.flavors);
+    }
+
+    const survivorId = await this.mergeTwins(
+      ref.productId,
+      updated.name ?? null,
+      updated.volumeMl ?? null,
+      updated.age ?? null,
+    );
+
+    const survivor = survivorId === ref.productId
+      ? updated
+      : await this.products.findByIdOrThrow(survivorId);
+
+    /**
+     * The caller's own id is echoed back rather than the canonical one, so the
+     * response still names the thing the client asked about. `nameOrig` has to
+     * come from the resolved offer — the bottling carries no raw name.
+     */
+    return {
+      id: input.id,
+      productId: survivorId,
+      name: survivor.name ?? null,
+      nameOrig: ref.nameOrig,
+      merged: survivorId !== ref.productId,
+      created: false,
+    };
+  }
+
+  /**
+   * Moves one store offer onto another bottling, leaving the rest of its
+   * group where it is — the correction for a listing the matcher filed under
+   * the wrong whisky.
+   *
+   * The target is either named outright by `productId`, or described by the
+   * attribute fields and looked up **by identity**: the most-listed bottling
+   * with that name, volume and age is used, and one is created only when
+   * nothing matches. A found bottling's own facts stand — the attributes are
+   * the address of the target, not an edit of it — while a created one is
+   * stamped `manual` throughout, since every value on it is a person's.
+   *
+   * The bottling the offer leaves is deleted when nothing refers to it any
+   * more: a row whose only listing was just moved is an empty shell that
+   * would otherwise keep answering searches. A row anyone still lists or
+   * holds in a collection is kept.
+   *
+   * @param input - The offer id and the target, by id or by attributes.
+   * @returns The offer id, the bottling it now belongs to and whether that
+   * bottling had to be created.
+   * @throws {NotFoundError} When the id names no offer, or `productId` names
+   * no bottling.
+   * @throws {BadRequestError} When neither a product id nor a name is given,
+   * or a country code, type name or flavor name is unknown.
+   */
+  @Transactional()
+  public async relink(input: ProductRelinkInput): Promise<TypeProduct> {
+    const offer = await this.offers.findById(input.id);
+
+    if (!offer) {
+      throw new NotFoundError('Offer not found', { id: input.id });
+    }
+
+    const target = await this.resolveRelinkTarget(input);
+    const previous = await this.offers.relink(offer.id, target.id);
+
+    if (previous !== null && previous !== target.id) {
+      await this.products.deleteIfUnreferenced(previous);
+    }
+
+    return {
+      id: offer.id,
+      productId: target.id,
+      name: target.name,
+      nameOrig: offer.nameOrig,
+      merged: false,
+      created: target.created,
+    };
+  }
+
+  /**
+   * Resolves the fields of an edit into a column patch, each value stamped
+   * with its provenance.
+   *
+   * @param input - The edit.
+   * @returns The patch to apply to the bottling.
+   * @throws {BadRequestError} When a country code or type name is unknown.
+   */
+  private async buildPatch(
+    input: ProductUpdateInput,
+  ): Promise<ProductManualPatch> {
     const patch: ProductManualPatch = {};
 
     if (input.name !== undefined) {
@@ -108,25 +223,152 @@ export class ProductService {
       this.stamp(patch, 'typeId', ProductFactField.TYPE, typeId);
     }
 
-    const updated = await this.products.updateByIdOrThrow(
-      ref.productId,
-      patch as never,
+    return patch;
+  }
+
+  /**
+   * Folds a bottling together with every other row that shares its identity.
+   *
+   * The most-listed twin survives and the edited row is merged into it — the
+   * person's `manual` values win the merge, so the edit still lands — and any
+   * further twins follow. Nothing happens when the bottling stands alone.
+   *
+   * @param productId - The bottling just edited.
+   * @param name - Its name after the edit.
+   * @param volumeMl - Its volume after the edit.
+   * @param age - Its age after the edit.
+   * @returns The id of the bottling that holds the group now.
+   */
+  private async mergeTwins(
+    productId: ID,
+    name: string | null,
+    volumeMl: number | null,
+    age: number | null,
+  ): Promise<ID> {
+    const twins = await this.products.findIdentityTwins(
+      name,
+      volumeMl,
+      age,
+      productId,
     );
 
-    if (input.flavors !== undefined) {
-      await this.setFlavors(ref.productId, input.flavors);
+    const [survivorId, ...rest] = twins;
+
+    if (survivorId === undefined) {
+      return productId;
     }
 
-    /**
-     * The caller's own id is echoed back rather than the canonical one, so the
-     * response still names the thing the client asked about. `nameOrig` has to
-     * come from the resolved offer — the bottling carries no raw name.
-     */
-    return {
-      id: input.id,
-      name: updated.name ?? null,
-      nameOrig: ref.nameOrig,
+    await this.products.mergeInto(productId, survivorId);
+
+    for (const twinId of rest) {
+      await this.products.mergeInto(twinId, survivorId);
+    }
+
+    return survivorId;
+  }
+
+  /**
+   * Works out which bottling a relink moves the offer to: the one named by
+   * id, else the one the attributes match by identity, else a new one.
+   *
+   * @param input - The relink request.
+   * @returns The target's id and name, and whether it was created.
+   * @throws {NotFoundError} When `productId` names no bottling.
+   * @throws {BadRequestError} When neither a product id nor a name is given,
+   * or a country code, type name or flavor name is unknown.
+   */
+  private async resolveRelinkTarget(
+    input: ProductRelinkInput,
+  ): Promise<{ id: ID; name: string | null; created: boolean }> {
+    if (input.productId) {
+      const product = await this.products.findById(input.productId);
+
+      if (!product) {
+        throw new NotFoundError('Product not found', {
+          productId: input.productId,
+        });
+      }
+
+      return { id: product.id, name: product.name ?? null, created: false };
+    }
+
+    const trimmed = input.name?.trim() ?? '';
+    const name = trimmed.length ? trimmed : null;
+
+    if (name === null) {
+      throw new BadRequestError(
+        'A relink needs a product id or a product name',
+        { id: input.id },
+      );
+    }
+
+    const volumeMl = input.volumeMl ?? null;
+    const age = input.age ?? null;
+
+    const [twinId] = await this.products.findIdentityTwins(
+      name,
+      volumeMl,
+      age,
+    );
+
+    if (twinId !== undefined) {
+      const twin = await this.products.findByIdOrThrow(twinId);
+
+      return { id: twin.id, name: twin.name ?? null, created: false };
+    }
+
+    const id = await this.createManual(input, name, volumeMl, age);
+
+    return { id, name, created: true };
+  }
+
+  /**
+   * Creates the bottling a relink described, every fact stamped `manual` and
+   * no match key — a later listing reaches it by identity, not by key.
+   *
+   * @param input - The relink request carrying the attributes.
+   * @param name - The trimmed display name.
+   * @param volumeMl - The volume, or null.
+   * @param age - The age statement, or null.
+   * @returns The new bottling's id.
+   * @throws {BadRequestError} When a country code, type name or flavor name
+   * is unknown.
+   */
+  private async createManual(
+    input: ProductRelinkInput,
+    name: string,
+    volumeMl: number | null,
+    age: number | null,
+  ): Promise<ID> {
+    const countryId = await this.resolveCountryId(input.countryCode ?? null);
+    const typeId = await this.resolveTypeId(input.typeName ?? null);
+
+    const canonical: ProductCanonicalInput = {
+      matchKey: null,
+      name,
+      brandOrig: null,
+      typeId,
+      countryId,
+      age,
+      abv: input.abv ?? null,
+      volumeMl,
+      factSources: {
+        [ProductFactField.NAME]: FactSource.MANUAL,
+        [ProductFactField.TYPE]: FactSource.MANUAL,
+        [ProductFactField.COUNTRY]: FactSource.MANUAL,
+        [ProductFactField.AGE]: FactSource.MANUAL,
+        [ProductFactField.ABV]: FactSource.MANUAL,
+        [ProductFactField.VOLUME]: FactSource.MANUAL,
+      },
     };
+
+    const id = await this.products.createUnmatched(canonical);
+
+    if (input.flavors !== undefined) {
+      await this.setFlavors(id, input.flavors);
+    }
+
+    return id;
   }
 
   /**

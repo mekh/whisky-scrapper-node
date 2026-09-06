@@ -50,6 +50,18 @@ export class CoreStoreProductService extends CoreBaseService<
   }
 
   /**
+   * Moves one offer onto another bottling, leaving the rest of its group
+   * where it is.
+   *
+   * @param id - The store-offer id.
+   * @param productId - The bottling to link it to.
+   * @returns The bottling it was linked to before, or null for an unknown id.
+   */
+  public async relink(id: ID, productId: ID): Promise<ID | null> {
+    return this.repo.relink(id, productId);
+  }
+
+  /**
    * SKUs a store already lists, whatever their stock state.
    *
    * @param storeId - Store id.

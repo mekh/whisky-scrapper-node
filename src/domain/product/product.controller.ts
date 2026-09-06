@@ -14,7 +14,11 @@ import { Plain } from '~decorators/types';
 import { Action, Resource } from '~enums';
 import type { ProductSearchItem, TypeProduct } from '~types';
 
-import { ProductSearchQueryDto, ProductUpdateDto } from './dto';
+import {
+  ProductRelinkDto,
+  ProductSearchQueryDto,
+  ProductUpdateDto,
+} from './dto';
 import { ProductService } from './product.service';
 import { ProductSearchItemType, ProductType } from './types';
 
@@ -36,5 +40,12 @@ export class ProductController {
   @Plain(ProductType, [Resource.PRODUCT, Action.EDIT])
   public update(@Body() body: ProductUpdateDto): Promise<TypeProduct> {
     return this.productService.update(body);
+  }
+
+  @Post('relink')
+  @HttpCode(HttpStatus.OK)
+  @Plain(ProductType, [Resource.PRODUCT, Action.EDIT])
+  public relink(@Body() body: ProductRelinkDto): Promise<TypeProduct> {
+    return this.productService.relink(body);
   }
 }

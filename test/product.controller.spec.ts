@@ -37,6 +37,7 @@ function makeController(): {
   const service = {
     search: jest.fn().mockResolvedValue([]),
     update: jest.fn().mockResolvedValue('updated'),
+    relink: jest.fn().mockResolvedValue('relinked'),
   };
 
   const controller = new ProductController(
@@ -65,6 +66,13 @@ describe('ProductController permissions', () => {
     expect(meta?.permissions).toEqual([[Resource.PRODUCT, Action.EDIT]]);
     expect(meta?.isPublic).toBe(false);
   });
+
+  it('relink requires the product edit scope', () => {
+    const meta = metaOf('relink');
+
+    expect(meta?.permissions).toEqual([[Resource.PRODUCT, Action.EDIT]]);
+    expect(meta?.isPublic).toBe(false);
+  });
 });
 
 describe('ProductController delegation', () => {
@@ -84,5 +92,14 @@ describe('ProductController delegation', () => {
     await controller.update(body);
 
     expect(service.update).toHaveBeenCalledWith(body);
+  });
+
+  it('hands the relink body through untouched', async () => {
+    const { controller, service } = makeController();
+    const body = { id: 'offer-1', productId: 'product-2' };
+
+    await controller.relink(body);
+
+    expect(service.relink).toHaveBeenCalledWith(body);
   });
 });

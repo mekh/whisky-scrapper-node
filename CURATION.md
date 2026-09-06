@@ -6,12 +6,27 @@ when a store first lists a SKU and then **frozen** — see the "Whisky domain"
 section of [`CLAUDE.md`](CLAUDE.md) for how it is built and why.
 
 Deriving identity from a name is never perfect, so roughly one or two per cent
-of the catalogue needs a human. This file is the set of SQL recipes for that.
-There is deliberately no endpoint and no UI yet; the link is a plain column, so
-a correction is one `UPDATE`, and nothing a sync does can undo it — the offer
-upsert leaves `productId` out of its conflict-update clause on purpose.
+of the catalogue needs a human. Since 2026-09-06 the two everyday corrections
+have an endpoint and a UI, and the SQL below is for what those cannot express.
 
-Run everything in a transaction and check the row counts before committing.
+- **Two rows are one whisky** → edit either one (`POST /product/update`, the
+  pencil in the product card) so its name, volume and age match the other's.
+  The server folds the two together on its own: the edited row moves onto the
+  most-listed twin, the person's values win the merge, the vanishing row's key
+  is retired into `product_match_alias` so the next listing keyed like it lands
+  on the survivor, and the response's `merged` says it happened.
+- **One listing is on the wrong whisky** → `POST /product/relink` (the card's
+  «Лише <store>» scope): pick the target bottling from the catalogue search, or
+  fill the fields and let the server find it by identity — creating it only
+  when nothing matches. The rest of the group stays where it is, and a row the
+  offer leaves empty is deleted when nothing refers to it.
+
+What is still SQL: a key alias that should be dropped or pointed elsewhere, a
+merge where the survivor must be a _less_-listed row and nothing on it may be
+renamed, and the inspection queries. Run everything in a transaction and check
+the row counts before committing. The link is a plain column, so a correction is
+one `UPDATE`, and nothing a sync does can undo it — the offer upsert leaves
+`productId` out of its conflict-update clause on purpose.
 
 ## Find candidates
 
@@ -66,16 +81,20 @@ The offer keeps its price history, because the history hangs off the offer.
 
 ## Split a false merge
 
-Two different whiskies share a bottling. Create a second one and move the
-offers that belong to it.
+Two different whiskies share a bottling. Prefer the relink: opening the
+misfiled listing and using the «Лише <store>» scope with the right name,
+volume and age does all three steps below in one request, creating the second
+bottling only when the catalogue lacks it. The SQL is for a split where the
+new row needs a key of its own, or where several offers move at once.
 
 ```sql
 -- 1. The new bottling. Give it a key nothing will collide with; a null key is
---    also fine and means "never match anything to this automatically".
+--    also fine and means "never match anything to this automatically" — a
+--    listing can still reach it by identity (name, volume, age).
 INSERT INTO product ("matchKey", name, age, abv, "volumeMl",
-                     "brandId", "typeId", "countryId")
+                     "typeId", "countryId")
 SELECT NULL, 'Agitator Rye', age, 43, "volumeMl",
-       "brandId", "typeId", "countryId"
+       "typeId", "countryId"
 FROM product WHERE id = '<wrong-product-id>'
 RETURNING id;
 
@@ -100,6 +119,12 @@ UPDATE product SET "lastLlmFlavorAt" = NULL WHERE id = '<new-product-id>';
 
 ## Merge two bottlings
 
+Prefer the edit: renaming, re-aging or re-sizing one row to match the other
+makes the server run exactly the steps below, plus the key retirement. Use the
+SQL only when the survivor has to be the row the server would not pick (it
+keeps the row a person named, else the most listed), and nothing on either row
+may be renamed to get there.
+
 Pick the row to keep — normally the one with the better name and the more
 complete fields — then move everything onto it.
 
@@ -108,7 +133,6 @@ complete fields — then move everything onto it.
 UPDATE product k SET
   name = COALESCE(k.name, l.name),
   abv = COALESCE(k.abv, l.abv),
-  "brandId" = COALESCE(k."brandId", l."brandId"),
   "typeId" = COALESCE(k."typeId", l."typeId"),
   "countryId" = COALESCE(k."countryId", l."countryId"),
   "lastLlmFlavorAt" = GREATEST(k."lastLlmFlavorAt", l."lastLlmFlavorAt"),
@@ -153,16 +177,48 @@ UPDATE user_collection
 SET "productId" = '<keep-id>', "updatedAt" = now()
 WHERE "productId" = '<loser-id>';
 
--- 5. Delete the loser. It has no offers and no collection rows now, so the
+-- 5. Retire the loser's key, so the next listing keyed like it lands on the
+--    survivor instead of recreating the row this merge removes. Skip it when
+--    the key names a wider identity than the survivor (a bare `arran|v700|a0`
+--    is any ageless Arran, not the Amarone Cask).
+INSERT INTO product_match_alias (key, "productId")
+SELECT "matchKey", '<keep-id>' FROM product
+WHERE id = '<loser-id>' AND "matchKey" IS NOT NULL;
+
+UPDATE product_match_alias SET "productId" = '<keep-id>'
+WHERE "productId" = '<loser-id>';
+
+-- 6. Delete the loser. It has no offers and no collection rows now, so the
 --    RESTRICT foreign keys let it go; its flavor links go with it.
 DELETE FROM product WHERE id = '<loser-id>';
 ```
 
-Step 5 is the check that steps 3 and 4 were complete: both foreign keys are
+Step 6 is the check that steps 3 and 4 were complete: both foreign keys are
 `RESTRICT`, so the delete is refused while any offer — or anyone's collection
 row — still points at the loser. The collection step is the one that is easy to
 forget, because most bottlings are in nobody's collection and the delete then
 succeeds without it.
+
+## Key aliases
+
+`product_match_alias` holds the keys of merged-away rows, each pointing at the
+bottling it now resolves to; the find-or-create step of every persist consults
+it before `product.matchKey`. Two things a person may need to do to it:
+
+```sql
+-- What a retired key resolves to.
+SELECT a.key, p.name, p."volumeMl", p.age
+FROM product_match_alias a JOIN product p ON p.id = a."productId"
+WHERE a.key LIKE 'arran%';
+
+-- Drop an alias whose key names a wider identity than its target, so a
+-- listing keyed like it becomes a new row for a person to place instead.
+DELETE FROM product_match_alias WHERE key = '<key>';
+```
+
+An alias key is never also a live `product.matchKey`: the merge that records it
+deletes the row that held it in the same transaction, and the find-or-create
+step excludes every key it resolved through the table from its insert.
 
 ## Re-key a bottling
 
@@ -185,8 +241,10 @@ already holds — that is the signal to merge instead.
 - **Do not delete a bottling that sits in someone's collection.** The same kind
   of foreign key stops you, and it is stopping you from deleting a rating,
   tasting notes and a purchase history nothing can reconstruct.
-- **Do not edit `age` or `volumeMl` expecting the grouping to change.** They
-  are components of the key, but the key is frozen; use a re-key or a merge.
+- **Do not edit `age` or `volumeMl` expecting the key to change.** They are
+  components of the key, but the key is frozen. What an edit _does_ change is
+  the identity the catalogue compares rows by, so an edit that makes two rows
+  agree on name, volume and age merges them — which is usually what was wanted.
 - **Do not fix a name by editing `store_product.nameOrig`.** That column is the
   store's own wording, rewritten on the next sync. Edit `product.name` (or use
   `POST /product/update`, which does exactly that).

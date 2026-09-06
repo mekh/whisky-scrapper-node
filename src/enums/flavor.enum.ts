@@ -46,6 +46,20 @@ export enum FlavorSource {
 }
 
 /**
+ * Trust order for {@link FlavorSource}, used where two links for one
+ * `(product, flavor)` pair have to be reduced to one — when two bottlings are
+ * merged. A higher number wins: a person's link beats the knowledge base,
+ * which beats the model, which beats a keyword hit. Gaps are intentional, so a
+ * source can be slotted in later without renumbering the ones persisted.
+ */
+export const FLAVOR_SOURCE_RANK: Readonly<Record<FlavorSource, number>> = {
+  [FlavorSource.MANUAL]: 40,
+  [FlavorSource.KB]: 30,
+  [FlavorSource.LLM]: 20,
+  [FlavorSource.SCRAPE]: 10,
+};
+
+/**
  * Source assigned to rows written before the column existed, and to any link
  * the sync pipeline creates.
  */

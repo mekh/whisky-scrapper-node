@@ -201,6 +201,36 @@ export interface EntityProduct extends EntityBaseRich {
 }
 
 /**
+ * A retired match key that still resolves to a bottling.
+ *
+ * When two rows of the catalogue turn out to be one whisky and are merged,
+ * the row that goes away takes its frozen key with it — and that key is
+ * exactly what the next listing spelled the same way will derive again. Left
+ * unrecorded, the very duplicate that was just folded away would be recreated
+ * by the next sync. So the key is kept here, pointing at the survivor, and the
+ * find-or-create step of every persist consults this table before it creates
+ * anything. A product keeps its own key in `product.matchKey`; this table
+ * holds the others it answers for.
+ */
+export interface EntityProductMatchAlias {
+  /**
+   * The retired key, exactly as `ProductMatchUtils.key` produced it. Unique
+   * across this table and, by construction, never equal to a live
+   * `product.matchKey`: the merge that records it deletes the row that held
+   * it in the same transaction.
+   */
+  key: string;
+  /**
+   * The bottling the key now resolves to.
+   */
+  productId: ID;
+  /**
+   * When the key was retired.
+   */
+  createdAt: Date;
+}
+
+/**
  * A curated knowledge-base entry: a distillery, a named brand, a blend or an
  * independent bottler, with the facts that are properties of the **producer**
  * rather than of one bottling — country, region, house peat level, default

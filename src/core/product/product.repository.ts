@@ -3,6 +3,7 @@ import { TypeormRepository } from '@toxicoder/nestjs-typeorm-repository';
 import { BaseRepository } from '~core/_common';
 import {
   FACT_SOURCE_RANK,
+  FLAVOR_SOURCE_RANK,
   FactSource,
   FlavorSource,
   ProductFactField,
@@ -69,8 +70,8 @@ const FIND_OR_CREATE_SQL = `
 `;
 
 /**
- * Renders the stored provenance of a fact column as its trust rank, so the SQL
- * can compare it against an incoming one.
+ * Renders a provenance expression as its trust rank, so the SQL can compare
+ * two sources.
  *
  * The mapping is generated from {@link FACT_SOURCE_RANK} rather than written as
  * a SQL function or a lookup table, which keeps the ranking single-sourced in
@@ -79,16 +80,314 @@ const FIND_OR_CREATE_SQL = `
  * `ELSE 0` covers both a NULL source and any value this build does not know,
  * meaning "no provenance recorded" — so anything at all outranks it.
  *
- * @param sourceColumn - The provenance column to rank.
+ * @param expr - The SQL expression holding a `FactSource` value.
  * @returns A SQL `CASE` expression yielding an integer rank.
  */
-const storedRank = (sourceColumn: string): string => {
+const rankOf = (expr: string): string => {
   const whens = Object.entries(FACT_SOURCE_RANK)
     .map(([source, rank]) => `WHEN '${source}' THEN ${rank}`)
     .join(' ');
 
-  return `CASE p."${sourceColumn}" ${whens} ELSE 0 END`;
+  return `CASE ${expr} ${whens} ELSE 0 END`;
 };
+
+/**
+ * Renders the stored provenance of a fact column (alias `p`) as its trust
+ * rank, for the canonical write's comparison against an incoming source.
+ *
+ * @param sourceColumn - The provenance column to rank.
+ * @returns A SQL `CASE` expression yielding an integer rank.
+ */
+const storedRank = (sourceColumn: string): string =>
+  rankOf(`p."${sourceColumn}"`);
+
+/**
+ * Renders a `product_flavor.source` expression as its trust rank, generated
+ * from {@link FLAVOR_SOURCE_RANK} for the same reason {@link rankOf} is.
+ *
+ * @param expr - The SQL expression holding a `FlavorSource` value.
+ * @returns A SQL `CASE` expression yielding an integer rank.
+ */
+const flavorRankOf = (expr: string): string => {
+  const whens = Object.entries(FLAVOR_SOURCE_RANK)
+    .map(([source, rank]) => `WHEN '${source}' THEN ${rank}`)
+    .join(' ');
+
+  return `CASE ${expr} ${whens} ELSE 0 END`;
+};
+
+/**
+ * How two names are compared when deciding whether two rows are one bottling:
+ * case-folded, with everything but letters and digits removed, so
+ * `Ballantine's` and `Ballantines`, `Double Wood` and `DoubleWood` compare
+ * equal while word order and every real letter still count. Volume and age
+ * are compared beside it; strength is not, for the reason the match key
+ * leaves it out.
+ *
+ * This is deliberately narrower than `ProductMatchUtils.key`. The key folds
+ * stop words and the brand token into a signature and is what a *listing*
+ * is matched by; this is what two *catalogue rows* are compared by, and it
+ * must never fold two whiskies a person spelled differently on purpose.
+ * Postgres's `[[:alnum:]]` is Unicode-aware under the database's UTF-8
+ * collation, so a Cyrillic name folds the same way a Latin one does.
+ *
+ * @param expr - A SQL expression holding a name.
+ * @returns The identity form of the name.
+ */
+const identityOf = (expr: string): string =>
+  `lower(regexp_replace(${expr}, '[^[:alnum:]]+', '', 'g'))`;
+
+/**
+ * Whether two bottlings (aliases `p` and `v`) share an identity.
+ */
+const SAME_IDENTITY_SQL = `
+  p.name IS NOT NULL
+  AND ${identityOf('p.name')} = ${identityOf('v.name')}
+  AND p."volumeMl" IS NOT DISTINCT FROM v.vol
+  AND p.age IS NOT DISTINCT FROM v.age`;
+
+/**
+ * The keys a batch of listings resolve to without creating anything: a live
+ * `product.matchKey`, or a key a merge retired into `product_match_alias`.
+ */
+const KNOWN_KEYS_SQL = `
+  SELECT p."matchKey" AS key, p.id AS "productId"
+  FROM product p
+  WHERE p."matchKey" = ANY($1::text[])
+  UNION ALL
+  SELECT a.key, a."productId"
+  FROM product_match_alias a
+  WHERE a.key = ANY($1::text[])
+`;
+
+/**
+ * The bottlings a batch of new listings match **by identity** rather than by
+ * key — the second look the find-or-create step takes before it creates.
+ *
+ * The key is a signature of the name, the brand token, the volume and the
+ * age, and the brand token varies with how a shop spells a maker even after
+ * the knowledge base has folded what it knows: `William Peel` signed as
+ * `peelwilliam` and as `peelwilliamwilliampeel` was one whisky under two keys.
+ * The cleaned name, the volume and the age are what every such pair agreed
+ * on, so when no key matches, a row that agrees on those three is the same
+ * bottling and is joined rather than duplicated.
+ *
+ * `WITH ORDINALITY` carries the input position through, since the join is
+ * what pairs an answer with the listing that asked. `DISTINCT ON` picks the
+ * oldest row where the catalogue still holds twins.
+ */
+const IDENTITY_BATCH_SQL = `
+  SELECT DISTINCT ON (v.ord) v.ord::int AS ord, p.id
+  FROM unnest($1::text[], $2::int[], $3::int[])
+    WITH ORDINALITY AS v(name, vol, age, ord)
+  JOIN product p ON ${SAME_IDENTITY_SQL}
+  WHERE v.name IS NOT NULL
+  ORDER BY v.ord, p."createdAt", p.id
+`;
+
+/**
+ * Every other bottling that shares an identity with the given name, volume
+ * and age, most-listed first — the rows a manual edit folds together.
+ */
+const IDENTITY_TWINS_SQL = `
+  SELECT p.id
+  FROM product p, (SELECT $1::text AS name, $2::int AS vol, $3::int AS age) v
+  WHERE ${SAME_IDENTITY_SQL}
+    AND ($4::uuid IS NULL OR p.id <> $4::uuid)
+  ORDER BY (SELECT count(*) FROM store_product sp
+            WHERE sp."productId" = p.id) DESC,
+           p."createdAt", p.id
+`;
+
+/**
+ * Whether the vanishing row's value for a fact should replace the survivor's
+ * in a merge. The same trust order as the canonical write: a gap is filled, a
+ * better-ranked source wins, and a person's value on the survivor is never
+ * touched.
+ *
+ * @param column - The fact column.
+ * @param sourceColumn - Its provenance column.
+ * @returns A SQL boolean expression over aliases `k` (kept) and `l` (lost).
+ */
+const loserWins = (column: string, sourceColumn: string): string =>
+  `l."${column}" IS NOT NULL
+    AND k."${sourceColumn}" IS DISTINCT FROM '${FactSource.MANUAL}'
+    AND (k."${column}" IS NULL
+      OR ${rankOf(`l."${sourceColumn}"`)} > ${rankOf(`k."${sourceColumn}"`)})`;
+
+/**
+ * The rule for the identity fields — name, age, volume. A null age is a NAS
+ * bottling and a null volume an unknown size, not gaps to fill from a row
+ * that happened to state one, so the survivor keeps its own unless a person
+ * set the vanishing row's. A person's cleared value transfers too: clearing
+ * is a decision, and in the edit-then-merge flow the vanishing row is the one
+ * the person just edited.
+ *
+ * @param sourceColumn - The provenance column of the identity field.
+ * @returns A SQL boolean expression over aliases `k` and `l`.
+ */
+const loserDecides = (sourceColumn: string): string =>
+  `l."${sourceColumn}" = '${FactSource.MANUAL}'
+    AND k."${sourceColumn}" IS DISTINCT FROM '${FactSource.MANUAL}'`;
+
+/**
+ * Assigns a fact column and its provenance column together from whichever
+ * side a merge rule picked.
+ *
+ * @param column - The fact column.
+ * @param sourceColumn - Its provenance column.
+ * @param wins - The SQL boolean deciding for the vanishing row.
+ * @returns The two `SET` assignments, comma-separated.
+ */
+const mergeAssignment = (
+  column: string,
+  sourceColumn: string,
+  wins: string,
+): string =>
+  `"${column}" = CASE WHEN ${wins} THEN l."${column}" ELSE k."${column}" END,
+    "${sourceColumn}" = CASE WHEN ${wins}
+      THEN l."${sourceColumn}" ELSE k."${sourceColumn}" END`;
+
+/**
+ * The producer link moves as one unit — distillery, bottler and provenance —
+ * when a person set it on the vanishing row, or when the survivor has none.
+ */
+const PRODUCER_WINS_SQL = `
+    ((l."producerSource" = '${FactSource.MANUAL}'
+        AND k."producerSource" IS DISTINCT FROM '${FactSource.MANUAL}')
+      OR (k."producerId" IS NULL AND l."producerId" IS NOT NULL
+        AND k."producerSource" IS DISTINCT FROM '${FactSource.MANUAL}'))`;
+
+/**
+ * Folds the facts of a vanishing bottling (`$2`) into the one that stays
+ * (`$1`). What each field does is decided by the helpers above; the two
+ * timestamps take the later value, and `brandOrig` fills a gap only, as it
+ * does on every other write.
+ */
+const MERGE_FACTS_SQL = `
+  UPDATE product k SET
+    ${mergeAssignment('name', 'nameSource', loserDecides('nameSource'))},
+    ${mergeAssignment('age', 'ageSource', loserDecides('ageSource'))},
+    ${
+  mergeAssignment('volumeMl', 'volumeSource', loserDecides('volumeSource'))
+},
+    ${mergeAssignment('abv', 'abvSource', loserWins('abv', 'abvSource'))},
+    ${
+  mergeAssignment('typeId', 'typeSource', loserWins('typeId', 'typeSource'))
+},
+    ${
+  mergeAssignment(
+    'countryId',
+    'countrySource',
+    loserWins('countryId', 'countrySource'),
+  )
+},
+    "producerId" = CASE WHEN ${PRODUCER_WINS_SQL}
+      THEN l."producerId" ELSE k."producerId" END,
+    "bottlerId" = CASE WHEN ${PRODUCER_WINS_SQL}
+      THEN l."bottlerId" ELSE k."bottlerId" END,
+    "producerSource" = CASE WHEN ${PRODUCER_WINS_SQL}
+      THEN l."producerSource" ELSE k."producerSource" END,
+    "brandOrig" = COALESCE(k."brandOrig", l."brandOrig"),
+    "lastLlmFlavorAt" = GREATEST(k."lastLlmFlavorAt", l."lastLlmFlavorAt"),
+    "flavorsCuratedAt" = GREATEST(k."flavorsCuratedAt", l."flavorsCuratedAt"),
+    "updatedAt" = now()
+  FROM product l
+  WHERE k.id = $1 AND l.id = $2
+`;
+
+/**
+ * Copies the vanishing bottling's flavor links onto the survivor. A tag both
+ * rows carry keeps the better-trusted source — a tag is evidence *for* a
+ * flavor, and a person's link outranks every automatic one.
+ */
+const MERGE_FLAVORS_SQL = `
+  INSERT INTO product_flavor ("productId", "flavorId", source)
+  SELECT $1, "flavorId", source FROM product_flavor WHERE "productId" = $2
+  ON CONFLICT ("productId", "flavorId") DO UPDATE SET
+    source = CASE
+      WHEN ${flavorRankOf('EXCLUDED.source')}
+        > ${flavorRankOf('product_flavor.source')}
+      THEN EXCLUDED.source ELSE product_flavor.source END
+`;
+
+/**
+ * Moves the vanishing bottling's conflict log onto the survivor. A
+ * disagreement both rows already hold with the same shop about the same fact
+ * is one disagreement, so the sightings add up and the span widens.
+ */
+const MERGE_CONFLICTS_SQL = `
+  INSERT INTO product_fact_conflict
+    ("productId", "storeId", attribute, "storedValue", "claimedValue",
+     "storedSource", "seenCount", "firstSeenAt", "lastSeenAt", "resolvedAt")
+  SELECT $1, "storeId", attribute, "storedValue", "claimedValue",
+         "storedSource", "seenCount", "firstSeenAt", "lastSeenAt", "resolvedAt"
+  FROM product_fact_conflict WHERE "productId" = $2
+  ON CONFLICT ("productId", "storeId", attribute) DO UPDATE SET
+    "seenCount" = product_fact_conflict."seenCount" + EXCLUDED."seenCount",
+    "firstSeenAt" = LEAST(product_fact_conflict."firstSeenAt",
+                          EXCLUDED."firstSeenAt"),
+    "lastSeenAt" = GREATEST(product_fact_conflict."lastSeenAt",
+                            EXCLUDED."lastSeenAt")
+`;
+
+/**
+ * Re-points a user's list entries, guarded per user so the composite keys
+ * hold; an entry the user already has on the survivor is dropped with the
+ * vanishing row, since the whisky is on their list once either way.
+ *
+ * @param table - `favorite` or `blacklist_product`.
+ * @returns The move statement.
+ */
+const moveUserListSql = (table: string): string => `
+  UPDATE ${table} x SET "productId" = $1
+  WHERE x."productId" = $2
+    AND NOT EXISTS (
+      SELECT 1 FROM ${table} kept
+      WHERE kept."userId" = x."userId" AND kept."productId" = $1
+    )
+`;
+
+/**
+ * A user holding both bottlings in their collection has one row on the
+ * survivor already; the vanishing row's purchases move onto it so no bottle
+ * is lost, and the row itself then goes.
+ */
+const MOVE_COLLECTION_PURCHASES_SQL = `
+  UPDATE user_collection_purchase p
+  SET "collectionId" = k.id, "updatedAt" = now()
+  FROM user_collection l
+  JOIN user_collection k
+    ON k."userId" = l."userId" AND k."productId" = $1
+  WHERE p."collectionId" = l.id AND l."productId" = $2
+`;
+
+const DROP_COLLIDING_COLLECTION_SQL = `
+  DELETE FROM user_collection l
+  WHERE l."productId" = $2
+    AND EXISTS (
+      SELECT 1 FROM user_collection k
+      WHERE k."userId" = l."userId" AND k."productId" = $1
+    )
+`;
+
+/**
+ * Deletes a bottling nothing refers to any more: no offer, no collection
+ * row, no favorite, no blacklist entry. The predicate is the whole point —
+ * a bottling that still means something to someone is kept, and the delete
+ * simply affects no row.
+ */
+const DELETE_UNREFERENCED_SQL = `
+  DELETE FROM product p
+  WHERE p.id = $1
+    AND NOT EXISTS (SELECT 1 FROM store_product sp
+                    WHERE sp."productId" = p.id)
+    AND NOT EXISTS (SELECT 1 FROM user_collection c
+                    WHERE c."productId" = p.id)
+    AND NOT EXISTS (SELECT 1 FROM favorite f WHERE f."productId" = p.id)
+    AND NOT EXISTS (SELECT 1 FROM blacklist_product b
+                    WHERE b."productId" = p.id)
+`;
 
 /**
  * Whether an incoming value should replace what is stored: it has to exist,
@@ -450,6 +749,10 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
    * paid for again, because the canonical write fills only what is still null
    * and would discard the answer.
    *
+   * A key a merge retired resolves to the survivor, exactly as it will at
+   * persist time, so the gate sees the facts of the bottling the listing will
+   * actually be written to.
+   *
    * @param keys - Match keys to look up; a null key never matches anything and
    *   must not be passed.
    * @returns Map from match key to the stored row; unmatched keys are absent.
@@ -462,14 +765,45 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
     }
 
     const rows = await this.query(
-      `SELECT id, "matchKey", name, abv, "volumeMl", "typeId", "countryId",
-              "lastLlmFlavorAt", "flavorsCuratedAt"
-       FROM product
-       WHERE "matchKey" = ANY($1::text[])`,
+      `SELECT k.key AS "matchKey", p.id, p.name, p.abv, p."volumeMl",
+              p."typeId", p."countryId", p."lastLlmFlavorAt",
+              p."flavorsCuratedAt"
+       FROM (${KNOWN_KEYS_SQL}) k
+       JOIN product p ON p.id = k."productId"`,
       [keys],
     ) as ProductMatchRow[];
 
     return new Map(rows.map((row) => [row.matchKey, row]));
+  }
+
+  /**
+   * Every other bottling that is the same whisky as the given identity: the
+   * same name (compared as `identityOf` compares it), volume and age.
+   *
+   * @param name - The display name to match, or null, which matches nothing.
+   * @param volumeMl - The volume, or null for an unknown size.
+   * @param age - The age statement, or null for a NAS bottling.
+   * @param exceptId - A bottling to leave out — the one being edited.
+   * @returns The twins' ids, most-listed first.
+   */
+  public async findIdentityTwins(
+    name: string | null,
+    volumeMl: number | null,
+    age: number | null,
+    exceptId: ID | null = null,
+  ): Promise<ID[]> {
+    if (name === null) {
+      return [];
+    }
+
+    const rows = await this.query(IDENTITY_TWINS_SQL, [
+      name,
+      volumeMl,
+      age,
+      exceptId,
+    ]) as { id: ID }[];
+
+    return rows.map((row) => row.id);
   }
 
   /**
@@ -523,6 +857,13 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
    * Resolves a batch of bottlings to canonical ids, creating the ones the
    * catalogue has never seen.
    *
+   * Three looks before anything is created, each narrowing what is left for
+   * the next: a key the catalogue holds — live on a row, or retired into
+   * `product_match_alias` by a merge — resolves outright; a key nobody holds
+   * is then matched **by identity** (name, volume, age; see
+   * `IDENTITY_BATCH_SQL`); only what survives both is inserted, through the
+   * conflict-safe write that also settles a race with a concurrent store.
+   *
    * @param inputs - One entry per distinct match key. Must be deduplicated by
    *   key — Postgres rejects a statement whose conflict target repeats — and
    *   sorted by key, so concurrent store transactions take their row locks in
@@ -537,22 +878,123 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
       return { ids: new Map(), added: 0 };
     }
 
-    const rows = await this.query(FIND_OR_CREATE_SQL, [
+    const known = await this.resolveKnownKeys(
       inputs.map((input) => input.matchKey),
-      inputs.map((input) => input.name),
-      inputs.map((input) => input.brandOrig),
-      inputs.map((input) => input.typeId),
-      inputs.map((input) => input.countryId),
-      inputs.map((input) => input.age),
-      inputs.map((input) => input.abv),
-      inputs.map((input) => input.volumeMl),
-      ...this.sourceColumns(inputs),
-    ]) as { id: ID; matchKey: string; isNew: boolean }[];
+    );
+
+    const pending = inputs.filter(
+      (input) => input.matchKey === null || !known.has(input.matchKey),
+    );
+
+    const twins = await this.resolveByIdentity(pending);
+
+    const fresh = pending.filter(
+      (input) => input.matchKey === null || !twins.has(input.matchKey),
+    );
+
+    const rows = fresh.length
+      ? await this.query(FIND_OR_CREATE_SQL, [
+        fresh.map((input) => input.matchKey),
+        fresh.map((input) => input.name),
+        fresh.map((input) => input.brandOrig),
+        fresh.map((input) => input.typeId),
+        fresh.map((input) => input.countryId),
+        fresh.map((input) => input.age),
+        fresh.map((input) => input.abv),
+        fresh.map((input) => input.volumeMl),
+        ...this.sourceColumns(fresh),
+      ]) as { id: ID; matchKey: string; isNew: boolean }[]
+      : [];
 
     return {
-      ids: new Map(rows.map((row) => [row.matchKey, row.id])),
+      ids: new Map([
+        ...known,
+        ...twins,
+        ...rows.map((row): [string, ID] => [row.matchKey, row.id]),
+      ]),
       added: rows.filter((row) => row.isNew).length,
     };
+  }
+
+  /**
+   * Folds one bottling into another that is the same whisky, and deletes it.
+   *
+   * Everything the vanishing row owned moves to the survivor: its facts by
+   * the trust rules in `MERGE_FACTS_SQL`, its flavor links, its offers with
+   * their whole price history, the conflicts logged against it, every user's
+   * favorite, blacklist and collection entry (guarded per user, purchases
+   * first, so nothing anyone recorded is lost), and the keys it answered for.
+   * Its own key is retired into `product_match_alias` — or adopted outright
+   * when the survivor has none — so the next listing spelled the same way
+   * lands on the survivor instead of recreating the row this just removed.
+   *
+   * A curated flavor set wins wholesale: when only the vanishing row was
+   * curated, the survivor's automatic tags are replaced by the person's set
+   * rather than mixed into it, since a curated set is the whole truth about
+   * the bottling and `flavorsCuratedAt` follows it over.
+   *
+   * Runs in the caller's transaction and expects both rows to exist.
+   *
+   * @param loserId - The bottling to fold away.
+   * @param survivorId - The bottling to keep.
+   * @returns Resolves once the vanishing row is gone.
+   * @throws {Error} When either id names no bottling, or both are the same.
+   */
+  public async mergeInto(loserId: ID, survivorId: ID): Promise<void> {
+    if (loserId === survivorId) {
+      throw new Error('A bottling cannot be merged into itself');
+    }
+
+    const rows = await this.query(
+      `SELECT id, "matchKey", "flavorsCuratedAt" IS NOT NULL AS curated
+       FROM product WHERE id = ANY($1::uuid[])`,
+      [[loserId, survivorId]],
+    ) as { id: ID; matchKey: string | null; curated: boolean }[];
+
+    const loser = rows.find((row) => row.id === loserId);
+    const survivor = rows.find((row) => row.id === survivorId);
+
+    if (!loser || !survivor) {
+      throw new Error('Both bottlings of a merge must exist');
+    }
+
+    await this.query(MERGE_FACTS_SQL, [survivorId, loserId]);
+
+    if (loser.curated && !survivor.curated) {
+      await this.query(
+        'DELETE FROM product_flavor WHERE "productId" = $1',
+        [survivorId],
+      );
+    }
+
+    await this.query(MERGE_FLAVORS_SQL, [survivorId, loserId]);
+    await this.query(MERGE_CONFLICTS_SQL, [survivorId, loserId]);
+    await this.moveOffers(loserId, survivorId);
+    await this.moveUserLists(loserId, survivorId);
+    await this.moveCollection(loserId, survivorId);
+    await this.retireKey(loser, survivor);
+    await this.query('DELETE FROM product WHERE id = $1', [loserId]);
+  }
+
+  /**
+   * Deletes a bottling that nothing refers to any more — no offer, no
+   * collection row, no favorite, no blacklist entry.
+   *
+   * The relink path calls this on the bottling an offer just left: a row
+   * whose only listing has been moved elsewhere is an empty shell that would
+   * otherwise keep answering searches and identity lookups. A row somebody
+   * still holds in a list is kept, and the call reports that it did nothing.
+   *
+   * @param id - The bottling to delete if it is unreferenced.
+   * @returns True when the row was deleted.
+   */
+  public async deleteIfUnreferenced(id: ID): Promise<boolean> {
+    const result = await this.query(DELETE_UNREFERENCED_SQL, [id]) as [
+      unknown[],
+      number,
+    ];
+
+    return (result[1] ?? 0) > 0;
   }
 
   /**
@@ -782,6 +1224,163 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
         conflicts.map((conflict) => conflict.claimedValue),
         conflicts.map((conflict) => conflict.storedSource),
       ],
+    );
+  }
+
+  /**
+   * Resolves the keys the catalogue already holds, live or retired.
+   *
+   * @param keys - The batch's match keys; nulls are skipped.
+   * @returns Map from key to the bottling it resolves to.
+   */
+  private async resolveKnownKeys(
+    keys: (string | null)[],
+  ): Promise<Map<string, ID>> {
+    const present = keys.filter((key): key is string => key !== null);
+
+    if (!present.length) {
+      return new Map();
+    }
+
+    const rows = await this.query(KNOWN_KEYS_SQL, [present]) as {
+      key: string;
+      productId: ID;
+    }[];
+
+    return new Map(rows.map((row) => [row.key, row.productId]));
+  }
+
+  /**
+   * Resolves the listings whose key the catalogue does not hold against the
+   * bottlings that share their name, volume and age.
+   *
+   * @param inputs - The still-unresolved batch, in a stable order.
+   * @returns Map from key to the bottling matched by identity.
+   */
+  private async resolveByIdentity(
+    inputs: ProductCanonicalInput[],
+  ): Promise<Map<string, ID>> {
+    if (!inputs.length) {
+      return new Map();
+    }
+
+    const rows = await this.query(IDENTITY_BATCH_SQL, [
+      inputs.map((input) => input.name),
+      inputs.map((input) => input.volumeMl),
+      inputs.map((input) => input.age),
+    ]) as { ord: number; id: ID }[];
+
+    const resolved = new Map<string, ID>();
+
+    rows.forEach((row) => {
+      const key = inputs[row.ord - 1]?.matchKey;
+
+      if (key) {
+        resolved.set(key, row.id);
+      }
+    });
+
+    return resolved;
+  }
+
+  /**
+   * Moves every offer, with its price history, onto the survivor.
+   *
+   * @param loserId - The bottling being folded away.
+   * @param survivorId - The bottling to keep.
+   * @returns Resolves once the offers point at the survivor.
+   */
+  private async moveOffers(loserId: ID, survivorId: ID): Promise<void> {
+    await this.query(
+      `UPDATE store_product SET "productId" = $1, "updatedAt" = now()
+       WHERE "productId" = $2`,
+      [survivorId, loserId],
+    );
+  }
+
+  /**
+   * Re-points every user's favorite and blacklist entries, dropping the ones
+   * that would collide with an entry the user already has on the survivor.
+   * The vanishing row's leftovers would go with it on delete anyway; deleting
+   * them here keeps the merge complete on its own terms.
+   *
+   * @param loserId - The bottling being folded away.
+   * @param survivorId - The bottling to keep.
+   * @returns Resolves once both lists point at the survivor.
+   */
+  private async moveUserLists(loserId: ID, survivorId: ID): Promise<void> {
+    for (const table of ['favorite', 'blacklist_product']) {
+      await this.query(moveUserListSql(table), [survivorId, loserId]);
+
+      await this.query(
+        `DELETE FROM ${table} WHERE "productId" = $1`,
+        [loserId],
+      );
+    }
+  }
+
+  /**
+   * Moves every user's collection rows onto the survivor. A user holding both
+   * bottlings keeps the survivor's row and gains the vanishing row's
+   * purchases, so a rating or a tasting note is never overwritten and no
+   * bottle disappears.
+   *
+   * @param loserId - The bottling being folded away.
+   * @param survivorId - The bottling to keep.
+   * @returns Resolves once no collection row names the vanishing bottling.
+   */
+  private async moveCollection(loserId: ID, survivorId: ID): Promise<void> {
+    await this.query(MOVE_COLLECTION_PURCHASES_SQL, [survivorId, loserId]);
+    await this.query(DROP_COLLIDING_COLLECTION_SQL, [survivorId, loserId]);
+
+    await this.query(
+      `UPDATE user_collection SET "productId" = $1, "updatedAt" = now()
+       WHERE "productId" = $2`,
+      [survivorId, loserId],
+    );
+  }
+
+  /**
+   * Hands the vanishing row's keys to the survivor: the aliases it answered
+   * for are re-pointed, and its own key is adopted when the survivor has none
+   * or retired into an alias otherwise. The row gives its key up first, since
+   * the unique index would refuse two rows holding it.
+   *
+   * @param loser - The bottling being folded away, with its key.
+   * @param survivor - The bottling to keep, with its key.
+   * @returns Resolves once every key the loser held resolves to the survivor.
+   */
+  private async retireKey(
+    loser: { id: ID; matchKey: string | null },
+    survivor: { id: ID; matchKey: string | null },
+  ): Promise<void> {
+    await this.query(
+      'UPDATE product_match_alias SET "productId" = $1 WHERE "productId" = $2',
+      [survivor.id, loser.id],
+    );
+
+    if (loser.matchKey === null) {
+      return;
+    }
+
+    await this.query(
+      'UPDATE product SET "matchKey" = NULL WHERE id = $1',
+      [loser.id],
+    );
+
+    if (survivor.matchKey === null) {
+      await this.query(
+        'UPDATE product SET "matchKey" = $1 WHERE id = $2',
+        [loser.matchKey, survivor.id],
+      );
+
+      return;
+    }
+
+    await this.query(
+      `INSERT INTO product_match_alias (key, "productId") VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET "productId" = EXCLUDED."productId"`,
+      [loser.matchKey, survivor.id],
     );
   }
 

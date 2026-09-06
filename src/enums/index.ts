@@ -9,7 +9,11 @@ export {
   ProductFactField,
   TRUSTED_FACT_SOURCES,
 } from './fact.enum';
-export { DEFAULT_FLAVOR_SOURCE, FlavorSource } from './flavor.enum';
+export {
+  DEFAULT_FLAVOR_SOURCE,
+  FLAVOR_SOURCE_RANK,
+  FlavorSource,
+} from './flavor.enum';
 export {
   FlavorRuleMatchMode,
   KB_NAME_ALIAS_MIN_LENGTH,

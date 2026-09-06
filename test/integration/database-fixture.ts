@@ -18,6 +18,7 @@ const CATALOGUE_TABLES = [
   'store_product',
   'product_flavor',
   'product_fact_conflict',
+  'product_match_alias',
   'favorite',
   'blacklist_product',
   'user_collection_purchase',

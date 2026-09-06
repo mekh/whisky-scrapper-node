@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 
-import { CoreProducerService } from '~core/producer';
 import { CorePreferenceService } from '~core/preference';
+import { CoreProducerService } from '~core/producer';
 import { CoreProductService } from '~core/product';
 import { CoreUserService } from '~core/user';
 import { BadRequestError, NotFoundError } from '~errors';

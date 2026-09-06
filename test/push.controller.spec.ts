@@ -45,7 +45,7 @@ function makeController(): {
   controller: PushController;
   push: Record<string, jest.Mock>;
   digest: Record<string, jest.Mock>;
-  } {
+} {
   const push = {
     clientConfig: jest.fn().mockReturnValue('config'),
     devices: jest.fn().mockResolvedValue('devices'),

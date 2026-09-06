@@ -787,4 +787,3 @@ export interface EntityCurrencyRate extends EntityBaseRich {
    */
   effectiveOn: string;
 }
-

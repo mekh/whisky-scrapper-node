@@ -59,8 +59,7 @@ const PROBE_SQL = `
   ) r ON TRUE`;
 
 @TypeormRepository(CurrencyRateEntity)
-export class CurrencyRateRepository
-  extends BaseRepository<CurrencyRateEntity> {
+export class CurrencyRateRepository extends BaseRepository<CurrencyRateEntity> {
   /**
    * Writes rates, overwriting whatever was stored for the same currency and
    * day.

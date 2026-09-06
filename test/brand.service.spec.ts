@@ -12,7 +12,7 @@ import { BrandService } from '../src/domain/brand/brand.service';
 function makeService(): {
   service: BrandService;
   producers: { searchByName: jest.Mock };
-  } {
+} {
   const producers = {
     searchByName: jest.fn().mockResolvedValue([{ name: 'Glenfiddich' }]),
   };

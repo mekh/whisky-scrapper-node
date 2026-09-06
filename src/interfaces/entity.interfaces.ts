@@ -691,6 +691,81 @@ export interface EntityQuickFilter extends EntityBaseRich {
   filters: Record<string, unknown>;
 }
 
+export interface EntityUserCollection extends EntityBaseRich {
+  /**
+   * The owning user. A collection is strictly private.
+   */
+  userId: ID;
+
+  /**
+   * The bottling this row is about; unique per user.
+   */
+  productId: ID;
+
+  /**
+   * Personal score, 0..10 with one decimal.
+   */
+  rating?: number;
+
+  /**
+   * The bottle's barcode as the user entered it, digits only.
+   */
+  barcode?: string;
+
+  /**
+   * Free-form note about the bottle.
+   */
+  notes?: string;
+
+  /**
+   * Structured tasting note: the nose.
+   */
+  nose?: string;
+
+  /**
+   * Structured tasting note: the palate.
+   */
+  palate?: string;
+
+  /**
+   * Structured tasting note: the finish.
+   */
+  finish?: string;
+}
+
+export interface EntityUserCollectionPurchase extends EntityBaseRich {
+  /**
+   * The collection row this purchase belongs to.
+   */
+  collectionId: ID;
+
+  /**
+   * The day the bottle was bought (`YYYY-MM-DD`), user-entered.
+   */
+  purchasedOn: string;
+
+  /**
+   * What was paid, in UAH.
+   */
+  price?: number;
+
+  /**
+   * The known shop, when the purchase names one.
+   */
+  storeId?: ID;
+
+  /**
+   * The user's own shop name, when the purchase names one instead. Mutually
+   * exclusive with `storeId`, enforced by a CHECK constraint.
+   */
+  storeName?: string;
+
+  /**
+   * The catalogue offer the purchase was added from, when it was.
+   */
+  storeProductId?: ID;
+}
+
 export interface EntitySyncLog extends EntityBaseRich {
   storeId: ID;
   added: number;
@@ -787,4 +862,3 @@ export interface EntityCurrencyRate extends EntityBaseRich {
    */
   effectiveOn: string;
 }
-

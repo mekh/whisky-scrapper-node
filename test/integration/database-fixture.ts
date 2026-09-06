@@ -20,6 +20,8 @@ const CATALOGUE_TABLES = [
   'product_fact_conflict',
   'favorite',
   'blacklist_product',
+  'user_collection_purchase',
+  'user_collection',
   'product',
 ];
 

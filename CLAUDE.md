@@ -325,8 +325,10 @@ produce a validated DTO instance. The global `ValidationInterceptor` then
 ## Whisky domain (data model)
 
 The whisky domain (ported from the legacy Python app, **normalized** — not a
-1:1 copy) lives as nine `core/` modules, each following the standard
-entity/repository/service/module shape:
+1:1 copy) lives as a set of `core/` modules, each following the standard
+entity/repository/service/module shape. The nine ported ones are listed below;
+`producer` (the knowledge base), `currency` and `user-collection` were added
+later and are documented in their own sections:
 
 - **Migrations added by the knowledge-base work**, after the schema trio:
   `kb-seed-producer` / `kb-seed-alias` / `kb-seed-producer-flavor` /
@@ -2024,17 +2026,23 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 | `DELETE /push/subscription` `{endpoint}` — drop this browser's subscription (body on DELETE)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | any logged-in user                           |
 | `POST /push/test` — send a test notification to every device of the caller                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | any logged-in user                           |
 | `POST /push/digest` `{capturedOn?}` — manually run the price-drop digest dispatch (idempotent per day)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `store:sync`                                 |
-| `GET /currency` — the currencies prices can be displayed in (see "Currency rates")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | any logged-in user                           |
-| `GET /currency/rate/latest` — the newest stored rate of every currency                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | any logged-in user                           |
-| `GET /currency/rate?codes=USD,EUR&date=` — the rates of several currencies on one day                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | any logged-in user                           |
-| `GET /currency/rate/series?code=&from=&to=` — one currency's rates over a day range, span capped at 732 days                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | any logged-in user                           |
-| `GET /currency/convert?amount=&from=&to=&date=` — one amount at one day's official rate; `404` when no rate exists at or before that day                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | any logged-in user                           |
-| `POST /currency/rate/sync` `{codes?, from?, to?}` — run the rate sync by hand (idempotent, repeatable any number of times a day)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `store:sync`                                 |
+| `GET /currency` — the currencies prices can be displayed in (see "Currency rates")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | any logged-in user                           |
+| `GET /currency/rate/latest` — the newest stored rate of every currency                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | any logged-in user                           |
+| `GET /currency/rate?codes=USD,EUR&date=` — the rates of several currencies on one day                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | any logged-in user                           |
+| `GET /currency/rate/series?code=&from=&to=` — one currency's rates over a day range, span capped at 732 days                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | any logged-in user                           |
+| `GET /currency/convert?amount=&from=&to=&date=` — one amount at one day's official rate; `404` when no rate exists at or before that day                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | any logged-in user                           |
+| `POST /currency/rate/sync` `{codes?, from?, to?}` — run the rate sync by hand (idempotent, repeatable any number of times a day)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `store:sync`                                 |
 | `GET /quick-filter` — the caller's own saved filter sets (see "Quick filters")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | any logged-in user                           |
 | `GET /quick-filter/user/{userId}` — another user's saved filter sets                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `quick_filter:read` or self (admin bypasses) |
 | `POST /quick-filter` `{name, filters}` — save a new set, `200` + the caller's fresh list                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | any logged-in user                           |
 | `PATCH /quick-filter/{id}` `{name?, filters?}` — rename and/or replace the filters; an absent field is left alone                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | any logged-in user                           |
 | `DELETE /quick-filter/{id}` — delete one of the caller's sets                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | any logged-in user                           |
+| `GET /collection` — the caller's whole collection: each whisky with its purchases and its current offers (see "Collection")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | any logged-in user                           |
+| `GET /collection/ids` — `{productIds}`, the membership set the catalogues mark rows with                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | any logged-in user                           |
+| `GET /collection/stats?from&to&granularity=` — spend, averages, country/region/store breakdowns and the additions timeline                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | any logged-in user                           |
+| `POST /collection` `{productId, rating?, barcode?, notes?, nose?, palate?, finish?, purchase?}` — add a whisky, optionally with its first purchase, `200`; `409` when it is already there                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | any logged-in user                           |
+| `PATCH /collection/{id}`, `DELETE /collection/{id}` — edit the row's own fields; delete it and its purchases                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | any logged-in user                           |
+| `POST /collection/{id}/purchase`, `PATCH`/`DELETE /collection/{id}/purchase/{purchaseId}` — add, edit and remove one bought bottle; each answers the updated item                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | any logged-in user                           |
 | `GET /product/search?q=&limit=` — lightweight autocomplete over the whole catalogue, one item per bottling; **ignores the caller's blacklist** (see "Catalogue search")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | any logged-in user                           |
 | `GET /brand/search?q=&limit=` — lightweight autocomplete over producer names, matched through their aliases (see "Catalogue search")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | any logged-in user                           |
 | `GET /product/review/summary` — counters for the curation screen's tabs. `untrustedFacts` is the **distinct** number of bottlings with either fact untrusted; `untrustedTypes`/`untrustedCountries` are the per-field counts and must never be summed (892 bottlings carry both); `untrustedFactsUnresolved` is how much of that queue resolves to no producer at all — the half that is a symptom rather than work                                                                                                                                                                                                                                                                                                                                                              | `product:review`                             |
@@ -2478,7 +2486,7 @@ it and usable by anything.
 - **Timing.** The NBU sets business day D's rate on business day D-1 and
   publishes it after 15:30 Kyiv — its `calcdate` shows Monday's rate calculated
   the preceding Friday. So the default schedule (`30 16 * * *`, Europe/Kyiv)
-  leaves the table holding the *next* business day's rate, and a failed run
+  leaves the table holding the _next_ business day's rate, and a failed run
   costs nothing. `GET /currency/rate/latest` can therefore legitimately report
   **tomorrow**; it is not clamped. The hour is not load-bearing anyway — each
   run re-fetches a trailing window (`CURRENCY_RATE_SYNC_WINDOW_DAYS`, 7) and
@@ -2561,6 +2569,114 @@ one `WHERE filters ? 'oldKey'` data migration — which is why there is no
 `version` column. If the client ever renders its filter panel generically, the
 natural next step is a `meta.filterDefinitions` payload served from a backend
 code registry; with the payload stored as `jsonb` that is purely additive.
+
+### Collection (2026-09-06)
+
+A per-user record of the whiskies someone owns or has tasted: a personal
+rating, tasting notes, a barcode, and every purchase of the bottle. Separate
+from favorites by design — a favorite is a standing opinion about a bottling in
+the catalogue, a collection row is a fact about a bottle the user bought.
+
+**Two tables, and the second is the point.** `user_collection` holds what is
+true of the whisky (rating, notes, nose/palate/finish, barcode), unique per
+`(userId, productId)`; `user_collection_purchase` holds one row per bottle
+bought (date, price, shop, and the offer it was added from). Buying the same
+whisky again is a second purchase row, not a second collection row — which is
+what keeps "is this in my collection?" a yes/no question the catalogue can
+answer with an id set, while the spend total still counts every bottle. A
+collection row may hold **no** purchases at all: tasted at a bar, or a gift.
+
+| Endpoint                                      | Notes                                                                                                                                                                                                                                                                                                                                                       |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /collection`                             | The caller's whole collection, unpaginated — a personal list is hundreds of rows at most and the client sorts it. Each item is the row's own fields plus the bottling's (`name`, `nameOrig` fallback, `age`, `abv`, `volumeMl`, `brand`, `distillery`, `bottler`, `type`, `country*`, `region`, `flavors`), its `purchases` (oldest first) and its `offers` |
+| `GET /collection/ids`                         | `{ productIds: string[] }` — the cheap membership set the catalogues join client-side                                                                                                                                                                                                                                                                       |
+| `GET /collection/stats`                       | `?from=YYYY-MM&to=YYYY-MM&granularity=month\|year` — see below                                                                                                                                                                                                                                                                                              |
+| `POST /collection`                            | `{productId, rating?, barcode?, notes?, nose?, palate?, finish?, purchase?}` → the created item, `200`. `409` when the product is already in the collection                                                                                                                                                                                                 |
+| `PATCH /collection/:id`                       | The row's own fields; answers the updated item                                                                                                                                                                                                                                                                                                              |
+| `DELETE /collection/:id`                      | `204`; the purchases cascade                                                                                                                                                                                                                                                                                                                                |
+| `POST /collection/:id/purchase`               | Adds one bottle; answers the whole updated item                                                                                                                                                                                                                                                                                                             |
+| `PATCH /collection/:id/purchase/:purchaseId`  | Edits one purchase; answers the item                                                                                                                                                                                                                                                                                                                        |
+| `DELETE /collection/:id/purchase/:purchaseId` | Removes one purchase; answers the item                                                                                                                                                                                                                                                                                                                      |
+
+What a client must not guess:
+
+- **`offers` may be empty**, unlike a report group's. A bottle stays in the
+  collection after every shop stops listing it — that is most of the point of
+  owning it — so the client renders "немає в наявності" rather than treating an
+  empty array as a bug.
+- **The offers ignore the caller's blacklist**, the same exception
+  `/report/history` makes. Hiding a bottling from the catalogue must not blank
+  the price beside a bottle already on the shelf. The offer shape is also
+  narrower than the report's: `id`, `url`, `storeSlug`, `storeName`, `price`,
+  `oldPrice`, `referencePrice`, `discountPct`, `currency`, `promo`,
+  `capturedDate` — no recency flags, because a bottle already bought has no
+  "new listing" question to answer. `referencePrice`/`discountPct` mean exactly
+  what they mean on the catalogue (measured against our own previous observed
+  price, never the shop's strike-through), because both now read the same
+  `OfferPriceUtils`.
+- **Membership is an id set, not a row flag.** `ReportRow` gained nothing;
+  `GET /collection/ids` is joined client-side, mirroring how `GET /preference`
+  already powers the favorites glass.
+- **The server fills a purchase's price and shop from the offer it names.**
+  When `purchase.storeProductId` is given and the price is absent, the price
+  comes from that offer's current row; when neither store field is given, the
+  shop comes from that offer's store. `/report/*` is cached up to ten minutes,
+  so a client defaulting from what it last rendered would persist a stale
+  number as "what I paid" — a value nothing later corrects.
+- **A purchase names one shop or the other, never both.** `storeSlug` is one of
+  ours (joinable, colourable); `storeName` is the user's own free text (a duty
+  free, a bar, «подарунок»). Sending both is `400`; a CHECK constraint is the
+  backstop. `clearStore` removes whichever it was.
+- **Clearing is spelled two ways, deliberately.** A text field clears by being
+  sent empty (`""` — an emptied tasting note is a real edit, the `producer.note`
+  convention); `rating` and a purchase's `price` have no such spelling, so they
+  clear through `clearRating` / `clearPrice` flags. An absent key always means
+  "leave it alone" (`exposeUnsetFields: false`).
+- **Mutations answer the affected item, not the caller's whole list** —
+  deliberately unlike `/preference` and `/quick-filter`, whose payloads are id
+  sets. A collection list is hundreds of joined, priced rows, and re-pricing all
+  of them on every rating edit buys nothing.
+- **Ownership is a `404`, not a `403`**, the quick-filter rule: every read and
+  write is scoped `(id, userId)`, so a foreign id simply matches no row. A
+  purchase is additionally scoped by its collection row, so a purchase id from
+  someone else's shelf is unreachable even with the right parent id.
+- **`user_collection.productId` is `RESTRICT`**, unlike `favorite.productId`,
+  which cascades. A favorite is a throwaway boolean; a collection row carries a
+  rating, notes and a purchase history that nothing can reconstruct. The cost is
+  that merging two bottlings must re-point these rows first — the same extra
+  step `store_product` already imposes, now documented in `CURATION.md`.
+- **Every body-returning mutation answers `200`, never `201`.** The `@Plain`
+  decorator documents an OK response, so a `201` leaves the payload untyped in
+  `/docs-json` and the generated client loses the item's shape — which is how
+  this was caught. Every other POST in this API already does the same.
+- All three reads are `private, no-cache`, like `/preference`.
+
+**`GET /collection/stats`** answers `items`, `bottles`, `pricedBottles`,
+`totalSpent`, `avgPrice`, `mostExpensive`/`cheapest` (a named purchase each),
+`byCountry`, `byRegion`, `byStore`, `timeline` and `bounds`. Details a client
+must not guess:
+
+- **The range narrows the timeline only.** KPIs and breakdowns describe the
+  whole collection: "my collection" is the question being asked, and a
+  range-scoped total would disagree with the list on screen.
+- **The timeline is dense.** Every period in the resolved range is present,
+  zeros included, so a client draws the gaps rather than reconstructing them.
+  `granularity` is `month` (default) or `year`; the resolved `from`/`to` are
+  echoed inside `timeline`, clamped to `[bounds.firstMonth, current month]`.
+  An inverted range is `400`, as is one wider than 600 months.
+- **`bounds` is null when nothing was ever bought**, which is what a client
+  builds its range picker from.
+- **`byRegion` is Scotch only** (`country.code = 'GB-SCT'`), keyed by the
+  resolved distillery's region with an `unknown` bucket for a Scotch whose
+  distillery never resolved. A bottling from anywhere else is absent entirely,
+  not counted as `unknown`.
+- **`items` counts collection rows and `bottles` counts purchases**, so a
+  whisky bought twice adds one to the first and two to the second, and a whisky
+  never bought adds one and none. Both numbers appear in every breakdown for
+  the same reason.
+- **`byStore` mixes both kinds of shop**: a known store carries `slug` and
+  `color`, a free-text one carries neither. Purchases naming no shop at all are
+  absent from it.
 
 ### Filters the knowledge base added (2026-08-28)
 
@@ -2660,8 +2776,8 @@ overhaul).
 
 ## Current state / known gaps
 
-The project builds, `tsc`/`eslint` are clean, and 772 unit tests (60 suites)
-plus 141 integration tests (15 suites, live Postgres) pass. Done:
+The project builds, `tsc`/`eslint` are clean, and 927 unit tests (72 suites)
+plus 175 integration tests (17 suites, live Postgres) pass. Done:
 
 - **Auth works end-to-end.** `domain/auth` (login/refresh/logout/me/sessions)
   is fully implemented with Valkey-backed sessions and a self-describing
@@ -2912,7 +3028,7 @@ Pre-existing bugs fixed while wiring auth (context for future changes):
   the rate of its purchase date; **nothing of the collection itself is in
   here**, and the rates layer knows nothing about it. Load-bearing decisions,
   each with its reasoning in that section: `rate` is normalized to hryvnia per
-  one unit (the source quoted USD and EUR per *100* until 2019-12-27),
+  one unit (the source quoted USD and EUR per _100_ until 2019-12-27),
   `numeric(18,6)` rather than the price scale, re-syncing a day overwrites
   rather than duplicating, the days the source omits are carried forward so
   the series has no holes, and a rate that does not exist at all is reported
@@ -2994,6 +3110,17 @@ Still open:
   after), so this is a quality gap in the other thirteen tags, not a
   correctness one. 1117 bottlings the restore CSV does not cover are already
   re-opened (`lastLlmFlavorAt IS NULL`) and will be re-asked first.
+- **The personal collection ships** (`core/user-collection`,
+  `domain/collection`, the `user-collection` migration): two tables — one row
+  per user × bottling holding the rating, the barcode and the four note fields,
+  and a child row per bottle bought — behind nine endpoints, with the
+  statistics computed in SQL. See "API contract" → "Collection". Three things
+  it changed outside its own folders: `OfferPriceUtils` (extracted from
+  `ReportService`, so the collection's offers state a discount exactly as the
+  catalogue does), `findCurrentRowsByProductIds` on the store-product
+  repository, and `user_collection` in `clearCatalogue`'s truncate list — the
+  `product` FK is `RESTRICT`, which is deliberate and which `CURATION.md`'s
+  merge recipe now accounts for.
 - **Two operational steps of the knowledge-base work are the owner's to run**,
   not code gaps. `pnpm backfill` (a live sweep of all ~20 shops, several hours)
   is what re-stamps `store`-source type and country values; until it runs,

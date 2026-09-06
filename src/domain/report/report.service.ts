@@ -22,6 +22,7 @@ import {
   ReportRow,
   TypePaginated,
 } from '~types';
+import { OfferPriceUtils } from '~utils';
 
 @Injectable()
 export class ReportService {
@@ -176,7 +177,7 @@ export class ReportService {
   private catalog(current: ReportCurrentRow[]): ReportGroup[] {
     const rows = current.map((row) =>
       this.enrich(row, {
-        referencePrice: this.previousDrop(row),
+        referencePrice: OfferPriceUtils.previousDrop(row),
         isNew: false,
       })
     );
@@ -416,7 +417,7 @@ export class ReportService {
       return null;
     }
 
-    const ordered = [...group].sort((a, b) => this.byOfferPrice(a, b));
+    const ordered = [...group].sort((a, b) => OfferPriceUtils.byPrice(a, b));
     const [best, runnerUp] = ordered;
 
     if (best.price < runnerUp.price * BEST_MERGE_GUARD) {
@@ -452,11 +453,11 @@ export class ReportService {
     return group
       .map((row) =>
         row.id === winner.id ? winner : this.enrich(row, {
-          referencePrice: this.previousDrop(row),
+          referencePrice: OfferPriceUtils.previousDrop(row),
           isNew: false,
         })
       )
-      .sort((a, b) => this.byOfferPrice(a, b))
+      .sort((a, b) => OfferPriceUtils.byPrice(a, b))
       .map((row) => this.toOffer(row));
   }
 
@@ -522,7 +523,7 @@ export class ReportService {
     const grouped = Array.from(this.groupByProduct(rows).values());
 
     return grouped.map((group) => {
-      const ordered = [...group].sort((a, b) => this.byOfferPrice(a, b));
+      const ordered = [...group].sort((a, b) => OfferPriceUtils.byPrice(a, b));
 
       return this.toGroup(ordered[0], ordered.map((row) => this.toOffer(row)));
     });
@@ -589,31 +590,6 @@ export class ReportService {
       firstSeen: row.firstSeen,
       capturedDate: row.capturedDate,
     };
-  }
-
-  /**
-   * Orders two offers of one bottling by price, then deterministically.
-   *
-   * The tie-breakers are not cosmetic: the current-rows query has no `ORDER BY`
-   * of its own, so two equally priced offers would otherwise swap places
-   * between requests, and with them the group's primary offer — the store, URL
-   * and history the collapsed row points at.
-   *
-   * It takes the offer-level fields alone rather than a whole `ReportRow`,
-   * because `best` orders its candidates with it before any of them is
-   * enriched.
-   *
-   * @param a - First offer.
-   * @param b - Second offer.
-   * @returns Negative, zero, or positive per standard comparator semantics.
-   */
-  private byOfferPrice(
-    a: Pick<ReportCurrentRow, 'id' | 'price' | 'storeName'>,
-    b: Pick<ReportCurrentRow, 'id' | 'price' | 'storeName'>,
-  ): number {
-    return a.price - b.price
-      || a.storeName.localeCompare(b.storeName)
-      || a.id.localeCompare(b.id);
   }
 
   /**
@@ -711,7 +687,7 @@ export class ReportService {
     return {
       ...row,
       referencePrice: extra.referencePrice,
-      discountPct: this.discountPct(row.price, extra.referencePrice),
+      discountPct: OfferPriceUtils.discountPct(row.price, extra.referencePrice),
       isNew: extra.isNew,
       daysNew: extra.daysNew ?? null,
       daysDiscount: extra.daysDiscount ?? null,
@@ -736,41 +712,6 @@ export class ReportService {
     }
 
     return null;
-  }
-
-  /**
-   * The row's own previous price when the price has fallen since, else null.
-   *
-   * This is what an offer-level discount means on every report that states one
-   * — measured against a price we actually recorded, never the store's
-   * advertised strike price — so the catalog's offers and the offers `best`
-   * lists beside its winner read identically.
-   *
-   * @param row - The current row.
-   * @returns The previous price when it beats the current one, else null.
-   */
-  private previousDrop(row: ReportCurrentRow): number | null {
-    return row.previousPrice && row.previousPrice > row.price
-      ? row.previousPrice
-      : null;
-  }
-
-  /**
-   * Whole-percent discount of a price against a reference.
-   *
-   * @param current - The current price.
-   * @param reference - The reference price, or null.
-   * @returns The rounded discount percent, or null when there is no discount.
-   */
-  private discountPct(
-    current: number,
-    reference: number | null,
-  ): number | null {
-    if (!reference || reference <= 0 || current >= reference) {
-      return null;
-    }
-
-    return Math.round((reference - current) / reference * 100);
   }
 
   /**

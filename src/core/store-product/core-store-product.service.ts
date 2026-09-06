@@ -110,6 +110,19 @@ export class CoreStoreProductService extends CoreBaseService<
   }
 
   /**
+   * Loads the current in-stock offers of a set of bottlings, ignoring every
+   * user-scoped predicate the report applies.
+   *
+   * @param productIds - Canonical bottling ids.
+   * @returns One row per in-stock offer of those bottlings.
+   */
+  public async findCurrentRowsByProductIds(
+    productIds: ID[],
+  ): Promise<ReportCurrentRow[]> {
+    return this.repo.findCurrentRowsByProductIds(productIds);
+  }
+
+  /**
    * Resolves an offer id or a canonical product id to one concrete offer.
    *
    * @param id - A store-offer id or a canonical product id.

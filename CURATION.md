@@ -130,13 +130,39 @@ UPDATE store_product
 SET "productId" = '<keep-id>', "updatedAt" = now()
 WHERE "productId" = '<loser-id>';
 
--- 4. Delete the loser. It has no offers now, so the RESTRICT foreign key lets
---    it go; its flavor links go with it.
+-- 4. Move the collection rows, dropping the ones that would collide.
+--    `user_collection` is unique per (userId, productId), so a user holding
+--    both bottlings already has a row on the survivor; the loser's row is
+--    then a duplicate of a whisky they own once. Move its purchases onto the
+--    surviving row first so the bottles are never lost, then drop it.
+UPDATE user_collection_purchase p
+SET "collectionId" = k.id, "updatedAt" = now()
+FROM user_collection l
+JOIN user_collection k
+  ON k."userId" = l."userId" AND k."productId" = '<keep-id>'
+WHERE p."collectionId" = l.id AND l."productId" = '<loser-id>';
+
+DELETE FROM user_collection l
+WHERE l."productId" = '<loser-id>'
+  AND EXISTS (
+    SELECT 1 FROM user_collection k
+    WHERE k."userId" = l."userId" AND k."productId" = '<keep-id>'
+  );
+
+UPDATE user_collection
+SET "productId" = '<keep-id>', "updatedAt" = now()
+WHERE "productId" = '<loser-id>';
+
+-- 5. Delete the loser. It has no offers and no collection rows now, so the
+--    RESTRICT foreign keys let it go; its flavor links go with it.
 DELETE FROM product WHERE id = '<loser-id>';
 ```
 
-Step 4 is the check that step 3 was complete: the foreign key refuses the
-delete while any offer still points at the loser.
+Step 5 is the check that steps 3 and 4 were complete: both foreign keys are
+`RESTRICT`, so the delete is refused while any offer — or anyone's collection
+row — still points at the loser. The collection step is the one that is easy to
+forget, because most bottlings are in nobody's collection and the delete then
+succeeds without it.
 
 ## Re-key a bottling
 
@@ -156,6 +182,9 @@ already holds — that is the signal to merge instead.
 
 - **Do not delete a bottling that still has offers.** The foreign key stops
   you, and it is stopping you from deleting a store's whole price history.
+- **Do not delete a bottling that sits in someone's collection.** The same kind
+  of foreign key stops you, and it is stopping you from deleting a rating,
+  tasting notes and a purchase history nothing can reconstruct.
 - **Do not edit `age` or `volumeMl` expecting the grouping to change.** They
   are components of the key, but the key is frozen; use a re-key or a merge.
 - **Do not fix a name by editing `store_product.nameOrig`.** That column is the

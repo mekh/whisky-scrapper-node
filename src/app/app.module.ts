@@ -18,6 +18,7 @@ import {
 import { AppConfig, ConfigModule, DbConfig, ValidationConfig } from '~config';
 import { DomainAuthModule } from '~domain/auth';
 import { DomainBrandModule } from '~domain/brand';
+import { DomainCollectionModule } from '~domain/collection';
 import {
   DomainCurrencyCronModule,
   DomainCurrencyModule,
@@ -100,6 +101,7 @@ import { RequestDeadlineMiddleware } from './middleware';
     DomainUserModule,
     DomainAuthModule,
     DomainBrandModule,
+    DomainCollectionModule,
     DomainCurrencyModule,
     DomainCurrencyCronModule,
     DomainDashboardModule,

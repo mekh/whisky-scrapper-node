@@ -1,4 +1,5 @@
 export { Action } from './action.enum';
+export { CollectionTimelineGranularity } from './collection.enum';
 export { DashboardBreakdownBy, DashboardGranularity } from './dashboard.enum';
 export { ErrorCodes } from './error-codes.enum';
 export {

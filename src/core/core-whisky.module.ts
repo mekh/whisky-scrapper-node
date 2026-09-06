@@ -14,6 +14,7 @@ import { CoreStoreConfigModule } from './store-config';
 import { CoreStoreProductModule } from './store-product';
 import { CoreSyncLogModule } from './sync-log';
 import { CoreTypeModule } from './type';
+import { CoreUserCollectionModule } from './user-collection';
 
 /**
  * Aggregates the whisky-domain core modules so the whole entity graph (which
@@ -36,6 +37,7 @@ import { CoreTypeModule } from './type';
     CoreStoreProductModule,
     CoreSyncLogModule,
     CoreTypeModule,
+    CoreUserCollectionModule,
   ],
   exports: [
     CoreCountryModule,
@@ -52,6 +54,7 @@ import { CoreTypeModule } from './type';
     CoreStoreProductModule,
     CoreSyncLogModule,
     CoreTypeModule,
+    CoreUserCollectionModule,
   ],
 })
 export class CoreWhiskyModule {}

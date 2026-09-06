@@ -396,6 +396,32 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
   }
 
   /**
+   * Loads the current rows of every in-stock offer of the given bottlings.
+   *
+   * The collection reads its offers through this rather than through
+   * `findCurrentRows`: that query is the report's, so it mandates a `userId`
+   * and applies the caller's blacklist unconditionally. A bottle already
+   * bought must keep showing where it is sold even after its bottling is
+   * hidden from the catalogue — the exception `/report/history` already makes
+   * — and there is no user-scoped predicate to apply here at all.
+   *
+   * @param productIds - Canonical bottling ids; an empty array reads nothing.
+   * @returns One row per in-stock offer of those bottlings, unordered.
+   */
+  public async findCurrentRowsByProductIds(
+    productIds: ID[],
+  ): Promise<ReportCurrentRow[]> {
+    if (!productIds.length) {
+      return [];
+    }
+
+    return this.query(
+      `${CURRENT_SQL} AND sp."productId" = ANY($1::uuid[]) AND sp."inStock"`,
+      [productIds],
+    ) as Promise<ReportCurrentRow[]>;
+  }
+
+  /**
    * Resolves an id that may be either a store offer or a bottling to one
    * concrete offer.
    *

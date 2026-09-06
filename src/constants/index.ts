@@ -1,4 +1,5 @@
 export * from './cache.constants';
+export * from './collection.constants';
 export * from './common.constants';
 export * from './currency.constants';
 export * from './dashboard.constants';

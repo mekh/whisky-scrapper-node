@@ -1,6 +1,7 @@
 export * from './app.interface';
 export * from './auth.interfaces';
 export * from './brand.interfaces';
+export * from './collection.interfaces';
 export * from './crud.interfaces';
 export * from './ctx.interfaces';
 export * from './currency.interfaces';

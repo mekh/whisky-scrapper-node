@@ -26,10 +26,7 @@ import type {
 import { CollectionStatsService } from './collection-stats.service';
 import { CollectionService } from './collection.service';
 import {
-  ByPurchaseIdParamsDto,
   CollectionCreateDto,
-  CollectionPurchaseDto,
-  CollectionPurchaseUpdateDto,
   CollectionStatsQueryDto,
   CollectionUpdateDto,
 } from './dto';
@@ -56,6 +53,12 @@ import {
  * joined against its purchases and priced against every store that still
  * carries it, so re-sending it after every edit would be a page of work to
  * report a one-row change.
+ *
+ * Purchases have no routes of their own: `PATCH /collection/:id` carries
+ * them in its `purchases` block, so the edit screen's one «save» is one
+ * request and one transaction. Three per-purchase routes existed before and
+ * were folded in when every client turned out to save the row and its
+ * purchases together.
  */
 @Controller('collection')
 export class CollectionController {
@@ -116,44 +119,5 @@ export class CollectionController {
     @Param() params: ByIdDto,
   ): Promise<void> {
     return this.collection.remove(user.id, params.id);
-  }
-
-  @Post(':id/purchase')
-  @HttpCode(HttpStatus.OK)
-  @Plain(CollectionItemType, Resource.AUTHENTICATED)
-  public addPurchase(
-    @CurrentUser() user: CtxUser,
-    @Param() params: ByIdDto,
-    @Body() body: CollectionPurchaseDto,
-  ): Promise<CollectionItem> {
-    return this.collection.addPurchase(user.id, params.id, body);
-  }
-
-  @Patch(':id/purchase/:purchaseId')
-  @Plain(CollectionItemType, Resource.AUTHENTICATED)
-  public updatePurchase(
-    @CurrentUser() user: CtxUser,
-    @Param() params: ByPurchaseIdParamsDto,
-    @Body() body: CollectionPurchaseUpdateDto,
-  ): Promise<CollectionItem> {
-    return this.collection.updatePurchase(
-      user.id,
-      params.id,
-      params.purchaseId,
-      body,
-    );
-  }
-
-  @Delete(':id/purchase/:purchaseId')
-  @Plain(CollectionItemType, Resource.AUTHENTICATED)
-  public removePurchase(
-    @CurrentUser() user: CtxUser,
-    @Param() params: ByPurchaseIdParamsDto,
-  ): Promise<CollectionItem> {
-    return this.collection.removePurchase(
-      user.id,
-      params.id,
-      params.purchaseId,
-    );
   }
 }

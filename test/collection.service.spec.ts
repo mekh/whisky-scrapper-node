@@ -1,12 +1,13 @@
 import 'reflect-metadata';
 
 /**
- * `CollectionService.create` carries `@Transactional()`, which — unmocked —
- * needs `initializeTransactionalContext()` plus a registered `DataSource`
- * (real infrastructure the integration suite provides, not a unit test).
- * Replacing the decorator with a no-op keeps the transaction boundary out of
- * this suite's concern: every collaborator it would wrap is mocked anyway,
- * so there is nothing here for a real transaction to coordinate.
+ * `CollectionService.create` and `update` carry `@Transactional()`, which —
+ * unmocked — needs `initializeTransactionalContext()` plus a registered
+ * `DataSource` (real infrastructure the integration suite provides, not a
+ * unit test). Replacing the decorator with a no-op keeps the transaction
+ * boundary out of this suite's concern: every collaborator it would wrap is
+ * mocked anyway, so there is nothing here for a real transaction to
+ * coordinate.
  */
 jest.mock('typeorm-transactional', () => ({
   Transactional: () => (): void => undefined,
@@ -162,7 +163,6 @@ function makeService(): Mocks {
     findByUserId: jest.fn().mockResolvedValue([]),
     findByIdForUser: jest.fn().mockResolvedValue(makeRow()),
     findProductIdsByUserId: jest.fn().mockResolvedValue([]),
-    findIdForUserOrThrow: jest.fn().mockResolvedValue(COLLECTION_ID),
     createForUser: jest.fn().mockResolvedValue(COLLECTION_ID),
     updateForUser: jest.fn().mockResolvedValue(undefined),
     deleteForUser: jest.fn().mockResolvedValue(undefined),
@@ -542,105 +542,130 @@ describe('CollectionService.update', () => {
      */
     expect(patch).not.toHaveProperty('notes');
   });
-});
 
-describe('CollectionService purchase mutations', () => {
-  it('propagates the addPurchase ownership failure', async () => {
+  it('fails on ownership before any write, purchases included', async () => {
     const { service, collection, purchases } = makeService();
 
-    collection.findIdForUserOrThrow.mockRejectedValueOnce(
-      new NotFoundError('Collection item not found'),
-    );
+    collection.findByIdForUser.mockResolvedValueOnce(null);
 
     await expect(
-      service.addPurchase(USER, COLLECTION_ID, { storeSlug: 'maudau' }),
-    ).rejects.toThrow(NotFoundError);
-    expect(purchases.createForCollection).not.toHaveBeenCalled();
-  });
-
-  it('checks ownership before writing a new purchase', async () => {
-    const { service, collection, purchases } = makeService();
-    const order: string[] = [];
-
-    collection.findIdForUserOrThrow.mockImplementationOnce(async () => {
-      order.push('ownership');
-
-      return COLLECTION_ID;
-    });
-    purchases.createForCollection.mockImplementationOnce(async () => {
-      order.push('write');
-
-      return PURCHASE_ID;
-    });
-
-    await service.addPurchase(USER, COLLECTION_ID, { storeSlug: 'maudau' });
-
-    expect(order).toEqual(['ownership', 'write']);
-  });
-
-  it('propagates the updatePurchase ownership failure', async () => {
-    const { service, collection, purchases } = makeService();
-
-    collection.findIdForUserOrThrow.mockRejectedValueOnce(
-      new NotFoundError('Collection item not found'),
-    );
-
-    await expect(
-      service.updatePurchase(USER, COLLECTION_ID, PURCHASE_ID, {
-        price: 500,
+      service.update(USER, COLLECTION_ID, {
+        rating: 5,
+        purchases: { add: [{ price: 700 }], remove: ['purchase-2' as ID] },
       }),
     ).rejects.toThrow(NotFoundError);
-    expect(purchases.updateForCollection).not.toHaveBeenCalled();
-  });
 
-  it('checks ownership before patching a purchase', async () => {
-    const { service, collection, purchases } = makeService();
-    const order: string[] = [];
-
-    collection.findIdForUserOrThrow.mockImplementationOnce(async () => {
-      order.push('ownership');
-
-      return COLLECTION_ID;
-    });
-    purchases.updateForCollection.mockImplementationOnce(async () => {
-      order.push('write');
-    });
-
-    await service.updatePurchase(USER, COLLECTION_ID, PURCHASE_ID, {
-      price: 500,
-    });
-
-    expect(order).toEqual(['ownership', 'write']);
-  });
-
-  it('propagates the removePurchase ownership failure', async () => {
-    const { service, collection, purchases } = makeService();
-
-    collection.findIdForUserOrThrow.mockRejectedValueOnce(
-      new NotFoundError('Collection item not found'),
-    );
-
-    await expect(
-      service.removePurchase(USER, COLLECTION_ID, PURCHASE_ID),
-    ).rejects.toThrow(NotFoundError);
+    expect(collection.updateForUser).not.toHaveBeenCalled();
+    expect(purchases.createForCollection).not.toHaveBeenCalled();
     expect(purchases.deleteForCollection).not.toHaveBeenCalled();
   });
 
-  it('checks ownership before deleting a purchase', async () => {
-    const { service, collection, purchases } = makeService();
-    const order: string[] = [];
+  it('touches no purchase when the request names none', async () => {
+    const { service, purchases } = makeService();
 
-    collection.findIdForUserOrThrow.mockImplementationOnce(async () => {
-      order.push('ownership');
+    await service.update(USER, COLLECTION_ID, { rating: 5 });
 
-      return COLLECTION_ID;
+    expect(purchases.deleteForCollection).not.toHaveBeenCalled();
+    expect(purchases.updateForCollection).not.toHaveBeenCalled();
+    expect(purchases.createForCollection).not.toHaveBeenCalled();
+  });
+
+  it(
+    'applies removals, then patches, then additions, each scoped to the row',
+    async () => {
+      const { service, purchases } = makeService();
+      const order: string[] = [];
+
+      purchases.deleteForCollection.mockImplementation(async () => {
+        order.push('remove');
+      });
+      purchases.updateForCollection.mockImplementation(async () => {
+        order.push('update');
+      });
+      purchases.createForCollection.mockImplementation(async () => {
+        order.push('add');
+
+        return PURCHASE_ID;
+      });
+
+      await service.update(USER, COLLECTION_ID, {
+        purchases: {
+          add: [{ price: 700, storeName: 'Duty free' }],
+          update: [{ id: PURCHASE_ID, price: 500, clearStore: true }],
+          remove: ['purchase-2' as ID],
+        },
+      });
+
+      expect(order).toEqual(['remove', 'update', 'add']);
+      expect(purchases.deleteForCollection)
+        .toHaveBeenCalledWith(COLLECTION_ID, 'purchase-2');
+      expect(purchases.updateForCollection).toHaveBeenCalledWith(
+        COLLECTION_ID,
+        PURCHASE_ID,
+        { price: 500, storeId: null, storeName: null },
+      );
+      expect(purchases.createForCollection).toHaveBeenCalledWith(
+        COLLECTION_ID,
+        { price: 700, storeName: 'Duty free' },
+      );
+    },
+  );
+
+  it('rejects a purchase both patched and removed, writing none', async () => {
+    const { service, purchases } = makeService();
+
+    await expect(
+      service.update(USER, COLLECTION_ID, {
+        purchases: {
+          update: [{ id: PURCHASE_ID, price: 500 }],
+          remove: [PURCHASE_ID],
+        },
+      }),
+    ).rejects.toThrow(BadRequestError);
+
+    expect(purchases.deleteForCollection).not.toHaveBeenCalled();
+    expect(purchases.updateForCollection).not.toHaveBeenCalled();
+  });
+
+  it('deletes a purchase listed twice among the removals once', async () => {
+    const { service, purchases } = makeService();
+
+    await service.update(USER, COLLECTION_ID, {
+      purchases: { remove: [PURCHASE_ID, PURCHASE_ID] },
     });
-    purchases.deleteForCollection.mockImplementationOnce(async () => {
-      order.push('write');
+
+    expect(purchases.deleteForCollection).toHaveBeenCalledTimes(1);
+  });
+
+  it(
+    "checks an added purchase's offer against the row's own bottling",
+    async () => {
+      const { service, purchases, offers } = makeService();
+
+      offers.findCurrentRowById.mockResolvedValueOnce(
+        makeCurrentRow({ productId: 'other-product' as ID }),
+      );
+
+      await expect(
+        service.update(USER, COLLECTION_ID, {
+          purchases: { add: [{ storeProductId: 'offer-9' as ID }] },
+        }),
+      ).rejects.toThrow(BadRequestError);
+
+      expect(purchases.createForCollection).not.toHaveBeenCalled();
+    },
+  );
+
+  it('fills an added purchase from the offer it names', async () => {
+    const { service, purchases } = makeService();
+
+    await service.update(USER, COLLECTION_ID, {
+      purchases: { add: [{ storeProductId: 'offer-1' as ID }] },
     });
 
-    await service.removePurchase(USER, COLLECTION_ID, PURCHASE_ID);
-
-    expect(order).toEqual(['ownership', 'write']);
+    expect(purchases.createForCollection).toHaveBeenCalledWith(
+      COLLECTION_ID,
+      { price: 1500, storeId: STORE_ID, storeProductId: 'offer-1' },
+    );
   });
 });

@@ -220,22 +220,4 @@ export class UserCollectionRepository
 
     return !!result.affected;
   }
-
-  /**
-   * Confirms a collection row belongs to a user, without loading the rest of
-   * it — the ownership check a child purchase write runs before touching
-   * anything.
-   *
-   * @param id - The collection row to check.
-   * @param userId - Its claimed owner; a mismatch matches no row.
-   * @returns The row's own id when the pair matches, else null.
-   */
-  public async findIdForUser(id: ID, userId: ID): Promise<ID | null> {
-    const row = await this.findOne({
-      where: { id, userId },
-      select: { id: true },
-    });
-
-    return row?.id ?? null;
-  }
 }

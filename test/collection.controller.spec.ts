@@ -23,9 +23,6 @@ const ALL_HANDLERS = [
   'create',
   'update',
   'remove',
-  'addPurchase',
-  'updatePurchase',
-  'removePurchase',
 ] as const;
 
 /**
@@ -70,9 +67,6 @@ function makeController(): Mocks {
     create: jest.fn().mockResolvedValue('created'),
     update: jest.fn().mockResolvedValue('updated'),
     remove: jest.fn().mockResolvedValue(undefined),
-    addPurchase: jest.fn().mockResolvedValue('added-purchase'),
-    updatePurchase: jest.fn().mockResolvedValue('updated-purchase'),
-    removePurchase: jest.fn().mockResolvedValue('removed-purchase'),
   };
 
   const stats = {
@@ -160,7 +154,21 @@ describe('CollectionController delegation', () => {
   it('scopes update to the caller id and the route id', async () => {
     const { controller, collection } = makeController();
     const params = { id: 'collection-1' as ID };
-    const body = { rating: 9, notes: '' };
+
+    /**
+     * The purchase changes ride in the same body; the controller hands the
+     * whole thing on untouched rather than splitting it into the per-purchase
+     * calls the API no longer has.
+     */
+    const body = {
+      rating: 9,
+      notes: '',
+      purchases: {
+        add: [{ purchasedOn: '2026-02-01', price: 999, storeSlug: 'rozetka' }],
+        update: [{ id: 'purchase-1' as ID, price: 500, clearStore: true }],
+        remove: ['purchase-2' as ID],
+      },
+    };
 
     await controller.update(USER, params, body);
 
@@ -175,47 +183,5 @@ describe('CollectionController delegation', () => {
     await controller.remove(USER, params);
 
     expect(collection.remove).toHaveBeenCalledWith(USER.id, params.id);
-  });
-
-  it('hands addPurchase the caller id, the row id and the body', async () => {
-    const { controller, collection } = makeController();
-    const params = { id: 'collection-1' as ID };
-    const body = {
-      purchasedOn: '2026-02-01',
-      price: 999,
-      storeSlug: 'rozetka',
-    };
-
-    await controller.addPurchase(USER, params, body);
-
-    expect(collection.addPurchase)
-      .toHaveBeenCalledWith(USER.id, params.id, body);
-  });
-
-  it('scopes updatePurchase to the caller and both route ids', async () => {
-    const { controller, collection } = makeController();
-    const params = {
-      id: 'collection-1' as ID,
-      purchaseId: 'purchase-1' as ID,
-    };
-    const body = { price: 500, clearStore: true };
-
-    await controller.updatePurchase(USER, params, body);
-
-    expect(collection.updatePurchase)
-      .toHaveBeenCalledWith(USER.id, params.id, params.purchaseId, body);
-  });
-
-  it('scopes removePurchase to the caller and both route ids', async () => {
-    const { controller, collection } = makeController();
-    const params = {
-      id: 'collection-1' as ID,
-      purchaseId: 'purchase-1' as ID,
-    };
-
-    await controller.removePurchase(USER, params);
-
-    expect(collection.removePurchase)
-      .toHaveBeenCalledWith(USER.id, params.id, params.purchaseId);
   });
 });

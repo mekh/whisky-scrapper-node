@@ -325,9 +325,11 @@ export interface CollectionPurchaseInput {
 }
 
 /**
- * A patch to one purchase. An absent field is left alone; the `clear*` flags
- * are how a value is deliberately removed, since an absent key and an explicit
- * null are not distinguishable once the payload has been through the pipe.
+ * The fields of a patch to one purchase. An absent field is left alone; the
+ * `clear*` flags are how a value is deliberately removed, since an absent key
+ * and an explicit null are not distinguishable once the payload has been
+ * through the pipe. Addressed to a purchase by {@link
+ * CollectionPurchaseChangeInput}.
  */
 export interface CollectionPurchaseUpdateInput {
   /**
@@ -359,6 +361,44 @@ export interface CollectionPurchaseUpdateInput {
    * Removes the shop entirely, whichever kind it was.
    */
   clearStore?: boolean;
+}
+
+/**
+ * A patch to one existing purchase, addressed by its id — one entry of
+ * {@link CollectionPurchasesPatchInput.update}.
+ */
+export interface CollectionPurchaseChangeInput
+  extends CollectionPurchaseUpdateInput {
+  /**
+   * The purchase to patch. Scoped to the collection row being updated: an id
+   * from another row, even the same user's, matches nothing.
+   */
+  id: ID;
+}
+
+/**
+ * Every change to a collection row's purchases, carried by the same request
+ * as the row's own fields so that one save on the client is one write here —
+ * the three groups apply in one transaction, removals first, then patches,
+ * then additions, and a purchase named in both `update` and `remove` is
+ * rejected rather than resolved by order.
+ */
+export interface CollectionPurchasesPatchInput {
+  /**
+   * Bottles to record, each per {@link CollectionPurchaseInput}'s rules.
+   */
+  add?: CollectionPurchaseInput[];
+
+  /**
+   * Existing purchases to patch, each addressed by its id.
+   */
+  update?: CollectionPurchaseChangeInput[];
+
+  /**
+   * Ids of the purchases to delete. The collection row itself survives an
+   * emptied list — a whisky with no bottles left is still a legitimate entry.
+   */
+  remove?: ID[];
 }
 
 /**
@@ -408,11 +448,14 @@ export interface CollectionCreateInput {
 }
 
 /**
- * Request shape for editing a collection row's own fields.
+ * Request shape for editing a collection row: its own fields, and any changes
+ * to its purchases, in one request.
  *
  * The text fields clear by being sent empty — an empty tasting note is a real
  * edit, not an absent one. `rating` has no such spelling, so it clears through
- * an explicit flag, the `PATCH /producer/:id` convention.
+ * an explicit flag, the `PATCH /producer/:id` convention. Every key is
+ * optional, `purchases` included, so a request may change only purchases,
+ * only the row, or both.
  */
 export interface CollectionUpdateInput {
   /**
@@ -449,6 +492,12 @@ export interface CollectionUpdateInput {
    * A new finish note; an empty string removes it.
    */
   finish?: string;
+
+  /**
+   * Changes to the row's purchases, applied in the same transaction as the
+   * fields above.
+   */
+  purchases?: CollectionPurchasesPatchInput;
 }
 
 /**
@@ -1038,25 +1087,4 @@ export interface CollectionSummaryRow {
    * Mean price paid per priced bottle, or null when none carry a price.
    */
   avgPrice: number | null;
-}
-
-/**
- * Route params identifying one purchase belonging to one collection row.
- *
- * A purchase is never addressed by its own id alone: the `/collection/:id`
- * segment scopes it to the owning row, so a purchase id from a foreign
- * collection row (even one belonging to the same user) matches nothing —
- * the same "ownership is a `WHERE` clause" discipline the collection row
- * itself uses.
- */
-export interface CollectionPurchaseParams {
-  /**
-   * The owning collection row's id.
-   */
-  id: ID;
-
-  /**
-   * The purchase's own id, scoped to that collection row.
-   */
-  purchaseId: ID;
 }

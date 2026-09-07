@@ -94,25 +94,6 @@ export class CoreUserCollectionService
   }
 
   /**
-   * Confirms a collection row belongs to a user, for a caller that only
-   * needs to prove ownership before touching a child purchase.
-   *
-   * @param id - The collection row to check.
-   * @param userId - Its claimed owner.
-   * @returns The row's own id.
-   * @throws {NotFoundError} When the pair matches no row.
-   */
-  public async findIdForUserOrThrow(id: ID, userId: ID): Promise<ID> {
-    const found = await this.repo.findIdForUser(id, userId);
-
-    if (!found) {
-      throw new NotFoundError('Collection item not found', { id });
-    }
-
-    return found;
-  }
-
-  /**
    * Adds a bottling to a user's collection.
    *
    * @param userId - The owner.

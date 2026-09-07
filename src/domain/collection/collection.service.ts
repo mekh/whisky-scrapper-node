@@ -19,6 +19,7 @@ import type {
   CollectionPurchaseResolved,
   CollectionPurchaseRow,
   CollectionPurchaseUpdateInput,
+  CollectionPurchasesPatchInput,
   CollectionRow,
   CollectionRowResolved,
   CollectionUpdateInput,
@@ -147,23 +148,45 @@ export class CollectionService {
   }
 
   /**
-   * Edits a collection row's own fields — rating and the four text notes.
+   * Edits a collection row — its own fields and any changes to its
+   * purchases — as one transaction, so the edit screen's single «save»
+   * either lands whole or not at all.
+   *
+   * Ownership is settled once, up front, by loading the row rather than
+   * relying on the row update's affected count: a purchase-only request
+   * carries an empty row patch, which the repository skips, and would
+   * otherwise reach the purchase writes without ever proving the row is the
+   * caller's. The loaded row is needed anyway — its bottling is what an
+   * added purchase's catalogue offer must belong to.
    *
    * @param userId - The authenticated user.
    * @param id - The row to update.
-   * @param input - The fields to change; an absent field is left alone.
+   * @param input - The fields to change and the purchase changes; an absent
+   *   field is left alone.
    * @returns The freshly composed item.
    * @throws {NotFoundError} When the id is unknown or belongs to another
-   *   user.
+   *   user, or a patched or removed purchase is not this row's.
+   * @throws {BadRequestError} Per {@link applyPurchasesPatch}.
    */
+  @Transactional()
   public async update(
     userId: ID,
     id: ID,
     input: CollectionUpdateInput,
   ): Promise<CollectionItem> {
-    await this.collection.updateForUser(userId, id, this.toUpdateRow(input));
+    const row = await this.rowOrThrow(userId, id);
 
-    return this.itemOrThrow(userId, id);
+    await this.collection.updateForUser(
+      userId,
+      row.id,
+      this.toUpdateRow(input),
+    );
+
+    if (input.purchases) {
+      await this.applyPurchasesPatch(row, input.purchases);
+    }
+
+    return this.itemOrThrow(userId, row.id);
   }
 
   /**
@@ -180,89 +203,73 @@ export class CollectionService {
   }
 
   /**
-   * Records a purchase against a whisky already in the caller's collection.
+   * Applies every purchase change of an update request to one collection
+   * row: deletions first, then patches, then additions.
    *
-   * @param userId - The authenticated user.
-   * @param id - The collection row to add the purchase to.
-   * @param input - The purchase, per {@link resolvePurchase}'s rules.
-   * @returns The freshly composed item.
-   * @throws {NotFoundError} When the collection row is unknown or belongs to
-   *   another user.
-   * @throws {BadRequestError} Per {@link resolvePurchase}.
+   * The order is what keeps the three groups independent of each other. A
+   * deleted purchase cannot also be patched — the same id in both lists is
+   * rejected outright rather than resolved by whichever ran last — and an
+   * added purchase has no id yet, so it can collide with neither. An id
+   * listed twice among the deletions is deleted once, since the second
+   * attempt would otherwise answer "not found" for a purchase the request
+   * did mean to remove. Every write is scoped to the row, so a purchase id
+   * belonging to another row is a `NotFoundError` from the core layer,
+   * never a write. The collection row itself survives an emptied list — a
+   * whisky with no bottles left is still a legitimate entry (tasted at a
+   * bar, or a gift).
+   *
+   * @param row - The owning collection row, already proven the caller's.
+   * @param patch - The purchase changes.
+   * @throws {BadRequestError} When a purchase is both patched and removed,
+   *   or an entry fails {@link resolvePurchase} / {@link toPurchaseUpdateRow}.
+   * @throws {NotFoundError} When a patched or removed purchase is not this
+   *   row's.
    */
-  public async addPurchase(
-    userId: ID,
-    id: ID,
-    input: CollectionPurchaseInput,
-  ): Promise<CollectionItem> {
-    const collectionId = await this.collection.findIdForUserOrThrow(
-      id,
-      userId,
-    );
+  private async applyPurchasesPatch(
+    row: CollectionRow,
+    patch: CollectionPurchasesPatchInput,
+  ): Promise<void> {
+    this.assertDisjointPurchaseChanges(patch);
 
-    const resolved = await this.resolvePurchase(input);
+    for (const purchaseId of new Set(patch.remove ?? [])) {
+      await this.purchases.deleteForCollection(row.id, purchaseId);
+    }
 
-    await this.purchases.createForCollection(collectionId, resolved);
+    for (const change of patch.update ?? []) {
+      const values = await this.toPurchaseUpdateRow(change);
 
-    return this.itemOrThrow(userId, collectionId);
+      await this.purchases.updateForCollection(row.id, change.id, values);
+    }
+
+    for (const input of patch.add ?? []) {
+      const resolved = await this.resolvePurchase(input, row.productId);
+
+      await this.purchases.createForCollection(row.id, resolved);
+    }
   }
 
   /**
-   * Patches one purchase of a whisky in the caller's collection.
+   * Rejects a purchases patch that names the same purchase among both the
+   * patches and the deletions: the two are contradictory, and applying one
+   * of them silently would make the outcome depend on the order the service
+   * happens to write in.
    *
-   * @param userId - The authenticated user.
-   * @param id - The owning collection row.
-   * @param purchaseId - The purchase to update.
-   * @param input - The fields to change; an absent field is left alone.
-   * @returns The freshly composed item.
-   * @throws {NotFoundError} When either id is unknown, or either belongs to
-   *   someone else's collection.
-   * @throws {BadRequestError} When the patch names both a known store and a
-   *   free-text one, or an unknown store slug.
+   * @param patch - The purchase changes to check.
+   * @throws {BadRequestError} When an id appears in both lists.
    */
-  public async updatePurchase(
-    userId: ID,
-    id: ID,
-    purchaseId: ID,
-    input: CollectionPurchaseUpdateInput,
-  ): Promise<CollectionItem> {
-    const collectionId = await this.collection.findIdForUserOrThrow(
-      id,
-      userId,
-    );
+  private assertDisjointPurchaseChanges(
+    patch: CollectionPurchasesPatchInput,
+  ): void {
+    const removed = new Set(patch.remove ?? []);
 
-    const values = await this.toPurchaseUpdateRow(input);
+    const clash = (patch.update ?? []).find((change) => removed.has(change.id));
 
-    await this.purchases.updateForCollection(collectionId, purchaseId, values);
-
-    return this.itemOrThrow(userId, collectionId);
-  }
-
-  /**
-   * Deletes one purchase of a whisky in the caller's collection. The
-   * collection row itself survives — a whisky with no purchases left is
-   * still a legitimate entry (tasted at a bar, or a gift).
-   *
-   * @param userId - The authenticated user.
-   * @param id - The owning collection row.
-   * @param purchaseId - The purchase to delete.
-   * @returns The freshly composed item.
-   * @throws {NotFoundError} When either id is unknown, or either belongs to
-   *   someone else's collection.
-   */
-  public async removePurchase(
-    userId: ID,
-    id: ID,
-    purchaseId: ID,
-  ): Promise<CollectionItem> {
-    const collectionId = await this.collection.findIdForUserOrThrow(
-      id,
-      userId,
-    );
-
-    await this.purchases.deleteForCollection(collectionId, purchaseId);
-
-    return this.itemOrThrow(userId, collectionId);
+    if (clash) {
+      throw new BadRequestError(
+        'A purchase cannot be both patched and removed in one request',
+        { purchaseId: clash.id },
+      );
+    }
   }
 
   /**
@@ -417,8 +424,9 @@ export class CollectionService {
    * offer again in this same request is the freshest either side can do.
    *
    * @param input - The purchase as the client sent it.
-   * @param expectedProductId - When set (adding a whole new collection row),
-   *   the bottling the named offer must belong to.
+   * @param expectedProductId - The bottling a named offer must belong to,
+   *   when the caller knows it: the row being created, or the existing row
+   *   a bottle is being added to.
    * @returns The purchase with its store reference resolved.
    * @throws {BadRequestError} When a named offer or store does not exist, the
    *   offer belongs to a different bottling, or both store fields are set.
@@ -456,11 +464,7 @@ export class CollectionService {
    * @throws {NotFoundError} When the pair matches no row.
    */
   private async itemOrThrow(userId: ID, id: ID): Promise<CollectionItem> {
-    const row = await this.collection.findByIdForUser(id, userId);
-
-    if (!row) {
-      throw new NotFoundError('Collection item not found', { id });
-    }
+    const row = await this.rowOrThrow(userId, id);
 
     const [purchasesByRow, offersByProduct] = await Promise.all([
       this.loadPurchases([row.id]),
@@ -472,6 +476,26 @@ export class CollectionService {
       purchasesByRow.get(row.id) ?? [],
       offersByProduct.get(row.productId) ?? [],
     );
+  }
+
+  /**
+   * Loads one collection row by its id and claimed owner — the ownership
+   * check every write goes through, spelled as a read so a foreign id is a
+   * `404` and never a `403` that would confirm the row exists.
+   *
+   * @param userId - The claimed owner.
+   * @param id - The collection row to load.
+   * @returns The row with its bottling's facts.
+   * @throws {NotFoundError} When the pair matches no row.
+   */
+  private async rowOrThrow(userId: ID, id: ID): Promise<CollectionRow> {
+    const row = await this.collection.findByIdForUser(id, userId);
+
+    if (!row) {
+      throw new NotFoundError('Collection item not found', { id });
+    }
+
+    return row;
   }
 
   /**

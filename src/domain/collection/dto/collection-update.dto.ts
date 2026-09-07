@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsNumber,
@@ -8,6 +9,7 @@ import {
   MaxLength,
   Min,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 
 import {
@@ -19,6 +21,8 @@ import {
 } from '~constants';
 import type { CollectionUpdateInput } from '~types';
 
+import { CollectionPurchasesPatchDto } from './collection-purchases-patch.dto';
+
 /**
  * Every text field — including `barcode` — allows the empty string: sending
  * `""` is how a client clears a note or a barcode, so none of them carry
@@ -27,6 +31,10 @@ import type { CollectionUpdateInput } from '~types';
  * digits and would otherwise reject the clearing case outright; `rating` has
  * no such spelling (a number field has no empty string), so it clears
  * through the explicit {@link clearRating} flag instead.
+ *
+ * `purchases` rides in the same body so that the edit screen's one «save»
+ * is one request — the row's fields and every purchase change commit or
+ * fail together.
  */
 export class CollectionUpdateDto implements CollectionUpdateInput {
   @IsOptional()
@@ -63,4 +71,9 @@ export class CollectionUpdateDto implements CollectionUpdateInput {
   @IsString()
   @MaxLength(COLLECTION_NOTE_MAX_LENGTH)
   public finish?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CollectionPurchasesPatchDto)
+  public purchases?: CollectionPurchasesPatchDto;
 }

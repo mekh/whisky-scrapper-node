@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Transactional } from 'typeorm-transactional';
 
+import { CoreCurrencyService } from '~core/currency';
 import { CoreProductService } from '~core/product';
 import { CoreStoreService } from '~core/store';
 import { CoreStoreProductService } from '~core/store-product';
@@ -16,6 +17,7 @@ import type {
   CollectionOffer,
   CollectionPurchase,
   CollectionPurchaseInput,
+  CollectionPurchaseRate,
   CollectionPurchaseResolved,
   CollectionPurchaseRow,
   CollectionPurchaseUpdateInput,
@@ -54,6 +56,7 @@ export class CollectionService {
     private readonly offers: CoreStoreProductService,
     private readonly products: CoreProductService,
     private readonly stores: CoreStoreService,
+    private readonly currencies: CoreCurrencyService,
   ) {}
 
   /**
@@ -326,6 +329,7 @@ export class CollectionService {
     }
 
     const rows = await this.purchases.findByCollectionIds(collectionIds);
+    const ratesByDay = await this.loadRates(rows);
     const grouped = new Map<ID, CollectionPurchaseRow[]>();
 
     rows.forEach((row) => {
@@ -342,10 +346,71 @@ export class CollectionService {
         (a, b) => this.comparePurchaseDate(a, b),
       );
 
-      result.set(collectionId, ordered.map((row) => this.toPurchase(row)));
+      result.set(
+        collectionId,
+        ordered.map((row) =>
+          this.toPurchase(row, ratesByDay.get(row.purchasedOn) ?? [])
+        ),
+      );
     });
 
     return result;
+  }
+
+  /**
+   * Resolves the official rate of every non-base display currency on every
+   * day the given purchases were made.
+   *
+   * Keyed by day rather than by purchase: the rate is a property of the date,
+   * so a collection where twenty bottles were bought on one afternoon costs
+   * one lookup for that afternoon. All of it is one statement — the batching
+   * primitive `CurrencyConversionService.convertMany` is built on — because a
+   * per-purchase probe would make a hundred-bottle shelf a hundred queries.
+   *
+   * @param rows - The purchase rows about to be projected.
+   * @returns Purchase day to one entry per non-base currency, ordered by
+   *   code; an empty map when there are no purchases or no such currency.
+   */
+  private async loadRates(
+    rows: CollectionPurchaseRow[],
+  ): Promise<Map<string, CollectionPurchaseRate[]>> {
+    if (!rows.length) {
+      return new Map();
+    }
+
+    const active = await this.currencies.findActive();
+    const codes = active
+      .filter((currency) => !currency.isBase)
+      .map((currency) => currency.code)
+      .sort();
+
+    if (!codes.length) {
+      return new Map();
+    }
+
+    const days = [...new Set(rows.map((row) => row.purchasedOn))];
+    const probes = await this.currencies.probeRates(
+      days.flatMap((day) => codes.map((code) => ({ code, day }))),
+    );
+
+    const byKey = new Map(
+      probes.map((probe) => [`${probe.code}|${probe.requestedOn}`, probe]),
+    );
+
+    return new Map(
+      days.map((day) => [
+        day,
+        codes.map((code) => {
+          const probe = byKey.get(`${code}|${day}`);
+
+          return {
+            code,
+            rate: probe?.rate ?? null,
+            effectiveOn: probe?.effectiveOn ?? null,
+          };
+        }),
+      ]),
+    );
   }
 
   /**
@@ -395,9 +460,14 @@ export class CollectionService {
    * store columns back into one object.
    *
    * @param row - The purchase row, store columns flattened.
-   * @returns The purchase, store nested.
+   * @param rates - The rates in force on this purchase's day, already
+   *   resolved by {@link CollectionService.loadRates}.
+   * @returns The purchase, store nested and rates attached.
    */
-  private toPurchase(row: CollectionPurchaseRow): CollectionPurchase {
+  private toPurchase(
+    row: CollectionPurchaseRow,
+    rates: CollectionPurchaseRate[],
+  ): CollectionPurchase {
     return {
       id: row.id,
       purchasedOn: row.purchasedOn,
@@ -408,6 +478,7 @@ export class CollectionService {
       storeName: row.storeName,
       storeProductId: row.storeProductId,
       createdAt: row.createdAt,
+      rates,
     };
   }
 

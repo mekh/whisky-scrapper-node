@@ -92,6 +92,36 @@ export interface CollectionPurchaseStore {
 }
 
 /**
+ * The official rate one purchase's price converts at: the rate in force on
+ * the day of that purchase, for one display currency.
+ *
+ * Carried on the purchase itself rather than fetched per screen: a purchase
+ * date never changes and the National Bank never restates a published rate,
+ * so the pair is as immutable as the price beside it — and a client switching
+ * the displayed currency must not have to re-read the collection to do it.
+ */
+export interface CollectionPurchaseRate {
+  /**
+   * ISO 4217 alphabetic code of the currency, upper-case.
+   */
+  code: string;
+
+  /**
+   * Hryvnia per ONE unit of {@link code}, so a UAH amount is divided by it.
+   * Null when the currency has no published rate at or before the purchase
+   * day — a bottle bought before that currency's history begins.
+   */
+  rate: number | null;
+
+  /**
+   * The day the rate was actually taken from: the purchase day itself, or the
+   * most recent earlier day the series holds. Null exactly when
+   * {@link rate} is.
+   */
+  effectiveOn: string | null;
+}
+
+/**
  * One bottle bought: when, for how much, and where.
  *
  * A collection item may hold several of these (the same whisky bought twice)
@@ -135,6 +165,14 @@ export interface CollectionPurchase {
    * When the row was created.
    */
   createdAt: Date;
+
+  /**
+   * The rate of every non-base display currency on the day of this purchase,
+   * ordered by code. One entry per active non-base currency, whether or not a
+   * rate exists for it (see {@link CollectionPurchaseRate.rate}), so a client
+   * can tell "not convertible" from "not asked about".
+   */
+  rates: CollectionPurchaseRate[];
 }
 
 /**
@@ -972,6 +1010,14 @@ export interface CollectionStatsBounds {
  */
 export interface CollectionStats {
   /**
+   * ISO 4217 code every money field below is stated in — the requested
+   * display currency, or the base one when none was asked for. Echoed so a
+   * client that is switching currencies can label the numbers it has rather
+   * than the ones it has requested.
+   */
+  currency: string;
+
+  /**
    * Distinct whiskies in the collection.
    */
   items: number;
@@ -982,28 +1028,35 @@ export interface CollectionStats {
   bottles: number;
 
   /**
-   * Bottles whose purchase carries a price — the divisor behind
-   * {@link avgPrice}, stated so a client can say "of 42 bottles, 38 priced".
+   * Bottles whose purchase carries a price **that could be stated in
+   * {@link currency}** — the divisor behind {@link avgPrice}, so a client can
+   * say "of 42 bottles, 38 priced". A purchase older than the currency's
+   * published history has no official rate and is counted by neither this nor
+   * the money fields, rather than being converted at some later day's rate.
    */
   pricedBottles: number;
 
   /**
-   * Total spend, over the purchases that carry a price.
+   * Total spend in {@link currency}, over the purchases that carry a price.
    */
   totalSpent: number;
 
   /**
-   * Mean price paid per priced bottle, or null when none carry a price.
+   * Mean price paid per priced bottle in {@link currency}, or null when none
+   * carry a price.
    */
   avgPrice: number | null;
 
   /**
-   * The dearest purchase, or null when nothing carries a price.
+   * The dearest purchase **in {@link currency}**, or null when nothing carries
+   * a price. Ranked by the converted amount, so the answer can legitimately
+   * differ from the hryvnia one when the rate moved between two purchases.
    */
   mostExpensive: CollectionStatsPurchase | null;
 
   /**
-   * The cheapest purchase, or null when nothing carries a price.
+   * The cheapest purchase in {@link currency}, ranked the same way, or null
+   * when nothing carries a price.
    */
   cheapest: CollectionStatsPurchase | null;
 
@@ -1053,6 +1106,12 @@ export interface CollectionStatsQuery {
    * Bucket width; defaults to months.
    */
   granularity?: CollectionTimelineGranularity;
+
+  /**
+   * ISO 4217 code to state every money field in, at each purchase's own
+   * day rate; defaults to the base currency, which applies no rate at all.
+   */
+  currency?: string;
 }
 
 /**

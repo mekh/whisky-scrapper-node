@@ -5,6 +5,9 @@ export { CollectionIdsType } from './collection-ids.type.dto';
 export { CollectionItemType } from './collection-item.type.dto';
 export { CollectionOfferType } from './collection-offer.type.dto';
 export {
+  CollectionPurchaseRateType,
+} from './collection-purchase-rate.type.dto';
+export {
   CollectionPurchaseStoreType,
 } from './collection-purchase-store.type.dto';
 export { CollectionPurchaseType } from './collection-purchase.type.dto';

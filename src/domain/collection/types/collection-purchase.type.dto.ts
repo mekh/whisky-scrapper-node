@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsDate,
   IsNumber,
   IsOptional,
@@ -9,6 +10,7 @@ import {
 
 import type { CollectionPurchase, ID } from '~types';
 
+import { CollectionPurchaseRateType } from './collection-purchase-rate.type.dto';
 import { CollectionPurchaseStoreType } from './collection-purchase-store.type.dto';
 
 export class CollectionPurchaseType implements CollectionPurchase {
@@ -37,4 +39,9 @@ export class CollectionPurchaseType implements CollectionPurchase {
 
   @IsDate()
   public createdAt!: Date;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CollectionPurchaseRateType)
+  public rates!: CollectionPurchaseRateType[];
 }

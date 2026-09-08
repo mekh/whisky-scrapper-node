@@ -13,6 +13,7 @@ jest.mock('typeorm-transactional', () => ({
   Transactional: () => (): void => undefined,
 }));
 
+import { CoreCurrencyService } from '~core/currency';
 import { CoreProductService } from '~core/product';
 import { CoreStoreService } from '~core/store';
 import { CoreStoreProductService } from '~core/store-product';
@@ -149,10 +150,11 @@ interface Mocks {
   offers: Record<string, jest.Mock>;
   products: Record<string, jest.Mock>;
   stores: Record<string, jest.Mock>;
+  currencies: Record<string, jest.Mock>;
 }
 
 /**
- * Wires a `CollectionService` whose five collaborators are mocks, all
+ * Wires a `CollectionService` whose six collaborators are mocks, all
  * defaulted to a working happy path so a test only overrides what it
  * actually exercises.
  *
@@ -190,15 +192,36 @@ function makeService(): Mocks {
     findOne: jest.fn().mockResolvedValue({ id: STORE_ID }),
   };
 
+  /**
+   * One foreign currency, so every purchase carries exactly one rate entry
+   * and the batching can be asserted on a single call.
+   */
+  const currencies = {
+    findActive: jest.fn().mockResolvedValue([
+      { id: 'cur-uah' as ID, code: 'UAH', isBase: true },
+      { id: 'cur-usd' as ID, code: 'USD', isBase: false },
+    ]),
+    probeRates: jest.fn().mockResolvedValue([]),
+  };
+
   const service = new CollectionService(
     collection as unknown as CoreUserCollectionService,
     purchases as unknown as CoreUserCollectionPurchaseService,
     offers as unknown as CoreStoreProductService,
     products as unknown as CoreProductService,
     stores as unknown as CoreStoreService,
+    currencies as unknown as CoreCurrencyService,
   );
 
-  return { service, collection, purchases, offers, products, stores };
+  return {
+    service,
+    collection,
+    purchases,
+    offers,
+    products,
+    stores,
+    currencies,
+  };
 }
 
 describe('CollectionService.getOwn', () => {
@@ -667,5 +690,85 @@ describe('CollectionService.update', () => {
       COLLECTION_ID,
       { price: 1500, storeId: STORE_ID, storeProductId: 'offer-1' },
     );
+  });
+});
+
+describe('CollectionService.getOwn — purchase rates', () => {
+  it('asks for one rate per distinct day, not per purchase', async () => {
+    const { service, collection, purchases, currencies } = makeService();
+
+    collection.findByUserId.mockResolvedValue([makeRow()]);
+    purchases.findByCollectionIds.mockResolvedValue([
+      makePurchaseRow({ id: 'purchase-a' as ID, purchasedOn: '2026-01-05' }),
+      makePurchaseRow({ id: 'purchase-b' as ID, purchasedOn: '2026-01-05' }),
+      makePurchaseRow({ id: 'purchase-c' as ID, purchasedOn: '2015-06-01' }),
+    ]);
+
+    await service.getOwn(USER);
+
+    expect(currencies.probeRates).toHaveBeenCalledTimes(1);
+    expect(currencies.probeRates).toHaveBeenCalledWith([
+      { code: 'USD', day: '2026-01-05' },
+      { code: 'USD', day: '2015-06-01' },
+    ]);
+  });
+
+  it('attaches the resolved rate to every purchase of that day', async () => {
+    const { service, collection, purchases, currencies } = makeService();
+
+    collection.findByUserId.mockResolvedValue([makeRow()]);
+    purchases.findByCollectionIds.mockResolvedValue([
+      makePurchaseRow({ id: 'purchase-a' as ID, purchasedOn: '2015-06-01' }),
+    ]);
+    currencies.probeRates.mockResolvedValue([
+      {
+        code: 'USD',
+        requestedOn: '2015-06-01',
+        effectiveOn: '2015-06-01',
+        rate: 21.048227,
+      },
+    ]);
+
+    const [item] = await service.getOwn(USER);
+
+    expect(item?.purchases[0]?.rates).toEqual([
+      { code: 'USD', rate: 21.048227, effectiveOn: '2015-06-01' },
+    ]);
+  });
+
+  it(
+    'reports a currency with no published rate rather than omitting it',
+    async () => {
+      const { service, collection, purchases, currencies } = makeService();
+
+      collection.findByUserId.mockResolvedValue([makeRow()]);
+      purchases.findByCollectionIds.mockResolvedValue([
+        makePurchaseRow({ purchasedOn: '1990-01-01' }),
+      ]);
+      currencies.probeRates.mockResolvedValue([
+        {
+          code: 'USD',
+          requestedOn: '1990-01-01',
+          effectiveOn: null,
+          rate: null,
+        },
+      ]);
+
+      const [item] = await service.getOwn(USER);
+
+      expect(item?.purchases[0]?.rates).toEqual([
+        { code: 'USD', rate: null, effectiveOn: null },
+      ]);
+    },
+  );
+
+  it('never probes when the collection holds no purchases', async () => {
+    const { service, collection, currencies } = makeService();
+
+    collection.findByUserId.mockResolvedValue([makeRow()]);
+
+    await service.getOwn(USER);
+
+    expect(currencies.probeRates).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,7 @@ import type { CollectionStatsBounds, CollectionSummaryRow, ID } from '~types';
 
 import { CollectionStatsService } from '../src/domain/collection/collection-stats.service';
 
+import type { CoreCurrencyService } from '~core/currency';
 import type { CoreUserCollectionPurchaseService } from '~core/user-collection';
 
 const USER = 'user-1' as ID;
@@ -39,6 +40,16 @@ function makeBounds(
   };
 }
 
+/**
+ * The currency lookup as `CoreCurrencyService.findActive` answers it: the base
+ * currency plus one foreign one, which is all the resolution logic reads
+ * (`isBase`, `code`, `id`).
+ */
+const CURRENCIES = [
+  { id: 'cur-uah' as ID, code: 'UAH', isBase: true },
+  { id: 'cur-usd' as ID, code: 'USD', isBase: false },
+];
+
 interface Mocks {
   service: CollectionStatsService;
   purchases: Record<string, jest.Mock>;
@@ -63,8 +74,13 @@ function makeService(): Mocks {
     timelineForUser: jest.fn().mockResolvedValue([]),
   };
 
+  const currencies = {
+    findActive: jest.fn().mockResolvedValue(CURRENCIES),
+  };
+
   const service = new CollectionStatsService(
     purchases as unknown as CoreUserCollectionPurchaseService,
+    currencies as unknown as CoreCurrencyService,
   );
 
   return { service, purchases };
@@ -99,6 +115,7 @@ describe('CollectionStatsService.getOwn range defaults', () => {
       '2024-05',
       '2026-03',
       CollectionTimelineGranularity.MONTH,
+      null,
     );
   });
 
@@ -119,6 +136,7 @@ describe('CollectionStatsService.getOwn range defaults', () => {
       '2025-01',
       '2025-06',
       CollectionTimelineGranularity.MONTH,
+      null,
     );
   });
 });
@@ -196,6 +214,7 @@ describe('CollectionStatsService.getOwn granularity', () => {
       '2026-03',
       '2026-03',
       CollectionTimelineGranularity.MONTH,
+      null,
     );
   });
 
@@ -213,6 +232,7 @@ describe('CollectionStatsService.getOwn granularity', () => {
       '2026-03',
       '2026-03',
       CollectionTimelineGranularity.YEAR,
+      null,
     );
   });
 });
@@ -237,5 +257,56 @@ describe('CollectionStatsService.getOwn independent reads', () => {
     ].forEach((mock) => {
       expect(mock).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe('CollectionStatsService.getOwn display currency', () => {
+  it('echoes the base currency and converts nothing by default', async () => {
+    const { service, purchases } = makeService();
+
+    const result = await service.getOwn(USER, {});
+
+    expect(result.currency).toBe('UAH');
+    expect(purchases.summaryForUser).toHaveBeenCalledWith(USER, null);
+    expect(purchases.countByStoreForUser).toHaveBeenCalledWith(USER, null);
+  });
+
+  it("resolves a foreign currency to the aggregates' convert id", async () => {
+    const { service, purchases } = makeService();
+
+    const result = await service.getOwn(USER, { currency: 'USD' });
+
+    expect(result.currency).toBe('USD');
+    expect(purchases.summaryForUser).toHaveBeenCalledWith(USER, 'cur-usd');
+    expect(purchases.mostExpensiveForUser)
+      .toHaveBeenCalledWith(USER, 'cur-usd');
+    expect(purchases.cheapestForUser).toHaveBeenCalledWith(USER, 'cur-usd');
+    expect(purchases.countByStoreForUser)
+      .toHaveBeenCalledWith(USER, 'cur-usd');
+    expect(purchases.timelineForUser).toHaveBeenCalledWith(
+      USER,
+      '2026-03',
+      '2026-03',
+      CollectionTimelineGranularity.MONTH,
+      'cur-usd',
+    );
+  });
+
+  it('applies no rate when the base currency is named', async () => {
+    const { service, purchases } = makeService();
+
+    const result = await service.getOwn(USER, { currency: 'UAH' });
+
+    expect(result.currency).toBe('UAH');
+    expect(purchases.summaryForUser).toHaveBeenCalledWith(USER, null);
+  });
+
+  it('rejects a currency prices may not be displayed in', async () => {
+    const { service, purchases } = makeService();
+
+    await expect(service.getOwn(USER, { currency: 'XXX' }))
+      .rejects.toThrow(BadRequestError);
+
+    expect(purchases.summaryForUser).not.toHaveBeenCalled();
   });
 });

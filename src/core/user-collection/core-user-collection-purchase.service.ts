@@ -125,11 +125,16 @@ export class CoreUserCollectionPurchaseService
    * The KPIs behind the statistics screen's summary tiles.
    *
    * @param userId - Whose collection to summarize.
+   * @param currencyId - Currency to state the money fields in, or null for
+   *   the base one.
    * @returns The summary row; zeros and a null `avgPrice` for an empty
    *   collection.
    */
-  public async summaryForUser(userId: ID): Promise<CollectionSummaryRow> {
-    return this.repo.summaryForUser(userId);
+  public async summaryForUser(
+    userId: ID,
+    currencyId: ID | null = null,
+  ): Promise<CollectionSummaryRow> {
+    return this.repo.summaryForUser(userId, currencyId);
   }
 
   /**
@@ -140,12 +145,15 @@ export class CoreUserCollectionPurchaseService
    * spells out a SQL sort keyword.
    *
    * @param userId - Whose collection to search.
+   * @param currencyId - Currency to rank and state the price in, or null for
+   *   the base one.
    * @returns The dearest purchase, or null when nothing carries a price.
    */
   public async mostExpensiveForUser(
     userId: ID,
+    currencyId: ID | null = null,
   ): Promise<CollectionStatsPurchase | null> {
-    return this.repo.extremePurchaseForUser(userId, 'DESC');
+    return this.repo.extremePurchaseForUser(userId, 'DESC', currencyId);
   }
 
   /**
@@ -156,12 +164,15 @@ export class CoreUserCollectionPurchaseService
    * {@link mostExpensiveForUser}.
    *
    * @param userId - Whose collection to search.
+   * @param currencyId - Currency to rank and state the price in, or null for
+   *   the base one.
    * @returns The cheapest purchase, or null when nothing carries a price.
    */
   public async cheapestForUser(
     userId: ID,
+    currencyId: ID | null = null,
   ): Promise<CollectionStatsPurchase | null> {
-    return this.repo.extremePurchaseForUser(userId, 'ASC');
+    return this.repo.extremePurchaseForUser(userId, 'ASC', currencyId);
   }
 
   /**
@@ -197,13 +208,16 @@ export class CoreUserCollectionPurchaseService
    * Bottles and spend of a user's collection, grouped by shop.
    *
    * @param userId - Whose collection to group.
+   * @param currencyId - Currency to state `spent` in, or null for the base
+   *   one.
    * @returns One bucket per known store plus one per distinct free-text
    *   shop name, largest bottle count first.
    */
   public async countByStoreForUser(
     userId: ID,
+    currencyId: ID | null = null,
   ): Promise<CollectionStoreBucket[]> {
-    return this.repo.countByStoreForUser(userId);
+    return this.repo.countByStoreForUser(userId, currencyId);
   }
 
   /**
@@ -214,6 +228,8 @@ export class CoreUserCollectionPurchaseService
    * @param from - First month of the range (`YYYY-MM`).
    * @param to - Last month of the range (`YYYY-MM`).
    * @param granularity - Bucket width.
+   * @param currencyId - Currency to state each bucket's `spent` in, or null
+   *   for the base one.
    * @returns One bucket per period in `[from, to]`, ascending.
    */
   public async timelineForUser(
@@ -221,8 +237,15 @@ export class CoreUserCollectionPurchaseService
     from: string,
     to: string,
     granularity: CollectionTimelineGranularity,
+    currencyId: ID | null = null,
   ): Promise<CollectionTimelineBucket[]> {
-    return this.repo.timelineForUser(userId, from, to, granularity);
+    return this.repo.timelineForUser(
+      userId,
+      from,
+      to,
+      granularity,
+      currencyId,
+    );
   }
 
   /**

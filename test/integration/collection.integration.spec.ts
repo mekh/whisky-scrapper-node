@@ -24,6 +24,16 @@ const STAMP = Date.now();
  */
 const TOKEN = `itcol${STAMP}`;
 
+/**
+ * A throwaway currency, so the suite never touches the real UAH/USD/EUR rows
+ * or the rate history the application depends on — the pattern
+ * `currency-rate.integration.spec.ts` established. Its rates are chosen to
+ * *reorder* the collection's purchases (see the conversion test), because a
+ * rate that preserved the hryvnia ranking would prove nothing about which
+ * amount the extremes are ranked by.
+ */
+const CURRENCY_CODE = 'TST';
+
 const STORE_KNOWN_SLUG = `__it_col_a_${STAMP}`;
 
 const STORE_KNOWN_NAME = 'IT Collection Store';
@@ -52,7 +62,11 @@ describe('personal collection (integration)', () => {
   let userA: ID;
   let userB: ID;
   let userStats: ID;
+  let userFx: ID;
   let storeKnownId: ID;
+  let currencyId: ID;
+  let fxRowId: ID;
+  let fxPurchasePriced: ID;
 
   let scotchMain: {
     id: ID;
@@ -421,11 +435,43 @@ describe('personal collection (integration)', () => {
       price: 500,
       purchasedOn: '2024-01-20',
     });
+
+    const currencyRows = await dataSource.query(
+      `INSERT INTO currency
+         (code, "numericCode", "nameUa", symbol, "isBase", active)
+       VALUES ($1, 999, 'Тестова', 'T', false, true)
+       RETURNING id`,
+      [CURRENCY_CODE],
+    ) as { id: ID }[];
+
+    currencyId = currencyRows[0].id;
+
+    await dataSource.query(
+      `INSERT INTO currency_rate ("currencyId", rate, "effectiveOn")
+       VALUES ($1, 10, '2024-01-01'), ($1, 100, '2024-03-10')`,
+      [currencyId],
+    );
+
+    userFx = await makeUser('fx');
+    fxRowId = await collections.createForUser(userFx, scotchMain.id, {});
+
+    await purchases.createForCollection(fxRowId, {
+      price: 700,
+      purchasedOn: '2023-06-01',
+    });
+
+    fxPurchasePriced = await purchases.createForCollection(fxRowId, {
+      price: 1000,
+      purchasedOn: '2024-01-15',
+    });
   });
 
   afterAll(async () => {
     await dataSource.query('DELETE FROM "user" WHERE id = ANY($1::uuid[])', [
-      [userA, userB, userStats],
+      [userA, userB, userStats, userFx],
+    ]);
+    await dataSource.query('DELETE FROM currency WHERE code = $1', [
+      CURRENCY_CODE,
     ]);
     await dataSource.query('DELETE FROM store WHERE id = $1', [
       storeKnownId,
@@ -916,6 +962,106 @@ describe('personal collection (integration)', () => {
       const emptyBounds = await purchases.boundsForUser(userB);
 
       expect(emptyBounds).toBeNull();
+    },
+  );
+  it(
+    "states every money aggregate at each purchase's own day rate",
+    async () => {
+      const summary = await purchases.summaryForUser(userStats, currencyId);
+
+      /**
+       * 1000 on 2024-01-15 and 500 on 2024-01-20 both fall back to the
+       * 2024-01-01 rate of 10 (the series holds nothing on those exact
+       * days, which is the documented fallback), while 3000 on 2024-03-10
+       * hits that day's own rate of 100.
+       */
+      expect(summary.bottles).toBe(3);
+      expect(summary.pricedBottles).toBe(3);
+      expect(summary.totalSpent).toBe(180);
+      expect(summary.avgPrice).toBe(60);
+
+      const mostExpensive = await purchases.mostExpensiveForUser(
+        userStats,
+        currencyId,
+      );
+
+      /**
+       * In hryvnia the dearest bottle is the 3000 one; converted at its own
+       * day's rate it is the cheapest of the three. The extremes therefore
+       * have to be ranked by the converted amount, not merely restated in
+       * the new currency.
+       */
+      expect(mostExpensive?.collectionId).toBe(statsRowA);
+      expect(mostExpensive?.price).toBe(100);
+
+      const cheapest = await purchases.cheapestForUser(userStats, currencyId);
+
+      expect(cheapest?.purchaseId).toBe(statsPurchaseB);
+      expect(cheapest?.price).toBe(30);
+
+      const byStore = await purchases.countByStoreForUser(
+        userStats,
+        currencyId,
+      );
+      const knownBucket = byStore.find(
+        (bucket) => bucket.slug === STORE_KNOWN_SLUG,
+      );
+      const freeTextBucket = byStore.find(
+        (bucket) => bucket.name === 'Duty Free',
+      );
+
+      expect(knownBucket?.spent).toBe(100);
+      expect(freeTextBucket?.spent).toBe(30);
+
+      const monthly = await purchases.timelineForUser(
+        userStats,
+        '2024-01',
+        '2024-03',
+        CollectionTimelineGranularity.MONTH,
+        currencyId,
+      );
+
+      expect(monthly[0].spent).toBe(150);
+      expect(monthly[1].spent).toBe(0);
+      expect(monthly[2].spent).toBe(30);
+
+      const yearly = await purchases.timelineForUser(
+        userStats,
+        '2024-01',
+        '2024-12',
+        CollectionTimelineGranularity.YEAR,
+        currencyId,
+      );
+
+      expect(yearly[0].spent).toBe(180);
+    },
+  );
+
+  it(
+    'leaves a purchase older than the currency out of every money field',
+    async () => {
+      const inHryvnia = await purchases.summaryForUser(userFx);
+
+      expect(inHryvnia.pricedBottles).toBe(2);
+      expect(inHryvnia.totalSpent).toBe(1700);
+
+      const converted = await purchases.summaryForUser(userFx, currencyId);
+
+      /**
+       * The 2023 bottle predates the currency's first stored rate, so there
+       * is no official rate to state it at. It is dropped from the sums and
+       * from the divisor alike, rather than being converted at the earliest
+       * rate that happens to exist.
+       */
+      expect(converted.bottles).toBe(2);
+      expect(converted.pricedBottles).toBe(1);
+      expect(converted.totalSpent).toBe(100);
+      expect(converted.avgPrice).toBe(100);
+
+      const cheapest = await purchases.cheapestForUser(userFx, currencyId);
+
+      expect(cheapest?.purchaseId).toBe(fxPurchasePriced);
+      expect(cheapest?.price).toBe(100);
     },
   );
 });

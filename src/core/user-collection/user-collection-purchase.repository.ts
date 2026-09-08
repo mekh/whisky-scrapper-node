@@ -61,6 +61,41 @@ const FIND_BY_COLLECTION_IDS_SQL = `
 `;
 
 /**
+ * Joins the rate that converts a purchase's hryvnia price into the requested
+ * display currency: the rate in force on the day of that purchase, which is
+ * the exact day or the most recent earlier one the series holds — the
+ * fallback `CurrencyRateRepository.probe` documents.
+ *
+ * `$2::uuid` is the currency, null for the base one. Every money expression
+ * then divides by {@link CONVERTED_PRICE_SQL}, which is `1` for the base
+ * currency and null when the requested currency published no rate at or
+ * before the purchase day. Null is deliberate and is what keeps a bottle
+ * bought before a currency's history out of the sums entirely: `SUM`/`AVG`
+ * skip it, `pricedBottles` does not count it, and the extremes cannot rank
+ * it. Converting such a purchase at some later day's rate would invent a
+ * number nobody published.
+ */
+const FX_JOIN_SQL = `
+  LEFT JOIN LATERAL (
+    SELECT cr.rate
+    FROM currency_rate cr
+    WHERE cr."currencyId" = $2::uuid
+      AND cr."effectiveOn" <= ucp."purchasedOn"
+    ORDER BY cr."effectiveOn" DESC
+    LIMIT 1
+  ) fx ON TRUE`;
+
+/**
+ * A purchase's price in the requested display currency, rounded to the
+ * currency's own scale so a client never has to re-round a sum of values it
+ * did not compute. `numeric` throughout, then cast out to `float8` like every
+ * other money column this repository projects.
+ */
+const CONVERTED_PRICE_SQL =
+  'ROUND(ucp.price::numeric / COALESCE(fx.rate, CASE WHEN $2::uuid IS NULL'
+  + ' THEN 1 END), 2)';
+
+/**
  * One row of KPIs over a user's *whole* collection. Starts `FROM
  * user_collection` and `LEFT JOIN`s the purchases — starting from the
  * purchases instead would silently drop a collection row nobody has bought
@@ -72,12 +107,13 @@ const FIND_BY_COLLECTION_IDS_SQL = `
 const SUMMARY_SQL = `
   SELECT COUNT(DISTINCT uc.id)::int AS items,
          COUNT(ucp.id)::int AS bottles,
-         COUNT(ucp.id) FILTER (WHERE ucp.price IS NOT NULL)::int
+         COUNT(ucp.id) FILTER (WHERE ${CONVERTED_PRICE_SQL} IS NOT NULL)::int
            AS "pricedBottles",
-         COALESCE(SUM(ucp.price), 0)::float8 AS "totalSpent",
-         AVG(ucp.price)::float8 AS "avgPrice"
+         COALESCE(SUM(${CONVERTED_PRICE_SQL}), 0)::float8 AS "totalSpent",
+         ROUND(AVG(${CONVERTED_PRICE_SQL}), 2)::float8 AS "avgPrice"
   FROM user_collection uc
   LEFT JOIN user_collection_purchase ucp ON ucp."collectionId" = uc.id
+  ${FX_JOIN_SQL}
   WHERE uc."userId" = $1
 `;
 
@@ -97,7 +133,7 @@ const SUMMARY_SQL = `
 const EXTREME_PURCHASE_SQL = `
   SELECT ucp.id AS "purchaseId", ucp."collectionId", uc."productId",
          p.name, o."nameOrig", p.age, p.abv::float8 AS abv, p."volumeMl",
-         ucp.price::float8 AS price,
+         ${CONVERTED_PRICE_SQL}::float8 AS price,
          ucp."purchasedOn"::text AS "purchasedOn",
          st.slug AS "storeSlug", st.name AS "storeLabel",
          st.color AS "storeColor", ucp."storeName"
@@ -112,7 +148,8 @@ const EXTREME_PURCHASE_SQL = `
     ORDER BY sp."inStock" DESC, sp."lastSeen" DESC, sp.id
     LIMIT 1
   ) o ON true
-  WHERE uc."userId" = $1 AND ucp.price IS NOT NULL
+  ${FX_JOIN_SQL}
+  WHERE uc."userId" = $1 AND ${CONVERTED_PRICE_SQL} IS NOT NULL
 `;
 
 /**
@@ -180,10 +217,11 @@ const STORE_BUCKETS_SQL = `
          COALESCE(st.name, ucp."storeName") AS name,
          st.color,
          COUNT(*)::int AS bottles,
-         COALESCE(SUM(ucp.price), 0)::float8 AS spent
+         COALESCE(SUM(${CONVERTED_PRICE_SQL}), 0)::float8 AS spent
   FROM user_collection_purchase ucp
   JOIN user_collection uc ON uc.id = ucp."collectionId"
   LEFT JOIN store st ON st.id = ucp."storeId"
+  ${FX_JOIN_SQL}
   WHERE uc."userId" = $1
     AND (ucp."storeId" IS NOT NULL OR ucp."storeName" IS NOT NULL)
   GROUP BY st.id, ucp."storeName"
@@ -353,13 +391,20 @@ export class UserCollectionPurchaseRepository
    * The KPIs behind the statistics screen's summary tiles.
    *
    * @param userId - Whose collection to summarize.
+   * @param currencyId - Currency to state the money fields in, or null for
+   *   the base one (no rate applied). A purchase with no rate at or before
+   *   its own day is counted in neither the money fields nor
+   *   `pricedBottles` — see {@link FX_JOIN_SQL}.
    * @returns The summary row; zeros and a null `avgPrice` for an empty
    *   collection.
    */
-  public async summaryForUser(userId: ID): Promise<CollectionSummaryRow> {
+  public async summaryForUser(
+    userId: ID,
+    currencyId: ID | null = null,
+  ): Promise<CollectionSummaryRow> {
     const rows = await this.query(
       SUMMARY_SQL,
-      [userId],
+      [userId, currencyId],
     ) as CollectionSummaryRow[];
 
     return rows[0] ?? {
@@ -376,19 +421,26 @@ export class UserCollectionPurchaseRepository
    *
    * @param userId - Whose collection to search.
    * @param order - `ASC` for the cheapest, `DESC` for the dearest.
-   * @returns The extreme purchase, or null when nothing carries a price.
+   * @param currencyId - Currency to rank and state the price in, or null for
+   *   the base one. Ranking reads the converted amount, so the answer can
+   *   legitimately differ between currencies when the rate moved between two
+   *   purchases — which is the whole point of asking in one of them.
+   * @returns The extreme purchase, or null when nothing carries a price the
+   *   requested currency can state.
    */
   public async extremePurchaseForUser(
     userId: ID,
     order: 'ASC' | 'DESC',
+    currencyId: ID | null = null,
   ): Promise<CollectionStatsPurchase | null> {
     const direction = UserCollectionPurchaseRepository.sqlDirection(order);
 
     const rows = await this.query(
       `${EXTREME_PURCHASE_SQL}
-       ORDER BY ucp.price ${direction}, ucp."purchasedOn", ucp.id
+       ORDER BY ${CONVERTED_PRICE_SQL} ${direction},
+                ucp."purchasedOn", ucp.id
        LIMIT 1`,
-      [userId],
+      [userId, currencyId],
     ) as {
       purchaseId: ID;
       collectionId: ID;
@@ -469,15 +521,18 @@ export class UserCollectionPurchaseRepository
    * Bottles and spend of a user's collection, grouped by shop.
    *
    * @param userId - Whose collection to group.
+   * @param currencyId - Currency to state `spent` in, or null for the base
+   *   one.
    * @returns One bucket per known store plus one per distinct free-text
    *   shop name, largest bottle count first.
    */
   public async countByStoreForUser(
     userId: ID,
+    currencyId: ID | null = null,
   ): Promise<CollectionStoreBucket[]> {
     return this.query(
       STORE_BUCKETS_SQL,
-      [userId],
+      [userId, currencyId],
     ) as Promise<CollectionStoreBucket[]>;
   }
 
@@ -492,6 +547,10 @@ export class UserCollectionPurchaseRepository
    * @param granularity - Bucket width. Only this value is interpolated, and
    *   only after being resolved through {@link TIMELINE_SQL_PARTS}, keyed by
    *   the enum itself.
+   * @param currencyId - Currency to state each bucket's `spent` in, or null
+   *   for the base one. It is `$2` here as it is everywhere else in this
+   *   repository, so the shared conversion fragments read the same parameter
+   *   whichever statement embeds them.
    * @returns One bucket per period in `[from, to]`, ascending.
    */
   public async timelineForUser(
@@ -499,13 +558,14 @@ export class UserCollectionPurchaseRepository
     from: string,
     to: string,
     granularity: CollectionTimelineGranularity,
+    currencyId: ID | null = null,
   ): Promise<CollectionTimelineBucket[]> {
     const parts = TIMELINE_SQL_PARTS[granularity];
 
     return this.query(
       `WITH bounds AS (
-         SELECT date_trunc('${parts.trunc}', ($2 || '-01')::date) AS d0,
-                date_trunc('${parts.trunc}', ($3 || '-01')::date) AS d1
+         SELECT date_trunc('${parts.trunc}', ($3 || '-01')::date) AS d0,
+                date_trunc('${parts.trunc}', ($4 || '-01')::date) AS d1
        ),
        periods AS (
          SELECT generate_series(b.d0, b.d1, '${parts.step}'::interval)
@@ -515,10 +575,11 @@ export class UserCollectionPurchaseRepository
        purchases AS (
          SELECT date_trunc('${parts.trunc}', ucp."purchasedOn") AS period,
                 COUNT(*)::int AS bottles,
-                COALESCE(SUM(ucp.price), 0)::float8 AS spent
+                COALESCE(SUM(${CONVERTED_PRICE_SQL}), 0)::float8 AS spent
          FROM user_collection_purchase ucp
          JOIN user_collection uc ON uc.id = ucp."collectionId"
          CROSS JOIN bounds b
+         ${FX_JOIN_SQL}
          WHERE uc."userId" = $1
            AND ucp."purchasedOn" >= b.d0
            AND ucp."purchasedOn" < b.d1 + '${parts.step}'::interval
@@ -530,7 +591,7 @@ export class UserCollectionPurchaseRepository
        FROM periods p
        LEFT JOIN purchases pu ON pu.period = p.period
        ORDER BY p.period`,
-      [userId, from, to],
+      [userId, currencyId, from, to],
     ) as Promise<CollectionTimelineBucket[]>;
   }
 

@@ -1,6 +1,6 @@
 import { IsEnum, IsOptional } from 'class-validator';
 
-import { IsoMonth } from '~decorators/fields';
+import { CurrencyCode, IsoMonth } from '~decorators/fields';
 import { CollectionTimelineGranularity } from '~enums';
 import type { CollectionStatsQuery } from '~types';
 
@@ -14,4 +14,7 @@ export class CollectionStatsQueryDto implements CollectionStatsQuery {
   @IsOptional()
   @IsEnum(CollectionTimelineGranularity)
   public granularity?: CollectionTimelineGranularity;
+
+  @CurrencyCode(true)
+  public currency?: string;
 }

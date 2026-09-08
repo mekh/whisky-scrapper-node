@@ -4,6 +4,7 @@ import {
   IsInt,
   IsNumber,
   IsOptional,
+  IsString,
   ValidateNested,
 } from 'class-validator';
 
@@ -17,6 +18,9 @@ import { CollectionStoreBucketType } from './collection-store-bucket.type.dto';
 import { CollectionTimelineType } from './collection-timeline.type.dto';
 
 export class CollectionStatsType implements CollectionStats {
+  @IsString()
+  public currency!: string;
+
   @IsInt()
   public items!: number;
 

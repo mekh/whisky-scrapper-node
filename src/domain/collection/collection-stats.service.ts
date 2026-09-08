@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
-import { COLLECTION_STATS_MAX_MONTHS } from '~constants';
+import { COLLECTION_STATS_MAX_MONTHS, DEFAULT_CURRENCY } from '~constants';
+import { CoreCurrencyService } from '~core/currency';
 import { CoreUserCollectionPurchaseService } from '~core/user-collection';
 import { CollectionTimelineGranularity } from '~enums';
 import { BadRequestError } from '~errors';
@@ -10,6 +11,24 @@ import type {
   CollectionStatsQuery,
   ID,
 } from '~types';
+
+/**
+ * The display currency every money field of a statistics response is stated
+ * in, resolved from the request's ISO code.
+ */
+interface ResolvedCurrency {
+  /**
+   * The code to echo back, upper-case. The base currency's code when the
+   * request named none.
+   */
+  code: string;
+
+  /**
+   * The currency row's id, to convert against, or null for the base
+   * currency — which applies no rate at all.
+   */
+  id: ID | null;
+}
 
 /**
  * A validated month range for the timeline, clamped to what the collection
@@ -41,6 +60,7 @@ interface ResolvedRange {
 export class CollectionStatsService {
   public constructor(
     private readonly purchases: CoreUserCollectionPurchaseService,
+    private readonly currencies: CoreCurrencyService,
   ) {}
 
   /**
@@ -54,15 +74,19 @@ export class CollectionStatsService {
    * together with `Promise.all`.
    *
    * @param userId - The authenticated user.
-   * @param query - The requested timeline range and bucket width.
-   * @returns The composed statistics.
-   * @throws {BadRequestError} When `to` is before `from`, or the requested
-   *   range spans more than {@link COLLECTION_STATS_MAX_MONTHS} months.
+   * @param query - The requested timeline range, bucket width and display
+   *   currency.
+   * @returns The composed statistics, every money field stated in the
+   *   resolved currency and that currency echoed back.
+   * @throws {BadRequestError} When `to` is before `from`, the requested
+   *   range spans more than {@link COLLECTION_STATS_MAX_MONTHS} months, or
+   *   the requested currency is not one prices may be displayed in.
    */
   public async getOwn(
     userId: ID,
     query: CollectionStatsQuery,
   ): Promise<CollectionStats> {
+    const currency = await this.resolveCurrency(query.currency);
     const bounds = await this.purchases.boundsForUser(userId);
     const range = this.resolveRange(query, bounds);
 
@@ -75,21 +99,23 @@ export class CollectionStatsService {
       byStore,
       buckets,
     ] = await Promise.all([
-      this.purchases.summaryForUser(userId),
-      this.purchases.mostExpensiveForUser(userId),
-      this.purchases.cheapestForUser(userId),
+      this.purchases.summaryForUser(userId, currency.id),
+      this.purchases.mostExpensiveForUser(userId, currency.id),
+      this.purchases.cheapestForUser(userId, currency.id),
       this.purchases.countByCountryForUser(userId),
       this.purchases.countByRegionForUser(userId),
-      this.purchases.countByStoreForUser(userId),
+      this.purchases.countByStoreForUser(userId, currency.id),
       this.purchases.timelineForUser(
         userId,
         range.from,
         range.to,
         range.granularity,
+        currency.id,
       ),
     ]);
 
     return {
+      currency: currency.code,
       ...summary,
       mostExpensive,
       cheapest,
@@ -104,6 +130,39 @@ export class CollectionStatsService {
       },
       bounds,
     };
+  }
+
+  /**
+   * Resolves the requested display currency to the row the aggregates convert
+   * against.
+   *
+   * The base currency resolves to a null id rather than to its own row: it
+   * has no rate against itself, so converting against it would mean joining a
+   * series that is empty by construction. An unknown or deactivated code is
+   * rejected instead of silently falling back to hryvnia — a client asking
+   * for dollars and being handed hryvnia numbers labelled `UAH` would look
+   * like a bug in the switch it just operated.
+   *
+   * @param code - The requested ISO 4217 code, already upper-cased by the
+   *   query DTO, or undefined for the base currency.
+   * @returns The code to echo and the id to convert against.
+   * @throws {BadRequestError} When the code names no active currency.
+   */
+  private async resolveCurrency(code?: string): Promise<ResolvedCurrency> {
+    const active = await this.currencies.findActive();
+    const base = active.find((currency) => currency.isBase);
+
+    if (code == null) {
+      return { code: base?.code ?? DEFAULT_CURRENCY, id: null };
+    }
+
+    const wanted = active.find((currency) => currency.code === code);
+
+    if (!wanted) {
+      throw new BadRequestError(`Unknown currency code: ${code}`);
+    }
+
+    return { code: wanted.code, id: wanted.isBase ? null : wanted.id };
   }
 
   /**

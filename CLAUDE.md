@@ -2044,7 +2044,7 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 | `DELETE /quick-filter/{id}` — delete one of the caller's sets                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | any logged-in user                           |
 | `GET /collection` — the caller's whole collection: each whisky with its purchases and its current offers (see "Collection")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | any logged-in user                           |
 | `GET /collection/ids` — `{productIds}`, the membership set the catalogues mark rows with                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | any logged-in user                           |
-| `GET /collection/stats?from&to&granularity=` — spend, averages, country/region/store breakdowns and the additions timeline                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | any logged-in user                           |
+| `GET /collection/stats?from&to&granularity=&currency=` — spend, averages, country/region/store breakdowns and the additions timeline, every money field stated in the requested currency at each purchase's own day rate                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | any logged-in user                           |
 | `POST /collection` `{productId, rating?, barcode?, notes?, nose?, palate?, finish?, purchase?}` — add a whisky, optionally with its first purchase, `200`; `409` when it is already there                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | any logged-in user                           |
 | `PATCH /collection/{id}`, `DELETE /collection/{id}` — edit the row's own fields and, in the same request, add/patch/remove its purchases; delete it and its purchases                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | any logged-in user                           |
 | `GET /product/search?q=&limit=` — lightweight autocomplete over the whole catalogue, one item per bottling; **ignores the caller's blacklist** (see "Catalogue search")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | any logged-in user                           |
@@ -2594,7 +2594,7 @@ collection row may hold **no** purchases at all: tasted at a bar, or a gift.
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /collection`        | The caller's whole collection, unpaginated — a personal list is hundreds of rows at most and the client sorts it. Each item is the row's own fields plus the bottling's (`name`, `nameOrig` fallback, `age`, `abv`, `volumeMl`, `brand`, `distillery`, `bottler`, `type`, `country*`, `region`, `flavors`), its `purchases` (oldest first) and its `offers` |
 | `GET /collection/ids`    | `{ productIds: string[] }` — the cheap membership set the catalogues join client-side                                                                                                                                                                                                                                                                       |
-| `GET /collection/stats`  | `?from=YYYY-MM&to=YYYY-MM&granularity=month\|year` — see below                                                                                                                                                                                                                                                                                              |
+| `GET /collection/stats`  | `?from=YYYY-MM&to=YYYY-MM&granularity=month\|year&currency=USD` — see below                                                                                                                                                                                                                                                                                 |
 | `POST /collection`       | `{productId, rating?, barcode?, notes?, nose?, palate?, finish?, purchase?}` → the created item, `200`. `409` when the product is already in the collection                                                                                                                                                                                                 |
 | `PATCH /collection/:id`  | `{rating?, clearRating?, barcode?, notes?, nose?, palate?, finish?, purchases?}` — the row's own fields plus `purchases: {add?, update?, remove?}`, one transaction; answers the updated item                                                                                                                                                               |
 | `DELETE /collection/:id` | `204`; the purchases cascade                                                                                                                                                                                                                                                                                                                                |
@@ -2618,6 +2618,21 @@ What a client must not guess:
 - **Membership is an id set, not a row flag.** `ReportRow` gained nothing;
   `GET /collection/ids` is joined client-side, mirroring how `GET /preference`
   already powers the favorites glass.
+- **Every purchase carries the rates of its own day** (2026-09-08):
+  `purchases[].rates` is one `{code, rate, effectiveOn}` entry per **active
+  non-base** currency, ordered by code, where `rate` is hryvnia per one unit
+  on the purchase day — the exact day or the most recent earlier one the
+  series holds, with `effectiveOn` naming which. Both are `null` for a bottle
+  bought before that currency's published history, and the entry is still
+  present, so a client can tell "not convertible" from "not asked about".
+  It rides on the purchase rather than being a lookup a client makes per
+  screen: a purchase date never changes and the National Bank never restates
+  a published rate, so switching the displayed currency must not cost a
+  re-read of the collection. The whole list costs **one** extra statement —
+  `CoreCurrencyService.probeRates` over the distinct `(code, day)` pairs, the
+  primitive `CurrencyConversionService.convertMany` is built on — because the
+  rate is a property of the day, not of the purchase, so twenty bottles
+  bought one afternoon resolve together.
 - **The server fills a purchase's price and shop from the offer it names.**
   When `purchase.storeProductId` is given and the price is absent, the price
   comes from that offer's current row; when neither store field is given, the
@@ -2666,14 +2681,38 @@ What a client must not guess:
   this was caught. Every other POST in this API already does the same.
 - All three reads are `private, no-cache`, like `/preference`.
 
-**`GET /collection/stats`** answers `items`, `bottles`, `pricedBottles`,
-`totalSpent`, `avgPrice`, `mostExpensive`/`cheapest` (a named purchase each),
-`byCountry`, `byRegion`, `byStore`, `timeline` and `bounds`. Details a client
-must not guess:
+**`GET /collection/stats`** answers `currency`, `items`, `bottles`,
+`pricedBottles`, `totalSpent`, `avgPrice`, `mostExpensive`/`cheapest` (a named
+purchase each), `byCountry`, `byRegion`, `byStore`, `timeline` and `bounds`.
+Details a client must not guess:
+
+- **`?currency=` converts every money field at each purchase's own day rate**,
+  and the resolved code is **echoed as `currency`** so a client switching
+  currencies labels the numbers it holds rather than the ones it asked for.
+  An absent parameter, or the base currency by name, applies no rate at all.
+  An unknown or deactivated code is a `400`, never a silent fall back to
+  hryvnia — a switch that answers in hryvnia while reporting dollars looks
+  like a bug in the switch. The conversion is server-side because these are
+  aggregates: no client can re-derive `totalSpent` in dollars from a hryvnia
+  total, since each purchase converts at a different day's rate. Amounts are
+  rounded to two decimals per purchase before being summed, so the total
+  agrees with the per-purchase figures the collection list shows.
+- **`mostExpensive`/`cheapest` are ranked by the converted amount.** The
+  dearest bottle in hryvnia is not always the dearest in dollars — the rate
+  moves between purchases — and answering with the hryvnia ranking merely
+  restated in dollars would be wrong rather than approximate.
+- **A purchase with no rate at or before its own day is excluded from every
+  money field _and_ from `pricedBottles`**, so `avgPrice` keeps agreeing with
+  `totalSpent / pricedBottles`. That is a bottle bought before the currency's
+  published history (USD begins 1996-01-06, EUR 1999-01-01); converting it at
+  the earliest rate that happens to exist would invent a number nobody
+  published. `bottles` and every `byCountry`/`byRegion` count are unaffected —
+  they count bottles, not money.
 
 - **The range narrows the timeline only.** KPIs and breakdowns describe the
   whole collection: "my collection" is the question being asked, and a
-  range-scoped total would disagree with the list on screen.
+  range-scoped total would disagree with the list on screen. `currency`, by
+  contrast, restates all of them.
 - **The timeline is dense.** Every period in the resolved range is present,
   zeros included, so a client draws the gaps rather than reconstructing them.
   `granularity` is `month` (default) or `year`; the resolved `from`/`to` are

@@ -1,5 +1,6 @@
 export { BoolQuery } from './bool-query.field.decorator';
 export { CsvArray } from './csv-array.field.decorator';
+export { CurrencyCode } from './currency-code.field.decorator';
 export { Email } from './emial.field.decorator';
 export { FilterPayload } from './filter-payload.field.decorator';
 export { GuidV7 } from './guid-v7.field.decorator';

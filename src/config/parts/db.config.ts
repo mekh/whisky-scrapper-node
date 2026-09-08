@@ -7,6 +7,9 @@ import {
   Max,
   Min,
 } from 'class-validator';
+
+import { DbQueryLogger } from '~lib/db-logger';
+
 import { BaseConfig } from '../base.config';
 
 const DEFAULT_POOL_SIZE = 10;
@@ -75,6 +78,15 @@ export class DbConfig extends BaseConfig {
   @IsBoolean()
   public readonly logging = this.asBoolean('DB_LOGGING') ?? false;
 
+  /**
+   * Whether a logged statement carries its bound parameters. Off in
+   * production, where those values are user data — see
+   * {@link DbQueryLogger} for why the flag has to exist at all.
+   */
+  @IsBoolean()
+  public readonly logParameters = this.asBoolean('DB_LOG_PARAMETERS')
+    ?? false;
+
   @IsInt()
   @IsPositive()
   @IsOptional()
@@ -119,4 +131,16 @@ export class DbConfig extends BaseConfig {
     keepAlive: true,
     keepAliveInitialDelayMillis: KEEP_ALIVE_INITIAL_DELAY_MS,
   };
+
+  /**
+   * The ORM's own logger. A field for the same reason {@link extra} is one:
+   * the config object is spread into the TypeORM options.
+   *
+   * Declared last because a class field initializer runs in declaration
+   * order and this one reads two fields above it. Supplying a logger at all
+   * is what keeps query parameters out of the log — see
+   * {@link DbQueryLogger}, which documents the TypeORM behaviour that makes
+   * it necessary.
+   */
+  public readonly logger = new DbQueryLogger(this.logging, this.logParameters);
 }

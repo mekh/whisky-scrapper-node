@@ -1,5 +1,6 @@
 export { ArrayUtils } from './array.utils';
 export { BrandUtils } from './brand.util';
+export { ClientIpUtils } from './client-ip.util';
 export { ConcurrencyPool } from './concurrency-pool.util';
 export { CurrencyUtils } from './currency.util';
 export { DashboardMetricsUtils } from './dashboard-metrics.util';

@@ -7,9 +7,17 @@ import {
   Logger,
 } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
-import { ServerError } from '~errors';
+import { HEADER_RATE_LIMIT_RETRY_MS, HEADER_RETRY_AFTER } from '~constants';
+import { ServerError, TooManyRequestsError } from '~errors';
+import type { Response } from '~types';
 
 import { ErrorBase } from '~errors/error.base';
+
+/**
+ * Milliseconds in a second, for rendering `Retry-After` in the whole seconds
+ * RFC 9110 requires of it.
+ */
+const MS_PER_SEC = 1000;
 
 @Catch()
 export class ExceptionFilter implements IExceptionFilter {
@@ -48,11 +56,43 @@ export class ExceptionFilter implements IExceptionFilter {
   handleHttp(error: unknown, host: ArgumentsHost, status: number): void {
     const ctx = host.switchToHttp();
 
+    this.setRetryAfter(error, ctx.getResponse<Response>());
+
     this.httpAdapterHost.httpAdapter.reply(
       ctx.getResponse(),
       this.getResponse(error),
       status,
     );
+  }
+
+  /**
+   * States the wait on a refusal that knows one.
+   *
+   * `UserRateLimitGuard` sets these headers itself before it throws, but the
+   * login ladder is not a guard — it refuses from inside the service, where
+   * there is no reply to write to — so this is what makes a `429` carry its
+   * delay wherever it was raised. The values are the same either way, so
+   * re-setting them for the guard's own refusal changes nothing.
+   *
+   * @param error - The error being answered.
+   * @param reply - The reply being built.
+   */
+  private setRetryAfter(error: unknown, reply: Response): void {
+    if (!(error instanceof TooManyRequestsError)) {
+      return;
+    }
+
+    const { retryAfterMs } = error.data as { retryAfterMs?: number } ?? {};
+
+    if (!retryAfterMs || retryAfterMs <= 0) {
+      return;
+    }
+
+    reply.header(
+      HEADER_RETRY_AFTER,
+      Math.max(1, Math.ceil(retryAfterMs / MS_PER_SEC)),
+    );
+    reply.header(HEADER_RATE_LIMIT_RETRY_MS, retryAfterMs);
   }
 
   private getResponse(error: unknown): string | object {

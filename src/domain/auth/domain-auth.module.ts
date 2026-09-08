@@ -7,7 +7,9 @@ import { ValkeyModule } from '~lib/valkey';
 
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { AuthThrottleInterceptor } from './interceptors';
 import { AuthSessionService } from './services/auth-session.service';
+import { AuthThrottleService } from './services/auth-throttle.service';
 import { AuthTokenService } from './services/auth-token.service';
 
 @Module({
@@ -29,6 +31,8 @@ import { AuthTokenService } from './services/auth-token.service';
     AuthService,
     AuthTokenService,
     AuthSessionService,
+    AuthThrottleService,
+    AuthThrottleInterceptor,
   ],
   exports: [
     AuthService,

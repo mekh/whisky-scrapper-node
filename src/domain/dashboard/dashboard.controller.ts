@@ -1,10 +1,9 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
 
-import { UserThrottlerGuard } from '~app/guards/user-throttler.guard';
 import { READ_CACHE_MAX_AGE_SECONDS } from '~constants';
-import { CacheControl } from '~decorators/http';
+import { CacheControl, RateLimit } from '~decorators/http';
 import { Plain } from '~decorators/types';
-import { Resource } from '~enums';
+import { RateLimitProfile, Resource } from '~enums';
 import type {
   DashboardBreakdown,
   DashboardMeta,
@@ -31,7 +30,7 @@ import {
 } from './types';
 
 @Controller('dashboard')
-@UseGuards(UserThrottlerGuard)
+@RateLimit(RateLimitProfile.HEAVY)
 export class DashboardController {
   public constructor(private readonly dashboardService: DashboardService) {}
 

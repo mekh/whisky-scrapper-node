@@ -342,9 +342,13 @@ export class UserCollectionPurchaseRepository
    * @param collectionId - Its owning collection row; a mismatch matches no
    *   row, so a foreign purchase can never be edited through this call.
    * @param values - The columns to change; an explicit `null` clears one.
-   * @returns True when a row was updated. An empty `values` object is a
-   *   no-op that returns true without issuing a statement — TypeORM rejects
-   *   an `UPDATE` with no columns to set.
+   * @returns True when the purchase belongs to the collection row, false
+   *   when the pair matches none. An empty `values` object writes nothing —
+   *   TypeORM rejects an `UPDATE` with no columns to set — but is still
+   *   answered from the row's own existence rather than assumed to have
+   *   succeeded: a patch entry naming only an id used to return true for
+   *   *any* purchase id, including one from another shelf, which reported a
+   *   `200` where the contract promises a `404`.
    */
   public async updateForCollection(
     id: ID,
@@ -352,7 +356,7 @@ export class UserCollectionPurchaseRepository
     values: CollectionPurchaseResolved,
   ): Promise<boolean> {
     if (!Object.keys(values).length) {
-      return true;
+      return this.existsBy({ id, collectionId });
     }
 
     const result = await this.update(

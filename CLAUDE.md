@@ -120,11 +120,12 @@ be/
 └── src/
     ├── app/                 # application layer: global cross-cutting concerns
     │   ├── app.module.ts    # root module: global guards/interceptors/filters/pipes
-    │   ├── context/         # request context (nestjs-cls): ClsService, ContextManager
+    │   ├── context/         # request context: ClsService, ContextManager, client-ip hook
     │   ├── filters/         # global exception filter
     │   ├── guards/          # AuthJwtGuard, PermissionGuard
     │   ├── interceptors/    # TimeoutInterceptor, LogInterceptor, ValidationInterceptor
-    │   └── middleware/      # RequestDeadlineMiddleware (runs before the guards)
+    │   ├── middleware/      # RequestDeadlineMiddleware (runs before the guards)
+    │   └── rate-limit/      # UserRateLimitGuard + RateLimitStore (token buckets)
     ├── config/              # env-driven config classes
     │   ├── base.config.ts   # BaseConfig: asString/asNumber/asBoolean/asEnum/asArray + self-validation
     │   ├── parts/           # one class per concern: app, db, jwt-access, logger, validation
@@ -152,6 +153,7 @@ be/
     ├── errors/              # ErrorBase + typed domain errors (*.error.ts)
     ├── interfaces/          # ALL shared interfaces/types (~types): *.interfaces.ts
     ├── lib/                 # thin wrappers around external infra packages
+    │   ├── db-logger/       # TypeORM logger that keeps query parameters out
     │   ├── logger/          # wraps @toxicoder/nestjs-pino (redaction, msg formatting)
     │   ├── valkey/          # wraps @toxicoder/nestjs-valkey (timeouts live here)
     │   ├── watchdog/        # runtime heartbeat: loop lag, memory, pool, cache RTT
@@ -1822,8 +1824,11 @@ has no rate against itself), `CURRENCY_RATE_CRON_ENABLED` (**true**, unlike
 (`30 16 * * *`), `CURRENCY_RATE_TIMEZONE` (`Europe/Kyiv`) and
 `CURRENCY_RATE_SYNC_WINDOW_DAYS` (7) — see "API contract" → "Currency rates".
 An unusable cron expression fails the boot, as the sync one does.
+Rate-limit vars in `RateLimitConfig` — `RATE_LIMIT_ENABLED` (**true**), `RATE_LIMIT_RPS` (3) / `RATE_LIMIT_BURST` (10) for the global per-caller cap, `RATE_LIMIT_HEAVY_RPS` (1) / `RATE_LIMIT_HEAVY_BURST` (60) for the report and dashboard reads, `RATE_LIMIT_STRICT_RPS` (1) / `RATE_LIMIT_STRICT_BURST` (3) for the collection reads, `RATE_LIMIT_AUTH_RPS` (1) / `RATE_LIMIT_AUTH_BURST` (5) for the two public auth routes, plus `RATE_LIMIT_MAX_KEYS` (10000) and `RATE_LIMIT_SWEEP_MS` (60000) bounding the bucket map — see "Rate limiting". They replace `THROTTLE_TTL_MS`/`THROTTLE_LIMIT`, which are gone with `@nestjs/throttler`.
+`APP_TRUSTED_IP_HEADERS` (`x-real-ip,x-forwarded-for`) and `APP_TRUST_PROXY` (**true**) decide which forwarding headers the client's address may be read from, and whether any may — see "Who the caller is".
+`DB_LOG_PARAMETERS` (default false) decides whether a logged statement carries its bound values; see "Logging".
 
-In production every `SYNC_*`/`PUSH_*`/`CURRENCY_*`/`NBU_*` var is forwarded from the host `.env` by
+In production every `SYNC_*`/`PUSH_*`/`CURRENCY_*`/`NBU_*`/`RATE_LIMIT_*` var is forwarded from the host `.env` by
 the `environment` block of `docker-compose.yaml` — compose reads `.env` only to
 interpolate `${...}` in that file, and the image carries no `.env` of its own
 (`.dockerignore` excludes it), so a var that is not listed there never reaches
@@ -1836,7 +1841,7 @@ Never throw Nest `HttpException` from business code. Throw typed errors from
 `~errors`, all extending `ErrorBase` with an `ErrorCodes` HTTP-status code:
 `BadRequestError` (400), `NotAuthenticatedError` (401), `NotAuthorizedError`
 (403), `NotFoundError` (404), `DuplicateError` (409), `ServerError` /
-`ConfigurationError` (500). The global `ExceptionFilter` maps them to HTTP
+`ConfigurationError` (500), `TooManyRequestsError` (429). The global `ExceptionFilter` maps them to HTTP
 responses; 5xx and unknown errors are logged at `error`, expected ones at
 `verbose`. To add a new error: create `src/errors/<name>.error.ts` extending
 `ErrorBase`, add the code to `ErrorCodes` if needed, re-export from the
@@ -1853,16 +1858,69 @@ barrel.
   DTOs must carry class-validator decorators and be class instances.
 - Reusable field rules belong in `~decorators/fields` composites, with limits
   in `~constants`.
+- **A date field validates the calendar, not just the shape.** `IsDateFormat(format)` (`~decorators/fields`) matches one of `YYYYMMDDHHMMSS` / `YYYYMMDD` / `YYYY-MM-DD` / `YYYY-MM` and then feeds the parts to `Date.UTC` and reads them back, so a value the calendar has to normalize is rejected. Extending it is one entry in its pattern table plus one member of `DateFormat`. `IsoDate` and `IsoMonth` are composites over it, which is what closed a `500`: a regex-only check accepted `2026-99-99` and `2026-02-30`, which reached Postgres as a `date` and failed there with SQLSTATE `22008`. Years under 100 are rejected as a side effect of the read-back, deliberately — Postgres has no year 0.
+- **A free-text field goes through `SafeText`, not a bare `@IsString()` + `@MaxLength()` pair.** It adds a control-character rejection (`\P{Cc}`, so the C1 block too), single-line by default and widened to tab/LF/CR with `multiline: true`. The load-bearing character is `U+0000`: JSON admits it inside a string and both of those validators accept it, but PostgreSQL cannot store a NUL in a `text` column and fails the statement with SQLSTATE `22021` — so a one-character request body turned a tasting note into a `500`. A one-line field additionally refuses a line break, which is how a value forges a second line in whatever renders it.
+- **A numeric field that reaches a `numeric` column needs a `@Max`.** `@IsNumber({ maxDecimalPlaces })` only inspects values with a fractional part, so `1e11` and even `1e21` pass it as integers and then overflow `numeric(12,2)` in Postgres with SQLSTATE `22003`. See `COLLECTION_PRICE_MAX`.
+- **An array field needs an `@ArrayMaxSize`**, and the bound is the request's bound rather than a nicety when the service applies the elements one statement at a time. See `COLLECTION_PURCHASES_MAX_PER_REQUEST`.
+
+## Rate limiting (2026-09-08)
+
+Per-caller request-rate limiting, `src/app/rate-limit/`: `UserRateLimitGuard` registered globally and `RateLimitStore` holding the buckets. It replaces `@nestjs/throttler` and the `UserThrottlerGuard` that sat on two controllers; the dependency is gone.
+
+- **Token buckets, not a fixed window.** A single-page client fans out on load — `/meta`, a report, `/preference`, `/collection/ids`, `/quick-filter` all leave at once — so "N requests per second" rejects half of a legitimate page load. A bucket with a burst allowance lets that spike through and still holds the sustained rate to `RATE_LIMIT_RPS`.
+- **Two levels, two buckets.** Every request pays the global rule, keyed by caller alone so it is a cap across the whole API rather than per route. A controller carrying `@RateLimit(profile)` (`~decorators/http`) additionally pays that profile's bucket, keyed by the controller. The buckets are separate on purpose: a tightened controller must not spend the caller's allowance for the rest of the API, nor have its own spent by it. Two profiles exist — `HEAVY` on `/report` and `/dashboard` (60 spendable at once, 1/s sustained, the old `THROTTLE_*` budget restated) and `STRICT` on `/collection`.
+- **Guard order is load-bearing** and `app.module.ts` says so: `AuthJwtGuard` → `UserRateLimitGuard` → `PermissionGuard`. Running after auth is what makes the bucket the _account_ rather than the address, so a second browser or a new network buys nothing; running before the permission guard means a refused request is refused before any permission work is done for it.
+- **The gap that follows from that order**: a request `AuthJwtGuard` rejects — an expired or forged token — never reaches the limiter and is never counted. Bounding that flood is the reverse proxy's job. What this guard bounds is what an account can make the database do.
+- **An anonymous caller is keyed by the address `ClientIpUtils` resolved** — see "Who the caller is" below, which is the one place that rule lives.
+- **The two routes that key governs carry two more limits of their own**: the `AUTH` profile above them, and `AuthThrottleService`'s progressive ladder inside the login handler (see "The login ladder"). `nginx.conf` adds a third at the edge, `limit_req zone=whisky_auth` (10r/m, burst 8, keyed on `$binary_remote_addr`) on `= /api/auth/login` and `= /api/auth/refresh`, the only `Resource.PUBLIC` handlers. Everything else 401s in `AuthJwtGuard` before the limiter sees it, so the anonymous bucket becomes load-bearing on its own only if a public route is ever added that falls through to `location /api/`, which carries no `limit_req`.
+
+## Who the caller is (2026-09-08)
+
+One request, one answer: `registerClientIpHook` (`app/context/`) resolves the client's address in a Fastify `onRequest` hook and writes it to `req.ctx.ip`, and `@ReqIp()`, the session records, the rate limiter and the login ladder all read that. Nothing resolves it a second time.
+
+There used to be three answers, and two of them were wrong. The CLS setup took the first of four headers **raw** — and two of those, `x-client-ip` and `cf-connecting-ip`, are set by nothing in this stack and stripped by nothing either, so a caller could put any address it liked into its own session record. `HttpContextManager.ip` ignored the headers altogether and answered the proxy's address. The rate limiter had its own copy again.
+
+- **The header order is a trust order, and it is configuration, not code.** `APP_TRUSTED_IP_HEADERS` defaults to `x-real-ip,x-forwarded-for` — exactly what `web/scripts/nginx.conf` sets — and takes `cf-connecting-ip` at its head for a deployment that really is behind Cloudflare. Which is a deployment fact this repository cannot know, so it does not guess. `APP_TRUST_PROXY=false` disables header resolution entirely, for a process reachable without a proxy, where every one of those headers is plain client input; it is a separate flag rather than an empty list because compose forwards an omitted host var as an empty string, so an empty value cannot be told from an unset one.
+- **Only the last hop of a header is read**, and that is the load-bearing line. nginx sets `X-Real-IP $remote_addr`, which **replaces** whatever arrived — trustworthy whole. It sets `X-Forwarded-For $proxy_add_x_forwarded_for`, which **appends**: a client sending `X-Forwarded-For: 1.2.3.4` produces `1.2.3.4, <real peer>`, so the head of that chain is an attacker-chosen string and only the tail is the address nginx accepted. Reading the header raw, or its first entry, would let one caller choose its own identity per request — no limit keyed on it would bound anything, and the limiter's bucket map would grow on demand. A replace-style header has a single hop, so the same rule returns it unchanged.
+- **A Fastify hook, not Nest middleware**, and this cost a debugging round: on Fastify, Nest middleware runs through `middie` and is handed the raw `IncomingMessage`, while guards and param decorators are handed the Fastify `Request` wrapping it. Writing `ctx` on the former leaves the latter untouched, so the resolved address silently never arrived and every caller shared the proxy's bucket. Fastify's own `trustProxy` stays off: `req.ip` is then the proxy's address and serves as the last fallback.
+
+## The login ladder (2026-09-08)
+
+`AuthThrottleService` (`domain/auth/services/`): five failed logins buy a wait, and each wait is longer than the last — 5 s, 10 s, 60 s, 300 s, 900 s, 3600 s, then 3600 s for as long as it takes. After each wait another five attempts are granted. Every attempt is additionally held to one per second.
+
+- **It counts failures, not attempts, and a success clears the state.** The spec is "five attempts"; taken literally it would climb under ordinary use — five logins across a person's devices and the sixth waits five seconds, then ten, then a minute. The one-per-second spacing _is_ applied to every attempt, since nothing legitimate submits a login form twice in one second.
+- **It is driven by `AuthThrottleInterceptor`, not by the service and not by a guard.** An interceptor is the only hook that sees both halves: its pre-handler phase runs before the controller and therefore before the Argon2 verification — a check that ran afterwards would leave every guess's CPU time payable — and its post-handler phase sees what the handler answered, which is what a guard cannot see at all. `AuthService.login` is back to knowing nothing about throttling.
+- **A failure is `NotAuthenticatedError` and nothing else**, which is the one coupling the move introduced. On the login path that error has exactly one source, the branch where the password does not verify: a deactivated account answers `NotAuthorizedError` (the password was right, so it is no guess) and `AuthTokenService` raises it only from `verify()`, which login never calls. Adding another `NotAuthenticatedError` throw to this path would silently start counting it — the thing to keep in mind when editing the login flow.
+- **Pipes run after interceptors**, so a request with a malformed body reaches the throttle before validation rejects it: it counts toward the one-per-second spacing and never as a failed guess. Verified against a live server, along with each rung of the ladder.
+- **State is in Valkey**, keyed by the resolved client address, with a two-hour retention that outlasts the longest penalty — a penalty meant to last an hour is worth little if a deploy clears it. Every cache failure is **fail-open**: a cache that cannot answer must not become one that refuses every login. That is the right way round because it is not the only defence — the `AUTH` rate-limit profile and nginx's own `limit_req` both still apply.
+- **Keyed by address only, deliberately not by account.** A per-account ladder is a way to lock a real user out on purpose; per-address is also what the edge `limit_req` keys on. The cost is that a distributed attack on one account is slowed only by the flat limits.
+- **A refusal states its wait.** `TooManyRequestsError` carries `retryAfterMs`, and `ExceptionFilter` turns that into `Retry-After` plus `X-RateLimit-Retry-After-Ms` — the guard sets those itself, but the ladder refuses from inside a service where there is no reply to write to. The message names the delay in seconds. `../web`'s fetch mutator **does not** auto-retry a login `429` (`NO_RETRY_PATHS`): a silent retry would spend another of the person's attempts on the same wrong password and delay the message telling them to wait.
+- **Every answer states the standing**, not just a refusal: `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` on each response, and on a `429` also `Retry-After` (whole seconds, as RFC 9110 requires) plus `X-RateLimit-Retry-After-Ms`. The millisecond header exists because these limits are sub-second and rounding a 340 ms refill up to a second is most of a page load spent idle. `../web`'s fetch mutator reads it, waits, and retries — see "The client's half" below.
+- **Memory is bounded two ways**, which the library implementation was not: a bucket that has refilled to capacity carries no information and is swept (lazily, on a charge, never on a timer), and past `RATE_LIMIT_MAX_KEYS` the least recently charged bucket is dropped with a warning. Both matter because an anonymous caller is keyed by address, and a map keyed by attacker-chosen strings with no ceiling is itself a way to exhaust the process.
+- **In-process is deliberate**: the API runs as a single container — the sync lock's boot sweep already relies on that — so a shared store would add a network hop to a decision made before anything else on the request path. `RateLimitStore` is the one place that changes if the process is ever scaled out.
+- **The client's half** (`web/src/shared/api/fetcher.ts`): a `429` is waited out and retried, up to three attempts, preferring the millisecond header and falling back to `Retry-After` and then to a 1 s default — never to zero, or a 429 becomes a hot retry loop. The back-off stamp is **shared by every request**, so a burst of parallel 429s becomes one pause instead of a thundering retry, and a little jitter keeps the released requests from arriving together. Retrying is safe for any method: a 429 is refused by the guard before the handler runs, so nothing happened that a retry could duplicate.
 
 ## Logging
 
 Use Nest's `Logger` with a class-name context:
 `private readonly logger = new Logger(MyService.name);`. Messages use
 printf-style interpolation (`%s`, `%d`, `%o` for objects) — pino renders
-them. Secrets (passwords, tokens) are redacted by `LoggerModule` config; keep
-new secret-bearing paths in that redact list. Levels in practice: `error` for
+them. Levels in practice: `error` for
 unexpected failures, `debug` for request-level info, `verbose` for payload
 dumps.
+
+### Redaction — the standing rule
+
+**Adding a log call that carries an object, or a field to a DTO whose body is logged, means checking `LOG_REDACT_PATHS` (`~constants/logging.constants.ts`) and adding the path if the value is a credential.** The list is the single place secrets are kept out of the log, `LoggerModule` is its only consumer, and every entry there carries a note saying which call site it covers. There is no second mechanism to keep in step.
+
+What redaction reaches, **verified rather than assumed**: pino censors the properties of a logged object _and_ the properties of an object interpolated into the message with `%o`. The second half is the one worth knowing, because almost every call site here is the interpolated kind — the `logMethod` hook in `LoggerModule` renders a `%o` argument into `msg` — so a path like `body.password` that looks dead is live. Paths are matched against the object they are given, which is why the list holds `body.password` (the request dump `LogInterceptor` writes as `{ body, query, params, url, method }`) and a bare `accessToken` (the CLS meta object `ClsService` logs whole). `test/logger-redact.spec.ts` pins that property of pino together with every path, so a pino upgrade that changed it would fail rather than quietly stop protecting anything.
+
+What redaction **cannot** reach is a value already inside a string. Two consequences:
+
+- **`DbQueryLogger` (`lib/db-logger/`) exists for that reason.** TypeORM appends `-- PARAMETERS: [...]` to the statement text itself, so no path can censor it — and `AbstractLogger.isLogEnabledFor('query-slow')` returns `true` **unconditionally**, so before this logger existed every query slower than `DB_SLOW_QUERY_MS` (2500 ms in production) printed its bound values to stdout whatever `DB_LOGGING` said. `DbConfig` now supplies this logger, which routes the ORM's events through the application logger and drops the parameters; `DB_LOG_PARAMETERS=true` brings them back for local work, where the data is not real. The statement text, its shape and its duration — what a slow-query line is actually read for — are unchanged.
+- A value interpolated with `%s` is prose too. `logger.warn('failed for %s', slug)` is fine; `logger.warn('failed for %s', accessToken)` cannot be redacted at all.
+
+Two paths are worth knowing about individually because they fire at the **production** log level, unlike the `debug`/`verbose` request dumps: `err.parameters`, since a TypeORM `QueryFailedError` carries the failed statement's bound values and the global exception filter logs the error whole, and `err.driverError.detail`, since PostgreSQL echoes the offending values into a constraint violation's detail line (`Key (email)=(...) already exists`). `err.query` and `err.driverError.constraint` stay visible on purpose — they are what debugging such a failure needs, and neither carries data of its own.
 
 ## Resilience and observability (2026-08-30)
 
@@ -1981,16 +2039,17 @@ Conventions that hold everywhere:
 - Report defaults (`minPrice`, `maxPrice`, `NEW_DAYS`, …) are fixed server
   constants in `~constants/report.constants.ts`; an unset filter simply means
   "no constraint".
+- **Every endpoint is rate-limited per caller, and every response says where the caller stands.** `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` ride on each answer; a `429` carries `Retry-After` (whole seconds) and `X-RateLimit-Retry-After-Ms` (precise, and the one to prefer — the limits are sub-second). A `429` is refused before the handler runs, so nothing happened and any method is safe to retry after the stated delay. Sustained budget: 3 requests per second per account with 10 spendable at once, tightened to 1/s on `/collection` (3 at once) and to a 60-at-once budget on `/report` and `/dashboard`. See "Rate limiting".
 
 ### Auth endpoints
 
-| Endpoint                                                           | Notes                                                                                                                                                                                   |
-| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /auth/login` `{login,password}` → `{access}` + cookie        | Response key is `access`. Cookie is `refresh`, HttpOnly, `sameSite=strict`, `path=/`. Imported (pbkdf2) users log in with old passwords; the hash is upgraded to Argon2 on first login. |
-| `POST /auth/refresh` (refresh cookie) → `{access}`                 | Rotates the refresh cookie.                                                                                                                                                             |
-| `POST /auth/logout`                                                | Revokes the session. `204`.                                                                                                                                                             |
-| `GET /auth/me` → `{id, sid, admin}`                                | Current user from the token.                                                                                                                                                            |
-| `GET /auth/session[/:userId]`, `DELETE /auth/session/:userId/:sid` | Session listing / revocation.                                                                                                                                                           |
+| Endpoint                                                           | Notes                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /auth/login` `{login,password}` → `{access}` + cookie        | Response key is `access`. Cookie is `refresh`, HttpOnly, `sameSite=strict`, `path=/`. Imported (pbkdf2) users log in with old passwords; the hash is upgraded to Argon2 on first login. **`429` after five failed attempts**, then again after each of 5/10/60/300/900/3600 s — plus one attempt per second throughout. `Retry-After` names the wait; a success clears it. See "The login ladder" |
+| `POST /auth/refresh` (refresh cookie) → `{access}`                 | Rotates the refresh cookie.                                                                                                                                                                                                                                                                                                                                                                       |
+| `POST /auth/logout`                                                | Revokes the session. `204`.                                                                                                                                                                                                                                                                                                                                                                       |
+| `GET /auth/me` → `{id, sid, admin}`                                | Current user from the token.                                                                                                                                                                                                                                                                                                                                                                      |
+| `GET /auth/session[/:userId]`, `DELETE /auth/session/:userId/:sid` | Session listing / revocation.                                                                                                                                                                                                                                                                                                                                                                     |
 
 Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 (space-separated `resource:action`). Admins bypass scope checks.
@@ -2643,6 +2702,7 @@ What a client must not guess:
   ours (joinable, colourable); `storeName` is the user's own free text (a duty
   free, a bar, «подарунок»). Sending both is `400`; a CHECK constraint is the
   backstop. `clearStore` removes whichever it was.
+- **What a purchase and a note may contain** (2026-09-08): a `price` is capped at `COLLECTION_PRICE_MAX` (10 000 000) — without an upper bound `1e11` passed `@IsNumber` as an integer and overflowed `numeric(12,2)` in Postgres as a `500`; a `purchasedOn` must name a day that exists, so `2026-02-30` is a `400` rather than a `500` from the `date` cast; and the four prose fields plus a free-text `storeName` reject control characters, `U+0000` above all, which PostgreSQL cannot store in a `text` column at all. See "Validation".
 - **Clearing is spelled two ways, deliberately.** A text field clears by being
   sent empty (`""` — an emptied tasting note is a real edit, the `producer.note`
   convention); `rating` and a purchase's `price` have no such spelling, so they
@@ -2662,6 +2722,8 @@ What a client must not guess:
   routes (`POST /collection/:id/purchase`, `PATCH`/`DELETE
   /collection/:id/purchase/:purchaseId`) were folded into this one on
   2026-09-07 and no longer exist.
+  **Each group is capped at `COLLECTION_PURCHASES_MAX_PER_REQUEST` (10), and that cap is the request's bound** (2026-09-08): the three groups are applied one statement at a time inside one transaction, and every field of a purchase is optional — so `{}` is a valid addition three bytes long, and Fastify's default 1 MiB body bought ~350 000 inserts on one pooled connection, with `DB_POOL_SIZE` such requests enough to stall every other request in the process. Ten is what an edit screen can produce.
+  **An `update` entry naming only an id is a `404` for a foreign purchase**, not a `200` (2026-09-08). Such a patch writes nothing — TypeORM rejects an `UPDATE` with no columns to set — and the repository used to answer "updated" for it without looking, so the promise below that a purchase from another shelf is unreachable held for every patch except the empty one.
 - **Mutations answer the affected item, not the caller's whole list** —
   deliberately unlike `/preference` and `/quick-filter`, whose payloads are id
   sets. A collection list is hundreds of joined, priced rows, and re-pricing all
@@ -2830,8 +2892,8 @@ overhaul).
 
 ## Current state / known gaps
 
-The project builds, `tsc`/`eslint` are clean, and 927 unit tests (72 suites)
-plus 175 integration tests (17 suites, live Postgres) pass. Done:
+The project builds, `tsc`/`eslint` are clean, and 1084 unit tests (82 suites)
+plus 187 integration tests (18 suites, live Postgres) pass. Done:
 
 - **Auth works end-to-end.** `domain/auth` (login/refresh/logout/me/sessions)
   is fully implemented with Valkey-backed sessions and a self-describing

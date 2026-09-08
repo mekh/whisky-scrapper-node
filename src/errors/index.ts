@@ -6,3 +6,4 @@ export { NotAuthorizedError } from './not-authorized.error';
 export { NotFoundError } from './not-found.error';
 export { ServerError } from './server.error';
 export { ServiceUnavailableError } from './service-unavailable.error';
+export { TooManyRequestsError } from './too-many-requests.error';

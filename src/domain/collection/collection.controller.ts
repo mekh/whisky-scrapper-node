@@ -12,10 +12,10 @@ import {
 } from '@nestjs/common';
 
 import { CurrentUser, Permission } from '~decorators/auth';
-import { CacheControl } from '~decorators/http';
+import { CacheControl, RateLimit } from '~decorators/http';
 import { Plain } from '~decorators/types';
 import { ByIdDto } from '~domain/common/dto';
-import { Resource } from '~enums';
+import { RateLimitProfile, Resource } from '~enums';
 import type {
   CollectionIds,
   CollectionItem,
@@ -59,8 +59,15 @@ import {
  * request and one transaction. Three per-purchase routes existed before and
  * were folded in when every client turned out to save the row and its
  * purchases together.
+ *
+ * `@RateLimit(STRICT)` covers the whole controller, not one handler: the
+ * reads here are the API's densest per request — `GET /collection/stats`
+ * alone is seven aggregate queries over every purchase the caller owns —
+ * so the budget is a statement about the feature rather than about each of
+ * its endpoints in isolation.
  */
 @Controller('collection')
+@RateLimit(RateLimitProfile.STRICT)
 export class CollectionController {
   public constructor(
     private readonly collection: CollectionService,

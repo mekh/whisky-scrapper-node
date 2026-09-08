@@ -10,6 +10,7 @@ import { LogFn, Logger } from 'pino';
 
 import { ClsService } from '~app/context';
 import { LoggerConfig } from '~config';
+import { LOG_CENSOR, LOG_REDACT_PATHS } from '~constants';
 
 interface Config {
   dbLogging?: boolean;
@@ -56,19 +57,14 @@ export class LoggerModule {
       ...baseConfig,
       // eslint-disable-next-line @typescript-eslint/unbound-method
       hooks: { logMethod: this.logMethod },
+      /**
+       * Applies only to properties of the log record — see
+       * {@link LOG_REDACT_PATHS}, which documents what that reaches and
+       * what has to be scrubbed at the call site instead.
+       */
       redact: {
-        paths: [
-          'password',
-          'body.password',
-          'token',
-          'accessToken',
-          'access.token',
-          'refreshToken',
-          'refresh.token',
-          'meta.accessToken',
-          'meta.refreshToken',
-        ],
-        censor: '***',
+        paths: LOG_REDACT_PATHS,
+        censor: LOG_CENSOR,
       },
     });
   }

@@ -10,6 +10,8 @@ import {
   Min,
 } from 'class-validator';
 
+import { DEFAULT_TRUSTED_IP_HEADERS } from '~constants';
+
 import { BaseConfig } from '../base.config';
 
 type Loglevel = 'error' | 'warn' | 'info' | 'debug' | 'trace';
@@ -107,11 +109,35 @@ export class AppConfig extends BaseConfig {
     this.asNumber('APP_KEEP_ALIVE_TIMEOUT_MS')
       ?? DEFAULT_KEEP_ALIVE_TIMEOUT_MS;
 
-  @IsInt()
-  @IsPositive()
-  public readonly throttleTtlMs = this.asNumber('THROTTLE_TTL_MS') ?? 60000;
+  /**
+   * Forwarding headers the client address may be read from, in order of
+   * trust, lower-cased to match what Fastify hands over. A deployment fact,
+   * not a code constant: put `cf-connecting-ip` at the head when Cloudflare
+   * is in front, and leave the default alone for plain nginx.
+   *
+   * `APP_TRUST_PROXY=false` is what disables header resolution, rather than
+   * an empty list: compose forwards an omitted host var as an empty string,
+   * so an empty value cannot be told from an unset one and has to keep
+   * meaning "use the default" — the same trap `nonEmpty` exists for.
+   */
+  @IsArray()
+  @IsString({ each: true })
+  public readonly trustedIpHeaders = (
+    this.asArray('APP_TRUSTED_IP_HEADERS') ?? DEFAULT_TRUSTED_IP_HEADERS
+  )
+    .map((header) => header.trim().toLowerCase())
+    .filter((header) => header.length > 0);
 
-  @IsInt()
-  @IsPositive()
-  public readonly throttleLimit = this.asNumber('THROTTLE_LIMIT') ?? 60;
+  @IsBoolean()
+  public readonly trustProxy = this.asBoolean('APP_TRUST_PROXY') ?? true;
+
+  /**
+   * The headers `ClientIpUtils` should actually consult: the configured
+   * order, or nothing at all when no proxy is trusted.
+   *
+   * @returns Header names in order of trust; empty when none may be read.
+   */
+  public get clientIpHeaders(): readonly string[] {
+    return this.trustProxy ? this.trustedIpHeaders : [];
+  }
 }

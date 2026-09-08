@@ -1,11 +1,10 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 
-import { UserThrottlerGuard } from '~app/guards/user-throttler.guard';
 import { DEFAULT_PER_PAGE, READ_CACHE_MAX_AGE_SECONDS } from '~constants';
 import { CurrentUser } from '~decorators/auth';
-import { CacheControl } from '~decorators/http';
+import { CacheControl, RateLimit } from '~decorators/http';
 import { Paginated, Plain } from '~decorators/types';
-import { ReportWindow, Resource, SortOrder } from '~enums';
+import { RateLimitProfile, ReportWindow, Resource, SortOrder } from '~enums';
 import type {
   CtxUser,
   PriceHistory,
@@ -20,7 +19,7 @@ import { ReportService } from './report.service';
 import { PriceHistoryType, ReportGroupType } from './types';
 
 @Controller('report')
-@UseGuards(UserThrottlerGuard)
+@RateLimit(RateLimitProfile.HEAVY)
 export class ReportController {
   public constructor(private readonly reportService: ReportService) {}
 

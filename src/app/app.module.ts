@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
-import { ThrottlerModule, ThrottlerModuleOptions } from '@nestjs/throttler';
 import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { ClsMiddleware } from 'nestjs-cls';
 import { DataSource, DataSourceOptions } from 'typeorm';
@@ -15,7 +14,7 @@ import {
   getDataSourceByName,
 } from 'typeorm-transactional';
 
-import { AppConfig, ConfigModule, DbConfig, ValidationConfig } from '~config';
+import { ConfigModule, DbConfig, ValidationConfig } from '~config';
 import { DomainAuthModule } from '~domain/auth';
 import { DomainBrandModule } from '~domain/brand';
 import { DomainCollectionModule } from '~domain/collection';
@@ -46,6 +45,7 @@ import {
   ValidationInterceptor,
 } from './interceptors';
 import { RequestDeadlineMiddleware } from './middleware';
+import { RateLimitModule, UserRateLimitGuard } from './rate-limit';
 
 @Module({
   imports: [
@@ -59,26 +59,10 @@ import { RequestDeadlineMiddleware } from './middleware';
      */
     ScheduleModule.forRoot(),
     /**
-     * Per-user rate limiting for the heavy read endpoints. The default
-     * throttler is applied only where `UserThrottlerGuard` is used (report and
-     * dashboard controllers), keyed on the authenticated user id.
+     * Per-caller request-rate limiting. Provides the guard registered below
+     * and the single store that holds the live buckets.
      */
-    ThrottlerModule.forRootAsync({
-      imports: [
-        ConfigModule,
-      ],
-      inject: [
-        AppConfig,
-      ],
-      useFactory: (config: AppConfig): ThrottlerModuleOptions => ({
-        throttlers: [
-          {
-            ttl: config.throttleTtlMs,
-            limit: config.throttleLimit,
-          },
-        ],
-      }),
-    }),
+    RateLimitModule,
     TypeOrmModule.forRootAsync({
       imports: [
         ConfigModule,
@@ -120,9 +104,21 @@ import { RequestDeadlineMiddleware } from './middleware';
     WatchdogModule,
   ],
   providers: [
+    /**
+     * Guard order is registration order, and all three of these depend on
+     * it. `AuthJwtGuard` runs first because it is what puts the caller on
+     * the request context; the rate limiter runs next, so its bucket is the
+     * account rather than the address, and so a refused request is refused
+     * before any permission work is done for it; `PermissionGuard` runs
+     * last, on a request that has proven it is allowed to ask this often.
+     */
     {
       provide: APP_GUARD,
       useClass: AuthJwtGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useExisting: UserRateLimitGuard,
     },
     {
       provide: APP_GUARD,

@@ -39,3 +39,27 @@ export const COLLECTION_BARCODE_PATTERN = /^\d{8,14}$/;
  * typo rather than a question.
  */
 export const COLLECTION_STATS_MAX_MONTHS = 600;
+
+/**
+ * Highest price a single purchase may state, in the currency it was bought
+ * in. The column is `numeric(12,2)`, so anything above 9 999 999 999.99
+ * fails in Postgres with SQLSTATE `22003` — and `@IsNumber` cannot catch it,
+ * because its `maxDecimalPlaces` check only looks at values with a
+ * fractional part, so `1e11` and even `1e21` sail through as integers. Ten
+ * million is far under that ceiling and far above any bottle: the point is
+ * to answer a nonsense number with a `400` instead of a logged `500`.
+ */
+export const COLLECTION_PRICE_MAX = 10_000_000;
+
+/**
+ * How many purchases one `PATCH /collection/:id` may add, patch or remove
+ * per group.
+ *
+ * The cap is what bounds the request: the three groups are applied one
+ * statement at a time inside a single transaction, and every field of a
+ * purchase is optional — so `{}` is a valid addition three bytes long, and
+ * Fastify's default 1 MiB body would otherwise buy ~350 000 inserts on one
+ * connection in one transaction. Ten is what an edit screen can produce;
+ * nothing legitimate sends more.
+ */
+export const COLLECTION_PURCHASES_MAX_PER_REQUEST = 10;

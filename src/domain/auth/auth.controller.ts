@@ -9,14 +9,15 @@ import {
   Post,
   Query,
   Res,
+  UseInterceptors,
 } from '@nestjs/common';
 
 import { AuthConfig } from '~config';
 import { HEADER_REFRESH_COOKIE } from '~constants';
 import { CurrentUser, Permission, RefreshToken } from '~decorators/auth';
-import { ReqIp, ReqUA } from '~decorators/http';
+import { RateLimit, ReqIp, ReqUA } from '~decorators/http';
 import { Paginated, Plain } from '~decorators/types';
-import { Action, Resource } from '~enums';
+import { Action, RateLimitProfile, Resource } from '~enums';
 import type {
   AuthTokens,
   CookieOptions,
@@ -34,6 +35,7 @@ import {
   SessionParamsDto,
   SessionQueryDto,
 } from './dto';
+import { AuthThrottleInterceptor } from './interceptors';
 import { AccessToken, Me, Session } from './types';
 
 const isSelf = (ctx: CtxManager): boolean => {
@@ -52,6 +54,8 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
+  @UseInterceptors(AuthThrottleInterceptor)
+  @RateLimit(RateLimitProfile.AUTH)
   @Plain(AccessToken, Resource.PUBLIC)
   public async login(
     @Body() data: AuthLoginDto,
@@ -73,6 +77,7 @@ export class AuthController {
 
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
+  @RateLimit(RateLimitProfile.AUTH)
   @Plain(AccessToken, Resource.PUBLIC)
   public async refresh(
     @RefreshToken() refreshToken: string,

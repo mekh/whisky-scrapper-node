@@ -739,6 +739,38 @@ describe('personal collection (integration)', () => {
   );
 
   it(
+    "answers an empty purchase patch from the purchase's own row",
+    async () => {
+      const purchaseId = await purchases.createForCollection(
+        mainCollectionId,
+        { price: 500 },
+      );
+
+      /**
+       * The regression this pins. An empty patch writes nothing — TypeORM
+       * rejects an `UPDATE` with no columns to set — and the repository used
+       * to answer `true` for it without looking, so a `purchases.update`
+       * entry naming only an id reported success for *any* purchase id,
+       * including one from another shelf. The contract promises a `404`
+       * there, and a client reading `200` learns the id exists.
+       */
+      await expect(
+        purchases.updateForCollection(mainCollectionId, purchaseId, {}),
+      ).resolves.toBeUndefined();
+
+      await expect(
+        purchases.updateForCollection(noOfferCollectionId, purchaseId, {}),
+      ).rejects.toThrow(/Purchase not found/);
+
+      await expect(
+        purchases.updateForCollection(mainCollectionId, mainCollectionId, {}),
+      ).rejects.toThrow(/Purchase not found/);
+
+      await purchases.deleteForCollection(mainCollectionId, purchaseId);
+    },
+  );
+
+  it(
     'cascades a collection delete to its purchases, a user delete to '
       + "their collection rows, and nulls a purchase's store when the "
       + 'store is deleted',

@@ -7,6 +7,7 @@ import { DbConfig } from './parts/db.config';
 import { JwtAccessConfig } from './parts/jwt-access.config';
 import { LoggerConfig } from './parts/logger.config';
 import { PushConfig } from './parts/push.config';
+import { RateLimitConfig } from './parts/rate-limit.config';
 import { ScrapeConfig } from './parts/scrape.config';
 import { SyncConfig } from './parts/sync.config';
 import { ValidationConfig } from './parts/validation.config';
@@ -21,6 +22,7 @@ const providers = [
   JwtAccessConfig,
   LoggerConfig,
   PushConfig,
+  RateLimitConfig,
   ScrapeConfig,
   SyncConfig,
   ValidationConfig,

@@ -41,6 +41,20 @@ export class AuthService {
     private readonly users: CoreUserService,
   ) {}
 
+  /**
+   * Verifies credentials and opens a session.
+   *
+   * Knows nothing about the progressive attempt throttle: that is a
+   * cross-cutting concern and lives in `AuthThrottleInterceptor`, which
+   * refuses ahead of this method and reads its outcome from what it throws.
+   * The one thing this method owes it is the distinction below — a wrong
+   * password is a `NotAuthenticatedError` and a deactivated account is not.
+   *
+   * @param input - Credentials plus the caller's address and user agent.
+   * @returns A fresh access/refresh pair.
+   * @throws {NotAuthenticatedError} When the login or password is wrong.
+   * @throws {NotAuthorizedError} When the account is deactivated.
+   */
   public async login(input: AuthLoginInput): Promise<AuthTokens> {
     const { login, password, ip, userAgent } = input;
     const isEmail = login.indexOf('@') >= 1;

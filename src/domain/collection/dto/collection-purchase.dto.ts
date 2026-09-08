@@ -1,18 +1,12 @@
-import {
-  IsNotEmpty,
-  IsNumber,
-  IsOptional,
-  IsString,
-  MaxLength,
-  Min,
-} from 'class-validator';
+import { IsNumber, IsOptional, Max, Min } from 'class-validator';
 
 import {
+  COLLECTION_PRICE_MAX,
   PRICE_SCALE,
   STORE_NAME_MAX_LENGTH,
   STORE_SLUG_MAX_LENGTH,
 } from '~constants';
-import { GuidV7, IsoDate } from '~decorators/fields';
+import { GuidV7, IsoDate, SafeText } from '~decorators/fields';
 import type { CollectionPurchaseInput, ID } from '~types';
 
 export class CollectionPurchaseDto implements CollectionPurchaseInput {
@@ -22,17 +16,17 @@ export class CollectionPurchaseDto implements CollectionPurchaseInput {
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: PRICE_SCALE })
   @Min(0)
+  @Max(COLLECTION_PRICE_MAX)
   public price?: number;
 
-  @IsOptional()
-  @IsString()
-  @MaxLength(STORE_SLUG_MAX_LENGTH)
+  @SafeText({ max: STORE_SLUG_MAX_LENGTH, optional: true })
   public storeSlug?: string;
 
-  @IsOptional()
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(STORE_NAME_MAX_LENGTH)
+  @SafeText({
+    max: STORE_NAME_MAX_LENGTH,
+    optional: true,
+    notEmpty: true,
+  })
   public storeName?: string;
 
   @IsOptional()

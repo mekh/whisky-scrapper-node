@@ -3,10 +3,8 @@ import {
   IsBoolean,
   IsNumber,
   IsOptional,
-  IsString,
   Matches,
   Max,
-  MaxLength,
   Min,
   ValidateIf,
   ValidateNested,
@@ -19,6 +17,7 @@ import {
   COLLECTION_RATING_MIN,
   COLLECTION_RATING_SCALE,
 } from '~constants';
+import { SafeText } from '~decorators/fields';
 import type { CollectionUpdateInput } from '~types';
 
 import { CollectionPurchasesPatchDto } from './collection-purchases-patch.dto';
@@ -31,6 +30,10 @@ import { CollectionPurchasesPatchDto } from './collection-purchases-patch.dto';
  * digits and would otherwise reject the clearing case outright; `rating` has
  * no such spelling (a number field has no empty string), so it clears
  * through the explicit {@link clearRating} flag instead.
+ *
+ * The four prose fields go through `SafeText`, which adds the one check
+ * `@IsString()` + `@MaxLength()` miss: a control character — `U+0000` above
+ * all — that validates here and then fails in Postgres as a `500`.
  *
  * `purchases` rides in the same body so that the edit screen's one «save»
  * is one request — the row's fields and every purchase change commit or
@@ -52,24 +55,32 @@ export class CollectionUpdateDto implements CollectionUpdateInput {
   @Matches(COLLECTION_BARCODE_PATTERN)
   public barcode?: string;
 
-  @IsOptional()
-  @IsString()
-  @MaxLength(COLLECTION_NOTE_MAX_LENGTH)
+  @SafeText({
+    max: COLLECTION_NOTE_MAX_LENGTH,
+    optional: true,
+    multiline: true,
+  })
   public notes?: string;
 
-  @IsOptional()
-  @IsString()
-  @MaxLength(COLLECTION_NOTE_MAX_LENGTH)
+  @SafeText({
+    max: COLLECTION_NOTE_MAX_LENGTH,
+    optional: true,
+    multiline: true,
+  })
   public nose?: string;
 
-  @IsOptional()
-  @IsString()
-  @MaxLength(COLLECTION_NOTE_MAX_LENGTH)
+  @SafeText({
+    max: COLLECTION_NOTE_MAX_LENGTH,
+    optional: true,
+    multiline: true,
+  })
   public palate?: string;
 
-  @IsOptional()
-  @IsString()
-  @MaxLength(COLLECTION_NOTE_MAX_LENGTH)
+  @SafeText({
+    max: COLLECTION_NOTE_MAX_LENGTH,
+    optional: true,
+    multiline: true,
+  })
   public finish?: string;
 
   @IsOptional()

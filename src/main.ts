@@ -11,6 +11,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { initializeTransactionalContext } from 'typeorm-transactional';
 
 import { AppModule } from '~app/app.module';
+import { registerClientIpHook } from '~app/context';
 import { AppConfig } from '~config';
 import { LoggerService } from '~lib/logger';
 
@@ -34,6 +35,14 @@ const run = async (): Promise<void> => {
     new FastifyAdapter({ keepAliveTimeout: config.keepAliveTimeoutMs }),
     { bufferLogs: true },
   );
+
+  /**
+   * Installed before anything can read an address: guards, param decorators
+   * and services all take the client's address from the request context this
+   * fills. See `registerClientIpHook` for why it is a Fastify hook and not
+   * Nest middleware.
+   */
+  registerClientIpHook(app, config);
 
   app.useLogger(app.get(LoggerService));
   app.enableVersioning({ type: VersioningType.URI });

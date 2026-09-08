@@ -27,6 +27,7 @@ export {
 } from './kb.enum';
 export { ListingStop } from './listing.enum';
 export { PermissionMode } from './permission.enum';
+export { RateLimitProfile } from './rate-limit.enum';
 export {
   ReportKind,
   ReportSortField,

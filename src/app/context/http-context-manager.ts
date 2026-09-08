@@ -10,8 +10,15 @@ export class HttpContextManager implements CtxManager {
 
   constructor(private readonly ctx: ExecutionContext) {}
 
+  /**
+   * The client's address as resolved once by `ContextModule`'s middleware,
+   * falling back to the connection's own — which is the proxy's address
+   * behind one, and correct only without.
+   *
+   * @returns The address to attribute the request to.
+   */
   public get ip(): string {
-    return this.getReq().ip;
+    return this.getContext().ip ?? this.getReq().ip;
   }
 
   public get userAgent(): string {

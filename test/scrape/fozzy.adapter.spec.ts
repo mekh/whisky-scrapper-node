@@ -123,6 +123,10 @@ function snapshot(over: Partial<ProductSnapshot> = {}): ProductSnapshot {
  * attributes of its `product_mini_prices_block`, and the bottle volume only
  * in the rendered unit label.
  *
+ * `unavailable: 'true'` adds the sold-out class and nothing else, which is
+ * exactly what the live listing does — an out-of-stock card keeps its price
+ * block, its discount badge and its add-to-cart button.
+ *
  * @param over - Attribute overrides for the card.
  * @returns The card's HTML.
  */
@@ -136,6 +140,7 @@ function card(over: Record<string, string> = {}): string {
     unit: '1л',
     ...over,
   };
+  const soldOut = attributes.unavailable === 'true' ? ' unavailable' : '';
   const url = `https://fozzyshop.ua/viski/${attributes.id}-viski.html`;
   const prices = attributes.noPricesBlock === 'true' ? '' : `
     <div class="product_mini_prices_block"
@@ -149,7 +154,7 @@ function card(over: Record<string, string> = {}): string {
     </div>`;
 
   return `<div class="product-mini-card product_mini js-product-card
-      js-product-mini-card js-product-${attributes.id} action"
+      js-product-mini-card js-product-${attributes.id} action${soldOut}"
        data-product-id="${attributes.id}"
        data-unit-type="шт"
        data-product-name="${attributes.name}"
@@ -294,6 +299,52 @@ describe('FozzyAdapter.fetchListing', () => {
     const { items: [snap] } = await adapter.fetchListing();
 
     expect(snap.volumeMl).toBe(700);
+  });
+
+  /**
+   * The bug this guards: the listing carries sold-out items, priced and
+   * add-to-cart-able, and reading them as available recorded a price nobody
+   * could buy at. A production run on 2026-09-10 served a Tomintoul 10 as a
+   * 41% drop (2699 to 1599) on the day the store stopped selling it, and 30
+   * fozzy offers were stored in stock while the store said otherwise.
+   */
+  it('reads the sold-out class as out of stock, price intact', async () => {
+    const { adapter } = adapterOver({
+      1: page(card({ unavailable: 'true' })),
+      2: page(),
+    });
+
+    const { items: [snap] } = await adapter.fetchListing();
+
+    expect(snap.inStock).toBe(false);
+    expect(snap.storeSku).toBe('969304');
+    expect(snap.price).toBe(499);
+  });
+
+  /**
+   * A sold-out card must be handed over, not dropped. Persist takes its SKU
+   * to flag the offer, and the walk's terminator is a page bringing no new
+   * SKU — so dropping these would make a page of sold-out items look like
+   * the end of the catalogue and hide everything behind it.
+   */
+  it('keeps walking past a page of only sold-out cards', async () => {
+    const { adapter } = adapterOver({
+      1: page(card({ unavailable: 'true' }), card({ id: '2' })),
+      2: page(card({ id: '3', unavailable: 'true' })),
+      3: page(card({ id: '4' })),
+      4: page(),
+    });
+
+    const { items: snaps } = await adapter.fetchListing();
+
+    expect(snaps.map((snap) => snap.storeSku)).toEqual([
+      '969304',
+      '2',
+      '3',
+      '4',
+    ]);
+    expect(snaps.map((snap) => snap.inStock))
+      .toEqual([false, true, false, true]);
   });
 
   it('drops a card without a name or a price', async () => {

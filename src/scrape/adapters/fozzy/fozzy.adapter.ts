@@ -45,6 +45,25 @@ const CATEGORY = 'viski';
 const PROMOTION_PRICE_TYPE = 'promotion';
 
 /**
+ * The class a card carries when the store does not have the item. The listing
+ * does carry out-of-stock items — the class is the only thing that marks them,
+ * since such a card renders its price block, its `-N%` badge and its
+ * add-to-cart button exactly like an available one. Verified against the
+ * product pages of both kinds: every card carrying it answers
+ * `og:availability: out of stock` and «Немає в наявності», every card without
+ * it `in stock` and «В наявності».
+ *
+ * Read as a negative marker rather than the positive one the other HTML
+ * adapters use, because the source states nothing positive: an available and
+ * an unavailable card differ by this token alone. So the fail-closed reading
+ * the alcomag and winebutik adapters get from an unknown label is not
+ * available here, and a card is never dropped over availability — dropping
+ * every card of a page would read as a complete empty listing and earn the
+ * sweep, which is the one outcome worse than the bug this fixes.
+ */
+const UNAVAILABLE_CLASS = 'unavailable';
+
+/**
  * Backstop against a runaway walk; the category is ~13 pages today.
  */
 const MAX_PAGES = 40;
@@ -84,9 +103,10 @@ function toFloat(value: string | null | undefined): number | null {
  * answers plain requests. A product card carries the item in `data-*`
  * attributes (id, name, prices, price type); the bottle volume is only in the
  * card's rendered unit label. Pagination is `?page=N`; a page past the end is
- * a 404, which ends the walk. Only available items are listed, so everything
- * scraped is in stock. ABV, country, brand, age and type live on the product
- * page, in its characteristics list.
+ * a 404, which ends the walk. Out-of-stock items stay in the listing, priced
+ * and add-to-cart-able, marked only by a class on the card (see
+ * {@link UNAVAILABLE_CLASS}). ABV, country, brand, age and type live on the
+ * product page, in its characteristics list.
  */
 export class FozzyAdapter extends PagedHtmlAdapterBase {
   public readonly supportsDetail = true;
@@ -158,7 +178,13 @@ export class FozzyAdapter extends PagedHtmlAdapterBase {
 
   /**
    * Maps one product card to a snapshot, reading the item from its `data-*`
-   * attributes and the bottle volume from the rendered unit label.
+   * attributes, the bottle volume from the rendered unit label and its
+   * availability from {@link UNAVAILABLE_CLASS}.
+   *
+   * An out-of-stock card is returned rather than dropped: persist takes its
+   * SKU to flag the offer, and the walk needs it counted as seen — a page
+   * whose every card is sold out must not read as a page bringing nothing
+   * new, which is how this walk decides it has reached the end.
    *
    * @param $ - Cheerio root of the listing page.
    * @param card - The card node.
@@ -187,6 +213,7 @@ export class FozzyAdapter extends PagedHtmlAdapterBase {
       name,
       price,
       oldPrice,
+      inStock: !node.hasClass(UNAVAILABLE_CLASS),
       promo: priceType === PROMOTION_PRICE_TYPE,
       volumeMl: this.normalizer.parseVolumeValue(
         firstText($, card, UNIT_SELECTOR),

@@ -1377,10 +1377,25 @@ wrappers): `scrape/` has its own internal layering.
   where `data-secondary-price` is the old price **only** when
   `data-price-type="promotion"` — every other type reuses it for the bulk
   case price, which must never surface as a strike-through; volume only in
-  the rendered unit label (`0,7л`), only available items are listed, and the
-  product page's characteristics list fills country/brand/ABV/age/type via
-  `supportsDetail` — age through `parseAgeValue`, added because the field is
-  a bare `12` no age regex matches), `alcomag/`
+  the rendered unit label (`0,7л`), and the product page's characteristics
+  list fills country/brand/ABV/age/type via `supportsDetail` — age through `parseAgeValue`, added because the field is
+  a bare `12` no age regex matches.
+  **Sold-out items stay in the listing and are marked only by an
+  `unavailable` class on the card** (2026-09-10): such a card renders its
+  price block, its `-N%` badge and its add-to-cart button exactly like an
+  available one, so for the store's first month every one of them was
+  recorded in stock at a price nobody could buy at — 30 offers on the day
+  this was found, one of them a `Tomintoul 10` served as a 41% drop
+  (2699 → 1599) after the store stopped selling it. The class is now read
+  into `inStock`, the same negative-class idiom `WooCommerceAdapterBase`
+  already uses for `outofstock`, because this source states nothing
+  positive: an available and an unavailable card differ by that token alone,
+  so the fail-closed "unknown label drops the card" rule alcomag and
+  winebutik follow has nothing to key on here. A sold-out card is therefore
+  **handed over rather than dropped** — persist takes its SKU to flag the
+  offer, and the walk's terminator is a page bringing no new SKU, so
+  dropping them would make a page of sold-out items read as the end of the
+  catalogue), `alcomag/`
   (Bitrix/Aspro SSR via cheerio, `?PAGEN_1=N` pagination, `supportsDetail`;
   the article number is the SKU and may be non-numeric (`МТ10`), availability
   is a positive «Є в наявності» marker — an unknown label drops the card so a
@@ -2892,7 +2907,7 @@ overhaul).
 
 ## Current state / known gaps
 
-The project builds, `tsc`/`eslint` are clean, and 1084 unit tests (82 suites)
+The project builds, `tsc`/`eslint` are clean, and 1086 unit tests (82 suites)
 plus 187 integration tests (18 suites, live Postgres) pass. Done:
 
 - **Auth works end-to-end.** `domain/auth` (login/refresh/logout/me/sessions)

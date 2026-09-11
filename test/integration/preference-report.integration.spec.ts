@@ -12,9 +12,16 @@ import {
   ReportWindow,
   SortOrder,
 } from '~enums';
-import type { ID, ReportFilter, ReportGroup, ReportOptions } from '~types';
+import type {
+  ID,
+  ReportFilter,
+  ReportOptions,
+  ReportPersonalization,
+  ReportPublicGroup,
+} from '~types';
 
 import { ReportService } from '../../src/domain/report/report.service';
+import { passthroughCache } from '../cache-stub';
 import {
   bootIntegrationModule,
   closeIntegrationModule,
@@ -89,13 +96,16 @@ describe('preference filtering over the live report query', () => {
    */
   const run = async (
     userId: ID,
-    filter: Partial<ReportFilter> = {},
+    filter: Partial<ReportFilter & ReportPersonalization> = {},
     kind: ReportKind = ReportKind.CATALOG,
-  ): Promise<ReportGroup[]> => {
+  ): Promise<ReportPublicGroup[]> => {
+    const { favoritesOnly, ...catalogue } = filter;
+
     const page = await service.report(
       kind,
-      { userId, name: TOKEN, ...filter },
+      { name: TOKEN, ...catalogue },
       OPTIONS,
+      { userId, favoritesOnly },
     );
 
     return page.data;
@@ -107,7 +117,7 @@ describe('preference filtering over the live report query', () => {
    * @param groups - The report groups to read.
    * @returns Their bottling ids.
    */
-  const idsOf = (groups: ReportGroup[]): ID[] => {
+  const idsOf = (groups: ReportPublicGroup[]): ID[] => {
     return groups.map((group) => group.productId).sort();
   };
 
@@ -236,7 +246,12 @@ describe('preference filtering over the live report query', () => {
     snapshots = moduleRef.get(CorePriceSnapshotService, { strict: false });
     preferences = moduleRef.get(CorePreferenceService, { strict: false });
 
-    service = new ReportService(offers, snapshots);
+    service = new ReportService(
+      offers,
+      snapshots,
+      preferences,
+      passthroughCache(),
+    );
 
     storeA = await makeStore(SLUG_A, 'IT Pref A');
     storeB = await makeStore(SLUG_B, 'IT Pref B');
@@ -424,8 +439,9 @@ describe('preference filtering over the live report query', () => {
   it('answers empty for a favorites filter with no favorites', async () => {
     const page = await service.report(
       ReportKind.CATALOG,
-      { userId: userA, name: TOKEN, favoritesOnly: true },
+      { name: TOKEN },
       OPTIONS,
+      { userId: userA, favoritesOnly: true },
     );
 
     expect(page.data).toEqual([]);

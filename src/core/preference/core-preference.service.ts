@@ -8,6 +8,7 @@ import type {
   Preference,
   PreferenceBlacklistIds,
   PreferenceDetails,
+  PreferenceFilterIds,
 } from '~types';
 
 /**
@@ -42,6 +43,16 @@ export class CorePreferenceService {
    */
   public async findByUserId(userId: ID): Promise<Preference> {
     return this.repo.findByUserId(userId);
+  }
+
+  /**
+   * Loads the id sets a report applies one user's view with.
+   *
+   * @param userId - Whose preferences to read.
+   * @returns The three id sets; each is empty when the user has no entries.
+   */
+  public async findFilterIds(userId: ID): Promise<PreferenceFilterIds> {
+    return this.repo.findFilterIds(userId);
   }
 
   /**

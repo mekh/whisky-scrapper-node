@@ -1,26 +1,40 @@
 import 'reflect-metadata';
 
+import { CorePreferenceService } from '~core/preference';
 import { CorePriceSnapshotService } from '~core/price-snapshot';
 import { CoreStoreProductService } from '~core/store-product';
 import { ReportKind, ReportWindow, SortOrder } from '~enums';
 import type {
   ID,
+  PreferenceFilterIds,
   ReportCurrentRow,
   ReportFilter,
-  ReportGroup,
   ReportOptions,
+  ReportPersonalization,
+  ReportPublicGroup,
 } from '~types';
 
 import { ReportService } from '../src/domain/report/report.service';
 
+import { passthroughCache } from './cache-stub';
+
 /**
- * Any uuid does: the read path's per-user predicates run in SQL, which the fake
- * repository never reaches, and nothing here writes a row that needs the user
- * to exist.
+ * Any uuid does: the preference service is faked, so nothing resolves it.
  */
 const USER_ID = '0198d1f6-0000-7000-8000-000000000001' as ID;
 
-const FILTER: ReportFilter = { userId: USER_ID };
+const FILTER: ReportFilter = {};
+
+const PERSONALIZATION: ReportPersonalization = { userId: USER_ID };
+
+/**
+ * A user who has hidden nothing and favorited nothing.
+ */
+const NO_PREFERENCES: PreferenceFilterIds = {
+  favorites: [],
+  blacklistProducts: [],
+  blacklistProducers: [],
+};
 
 const OPTIONS: ReportOptions = {
   window: ReportWindow.WEEK,
@@ -41,6 +55,8 @@ function makeRow(over: Partial<ReportCurrentRow>): ReportCurrentRow {
     distillery: null,
     region: null,
     bottler: null,
+    producerId: null,
+    bottlerId: null,
     factSources: {},
     id: 'p1' as ID,
     productId: 'b1' as ID,
@@ -84,6 +100,9 @@ function makeRow(over: Partial<ReportCurrentRow>): ReportCurrentRow {
  * @param today - Optional fixed "today" (`YYYY-MM-DD`) so day-count assertions
  *   are deterministic; when omitted the real current date is used.
  * @param options - Report options to override on top of the defaults.
+ * @param preferences - The caller's preference id sets; empty by default.
+ * @param personalization - Who the report is for; a preference-less user by
+ *   default.
  * @returns The report groups (page data) the service produced.
  */
 async function run(
@@ -93,7 +112,9 @@ async function run(
   priceSince?: Map<ID, string>,
   today?: string,
   options?: Partial<ReportOptions>,
-): Promise<ReportGroup[]> {
+  preferences?: PreferenceFilterIds,
+  personalization?: Partial<ReportPersonalization>,
+): Promise<ReportPublicGroup[]> {
   const offers = {
     findCurrentRows: jest.fn().mockResolvedValue(rows),
   };
@@ -104,9 +125,15 @@ async function run(
     currentPriceSince: jest.fn().mockResolvedValue(priceSince ?? new Map()),
   };
 
+  const prefs = {
+    findFilterIds: jest.fn().mockResolvedValue(preferences ?? NO_PREFERENCES),
+  };
+
   const service = new ReportService(
     offers as unknown as CoreStoreProductService,
     snapshots as unknown as CorePriceSnapshotService,
+    prefs as unknown as CorePreferenceService,
+    passthroughCache(),
   );
 
   if (today !== undefined) {
@@ -115,7 +142,12 @@ async function run(
       .mockReturnValue(today);
   }
 
-  const page = await service.report(kind, FILTER, { ...OPTIONS, ...options });
+  const page = await service.report(
+    kind,
+    FILTER,
+    { ...OPTIONS, ...options },
+    { ...PERSONALIZATION, ...personalization },
+  );
 
   return page.data;
 }
@@ -328,7 +360,7 @@ describe('ReportService — drops discount window', () => {
 async function runBest(
   rows: ReportCurrentRow[],
   filter: Omit<ReportFilter, 'userId'>,
-): Promise<{ data: ReportGroup[]; selected: ReportFilter }> {
+): Promise<{ data: ReportPublicGroup[]; selected: ReportFilter }> {
   const findCurrentRows = jest.fn<Promise<ReportCurrentRow[]>, [ReportFilter]>()
     .mockResolvedValue(rows);
 
@@ -338,15 +370,22 @@ async function runBest(
     currentPriceSince: jest.fn().mockResolvedValue(new Map()),
   };
 
+  const prefs = {
+    findFilterIds: jest.fn().mockResolvedValue(NO_PREFERENCES),
+  };
+
   const service = new ReportService(
     { findCurrentRows } as unknown as CoreStoreProductService,
     snapshots as unknown as CorePriceSnapshotService,
+    prefs as unknown as CorePreferenceService,
+    passthroughCache(),
   );
 
   const page = await service.report(
     ReportKind.BEST,
-    { userId: USER_ID, ...filter },
+    { ...filter },
     OPTIONS,
+    PERSONALIZATION,
   );
 
   return { data: page.data, selected: findCurrentRows.mock.calls[0][0] };
@@ -585,8 +624,7 @@ describe('ReportService — best offers group by the stored bottling', () => {
   });
 
   it('leaves every other predicate to SQL', async () => {
-    const filter: Omit<ReportFilter, 'userId'> = {
-      favoritesOnly: true,
+    const filter: ReportFilter = {
       stores: ['one', 'two'],
       minPrice: 100,
       maxPrice: 2000,
@@ -597,13 +635,12 @@ describe('ReportService — best offers group by the stored bottling', () => {
     const { selected } = await runBest([], filter);
 
     /**
-     * The per-user predicates ride along untouched: unlike the price bounds,
-     * they filter the bottling, so keeping them in the candidate query cannot
-     * drop a runner-up the comparison needs.
+     * Only the price bounds are withheld from the candidate query. Every
+     * other predicate filters the bottling, so keeping it there cannot drop a
+     * runner-up the comparison needs.
      */
     expect(selected).toEqual({
       ...filter,
-      userId: USER_ID,
       minPrice: undefined,
       maxPrice: undefined,
     });
@@ -880,15 +917,23 @@ describe('ReportService — pagination and sorting count groups', () => {
       currentPriceSince: jest.fn().mockResolvedValue(new Map()),
     };
 
+    const prefs = {
+      findFilterIds: jest.fn().mockResolvedValue(NO_PREFERENCES),
+    };
+
     const service = new ReportService(
       offers as unknown as CoreStoreProductService,
       snapshots as unknown as CorePriceSnapshotService,
+      prefs as unknown as CorePreferenceService,
+      passthroughCache(),
     );
 
-    const page = await service.report(ReportKind.CATALOG, FILTER, {
-      ...OPTIONS,
-      perPage: 50,
-    });
+    const page = await service.report(
+      ReportKind.CATALOG,
+      FILTER,
+      { ...OPTIONS, perPage: 50 },
+      PERSONALIZATION,
+    );
 
     expect(page.total).toBe(3);
     expect(page.data).toHaveLength(3);
@@ -947,5 +992,183 @@ describe('ReportService — pagination and sorting count groups', () => {
 
     expect(ascending[ascending.length - 1].age).toBeNull();
     expect(descending[descending.length - 1].age).toBeNull();
+  });
+});
+
+describe('ReportService — personalization over the grouped catalogue', () => {
+  const MAKER = 'maker-1' as ID;
+
+  const OTHER_MAKER = 'maker-2' as ID;
+
+  /**
+   * Two bottlings, each carried by one store: one made by a known producer,
+   * one the knowledge base could not place at all.
+   *
+   * @returns The seeded current rows.
+   */
+  function twoBottlings(): ReportCurrentRow[] {
+    return [
+      makeRow({
+        id: 'o1' as ID,
+        productId: 'b1' as ID,
+        producerId: MAKER,
+        price: 1000,
+      }),
+      makeRow({
+        id: 'o2' as ID,
+        productId: 'b2' as ID,
+        producerId: null,
+        price: 1100,
+      }),
+    ];
+  }
+
+  /**
+   * Runs the catalog report for a user with the given preferences.
+   *
+   * @param preferences - The caller's id sets.
+   * @param favoritesOnly - Whether to keep only favorites.
+   * @returns The bottling ids the report answered with.
+   */
+  async function idsFor(
+    preferences: Partial<PreferenceFilterIds>,
+    favoritesOnly?: boolean,
+  ): Promise<ID[]> {
+    const groups = await run(
+      ReportKind.CATALOG,
+      twoBottlings(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { ...NO_PREFERENCES, ...preferences },
+      { favoritesOnly },
+    );
+
+    return groups.map((group) => group.productId);
+  }
+
+  it('hides a blacklisted bottling', async () => {
+    expect(await idsFor({ blacklistProducts: ['b1' as ID] }))
+      .toEqual(['b2' as ID]);
+  });
+
+  it('hides every bottling of a blacklisted maker', async () => {
+    expect(await idsFor({ blacklistProducers: [MAKER] }))
+      .toEqual(['b2' as ID]);
+  });
+
+  it('hides a bottling whose blacklisted maker is its bottler', async () => {
+    const groups = await run(
+      ReportKind.CATALOG,
+      [makeRow({ productId: 'b1' as ID, producerId: null, bottlerId: MAKER })],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { ...NO_PREFERENCES, blacklistProducers: [MAKER] },
+    );
+
+    expect(groups).toEqual([]);
+  });
+
+  it('spares a bottling the knowledge base could not place', async () => {
+    /**
+     * The SQL this replaced read `IN (NULL, NULL)` as UNKNOWN and kept the
+     * row; a null id is in no `Set` here, which has to mean the same thing.
+     * There is no "unknown maker" to hide.
+     */
+    expect(await idsFor({ blacklistProducers: [MAKER, OTHER_MAKER] }))
+      .toEqual(['b2' as ID]);
+  });
+
+  it('keeps only the favorites when the filter is on', async () => {
+    expect(await idsFor({ favorites: ['b2' as ID] }, true))
+      .toEqual(['b2' as ID]);
+  });
+
+  it('answers empty for a favorites filter with no favorites', async () => {
+    expect(await idsFor({}, true)).toEqual([]);
+  });
+
+  it('counts the total after personalization, not before', async () => {
+    const offers = {
+      findCurrentRows: jest.fn().mockResolvedValue(twoBottlings()),
+    };
+
+    const snapshots = {
+      latestDate: jest.fn().mockResolvedValue('2026-07-21'),
+      priceExtremes: jest.fn().mockResolvedValue(new Map()),
+      currentPriceSince: jest.fn().mockResolvedValue(new Map()),
+    };
+
+    const prefs = {
+      findFilterIds: jest.fn().mockResolvedValue({
+        ...NO_PREFERENCES,
+        blacklistProducts: ['b1' as ID],
+      }),
+    };
+
+    const service = new ReportService(
+      offers as unknown as CoreStoreProductService,
+      snapshots as unknown as CorePriceSnapshotService,
+      prefs as unknown as CorePreferenceService,
+      passthroughCache(),
+    );
+
+    const page = await service.report(
+      ReportKind.CATALOG,
+      FILTER,
+      OPTIONS,
+      PERSONALIZATION,
+    );
+
+    expect(page.total).toBe(1);
+    expect(page.data).toHaveLength(1);
+  });
+
+  it('never puts the producer ids on the wire', async () => {
+    const groups = await run(ReportKind.CATALOG, twoBottlings());
+
+    groups.forEach((group) => {
+      expect(group).not.toHaveProperty('producerId');
+      expect(group).not.toHaveProperty('bottlerId');
+    });
+  });
+
+  it('leaves a favorited bottling whole comparison set intact', async () => {
+    /**
+     * `best` compares a bottling's offers against each other, so a predicate
+     * that filtered offers rather than bottlings would break its two-store
+     * guard. Both offers survive because the pass keeps or drops the group.
+     */
+    const rows = [
+      makeRow({
+        id: 'o1' as ID,
+        productId: 'b1' as ID,
+        storeSlug: 'one',
+        price: 1000,
+      }),
+      makeRow({
+        id: 'o2' as ID,
+        productId: 'b1' as ID,
+        storeSlug: 'two',
+        price: 1800,
+      }),
+    ];
+
+    const groups = await run(
+      ReportKind.BEST,
+      rows,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { ...NO_PREFERENCES, favorites: ['b1' as ID] },
+      { favoritesOnly: true },
+    );
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].offers).toHaveLength(2);
   });
 });

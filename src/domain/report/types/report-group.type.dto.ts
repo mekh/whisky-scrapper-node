@@ -1,7 +1,7 @@
 import { Type } from 'class-transformer';
 import { ArrayMinSize, IsArray, ValidateNested } from 'class-validator';
 
-import type { ReportGroup } from '~types';
+import type { ReportPublicGroup } from '~types';
 
 import { ReportOfferType } from './report-offer.type.dto';
 import { ReportRowType } from './report-row.type.dto';
@@ -14,7 +14,8 @@ import { ReportRowType } from './report-row.type.dto';
  * `offers` array is purely additive. That is also why `/report/history` keeps
  * returning a bare `ReportRowType`: a single offer's history has no group.
  */
-export class ReportGroupType extends ReportRowType implements ReportGroup {
+export class ReportGroupType extends ReportRowType
+  implements ReportPublicGroup {
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })

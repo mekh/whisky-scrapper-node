@@ -11,11 +11,13 @@ jest.mock('typeorm-transactional', () => ({
   Transactional: () => (): void => undefined,
 }));
 
+import { CACHE_GENERATION_CATALOGUE } from '~constants';
 import { CoreCountryService } from '~core/country';
 import { CoreFlavorService } from '~core/flavor';
 import { CoreProductService } from '~core/product';
 import { CoreStoreProductService } from '~core/store-product';
 import { BadRequestError, NotFoundError } from '~errors';
+import { VersionedCacheService } from '~lib/cache';
 import type { ID, ProductUpdateInput } from '~types';
 
 import { CoreTypeService } from '../src/core/type';
@@ -46,6 +48,7 @@ interface Mocks {
     relink: jest.Mock;
   };
   flavors: { findIdsByName: jest.Mock };
+  cache: { bumpAfterCommit: jest.Mock };
 }
 
 /**
@@ -96,15 +99,18 @@ function makeService(known: Map<string, ID> = new Map()): Mocks {
     findIdsByName: jest.fn().mockResolvedValue(known),
   };
 
+  const cache = { bumpAfterCommit: jest.fn() };
+
   const service = new ProductService(
     products as unknown as CoreProductService,
     offers as unknown as CoreStoreProductService,
     { findOne: jest.fn() } as unknown as CoreCountryService,
     { findOne: jest.fn() } as unknown as CoreTypeService,
     flavors as unknown as CoreFlavorService,
+    cache as unknown as VersionedCacheService,
   );
 
-  return { service, products, offers, flavors };
+  return { service, products, offers, flavors, cache };
 }
 
 /**
@@ -425,5 +431,37 @@ describe('ProductService.relink', () => {
     await service.relink({ id: OFFER_ID, productId: PRODUCT_ID });
 
     expect(products.deleteIfUnreferenced).not.toHaveBeenCalled();
+  });
+});
+
+describe('ProductService — telling the cache', () => {
+  it('registers a bump after an edit', async () => {
+    const { service, products, offers, cache } = makeService();
+
+    offers.findOfferRefById.mockResolvedValue({
+      id: 'o1' as ID,
+      productId: 'b1' as ID,
+      nameOrig: 'Whisky',
+    });
+    products.findIdentityTwins.mockResolvedValue([]);
+    products.findByIdOrThrow.mockResolvedValue({ id: 'b1', name: 'Whisky' });
+
+    await service.update({ id: 'o1' as ID, name: 'Whisky' });
+
+    expect(cache.bumpAfterCommit).toHaveBeenCalledWith(
+      CACHE_GENERATION_CATALOGUE,
+      'product:update',
+    );
+  });
+
+  it('registers nothing when the edit is rejected', async () => {
+    const { service, offers, cache } = makeService();
+
+    offers.findOfferRefById.mockResolvedValue(null);
+
+    await expect(service.update({ id: 'missing' as ID, name: 'x' }))
+      .rejects.toThrow();
+
+    expect(cache.bumpAfterCommit).not.toHaveBeenCalled();
   });
 });

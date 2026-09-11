@@ -1,13 +1,20 @@
 import { TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 
+import { CorePreferenceService } from '~core/preference';
 import { CorePriceSnapshotService } from '~core/price-snapshot';
 import { CoreProductService } from '~core/product';
 import { CoreStoreProductService } from '~core/store-product';
 import { ReportKind, ReportWindow, SortOrder } from '~enums';
-import type { ID, ReportFilter, ReportGroup, ReportOptions } from '~types';
+import type {
+  ID,
+  ReportFilter,
+  ReportOptions,
+  ReportPublicGroup,
+} from '~types';
 
 import { ReportService } from '../../src/domain/report/report.service';
+import { passthroughCache } from '../cache-stub';
 import {
   bootIntegrationModule,
   closeIntegrationModule,
@@ -55,6 +62,7 @@ describe('report grouping over the live query (integration)', () => {
   let products: CoreProductService;
   let offers: CoreStoreProductService;
   let snapshots: CorePriceSnapshotService;
+  let preferences: CorePreferenceService;
   let service: ReportService;
   let storeA: ID;
   let storeB: ID;
@@ -69,11 +77,12 @@ describe('report grouping over the live query (integration)', () => {
    */
   const catalog = async (
     filter: Partial<ReportFilter> = {},
-  ): Promise<ReportGroup[]> => {
+  ): Promise<ReportPublicGroup[]> => {
     const page = await service.report(
       ReportKind.CATALOG,
-      { userId: USER_ID, name: TOKEN, ...filter },
+      { name: TOKEN, ...filter },
       OPTIONS,
+      { userId: USER_ID },
     );
 
     return page.data;
@@ -177,13 +186,19 @@ describe('report grouping over the live query (integration)', () => {
     products = moduleRef.get(CoreProductService, { strict: false });
     offers = moduleRef.get(CoreStoreProductService, { strict: false });
     snapshots = moduleRef.get(CorePriceSnapshotService, { strict: false });
+    preferences = moduleRef.get(CorePreferenceService, { strict: false });
 
     /**
      * The report service is instantiated directly, exactly as the unit spec
      * does: the integration module exposes the core graph, and the controller's
      * global guards are not what these assertions are about.
      */
-    service = new ReportService(offers, snapshots);
+    service = new ReportService(
+      offers,
+      snapshots,
+      preferences,
+      passthroughCache(),
+    );
 
     storeA = await makeStore(SLUG_A, 'IT Group A');
     storeB = await makeStore(SLUG_B, 'IT Group B');
@@ -240,8 +255,9 @@ describe('report grouping over the live query (integration)', () => {
   it('counts bottlings, not offers', async () => {
     const page = await service.report(
       ReportKind.CATALOG,
-      { userId: USER_ID, name: TOKEN },
+      { name: TOKEN },
       OPTIONS,
+      { userId: USER_ID },
     );
 
     expect(page.total).toBe(2);

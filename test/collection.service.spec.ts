@@ -112,6 +112,8 @@ function makeCurrentRow(
   return {
     id: 'offer-1' as ID,
     productId: PRODUCT_ID,
+    producerId: null,
+    bottlerId: null,
     sku: 'sku-1',
     url: 'https://example.com/sku-1',
     name: 'Ardbeg 10',

@@ -159,21 +159,36 @@ export interface ReportQuery {
   perPage?: number;
 }
 
-export interface ReportFilter {
+/**
+ * Who a report is being run for.
+ *
+ * Separate from {@link ReportFilter} because the two are answered in different
+ * places and cached differently: the filter describes a slice of the
+ * catalogue, which is the same for everybody and so can be computed once,
+ * while this describes one person's view of that slice and is applied per
+ * request.
+ *
+ * **This is where the "never serve an unpersonalized catalogue" guarantee
+ * lives.** It used to be `ReportFilter.userId`, whose comment said the same
+ * thing: a caller that forgot it would serve one user another's catalogue. It
+ * is now a required argument of `ReportService.report`, which is the only
+ * public way to read a report, and the query underneath has no user parameter
+ * left to forget.
+ */
+export interface ReportPersonalization {
   /**
-   * The user the report is being run for. Required, and deliberately not
-   * optional: it is what the blacklist and favorites predicates key on, so a
-   * caller that forgot it would silently serve one user an unfiltered
-   * catalogue.
+   * The user the report is being run for.
    */
   userId: ID;
 
   /**
-   * When true, keep only bottlings this user has favorited. The blacklist
-   * predicates are unconditional and are not expressed here at all.
+   * When true, keep only bottlings this user has favorited. The blacklist is
+   * applied either way and is not expressed here at all.
    */
   favoritesOnly?: boolean;
+}
 
+export interface ReportFilter {
   /**
    * Store slugs to include. Empty/undefined means every store.
    */
@@ -255,7 +270,29 @@ export interface ReportFilter {
   verifiedFacts?: boolean;
 }
 
-export interface ReportCurrentRow {
+/**
+ * The ids of the two producer slots a bottling can fill.
+ *
+ * Read by one thing only — the per-request personalization pass, which tests
+ * a user's blacklist against both slots — and deliberately not part of the
+ * wire contract: `ReportPublicRow` omits them, so they never reach a client.
+ * They are carried on the row because the alternative is a second query per
+ * report to look them up again for the same bottlings.
+ */
+export interface ReportMakerIds {
+  /**
+   * The resolved distillery's id, or null when the knowledge base could not
+   * place the bottling.
+   */
+  producerId: ID | null;
+
+  /**
+   * The resolved independent bottler's id, when there is one.
+   */
+  bottlerId: ID | null;
+}
+
+export interface ReportCurrentRow extends ReportMakerIds {
   /**
    * Store-offer id (uuid v7): one row per store × SKU. This is what the web
    * deep-links and the history endpoint use, and it survived the split of the
@@ -501,6 +538,23 @@ export interface ReportGroup extends ReportRow {
   offers: ReportOffer[];
 }
 
+/**
+ * A report row as it goes over the wire: everything {@link ReportRow} carries
+ * except the producer ids, which exist only so the personalization pass can
+ * test a blacklist against both maker slots.
+ *
+ * Stated as an `Omit` rather than as a hand-written interface so a field
+ * added to `ReportRow` reaches the client by default; hiding one is the
+ * decision that has to be spelled out.
+ */
+export type ReportPublicRow = Omit<ReportRow, keyof ReportMakerIds>;
+
+/**
+ * A report group as it goes over the wire — {@link ReportPublicGroup} is what
+ * the paginated endpoint answers with and what `ReportGroupType` implements.
+ */
+export type ReportPublicGroup = Omit<ReportGroup, keyof ReportMakerIds>;
+
 export interface PriceHistoryPoint {
   /**
    * Capture date of the snapshot (`YYYY-MM-DD`).
@@ -517,7 +571,7 @@ export interface PriceHistory {
   /**
    * The resolved product with its latest-vs-previous pricing.
    */
-  product: ReportRow;
+  product: ReportPublicRow;
 
   /**
    * Chronological price points, oldest first.

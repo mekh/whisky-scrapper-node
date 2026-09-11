@@ -1,8 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 
+import { CACHE_GENERATION_CATALOGUE } from '~constants';
 import { CoreProducerService } from '~core/producer';
 import { CoreProductService } from '~core/product';
 import { ServerError } from '~errors';
+import { VersionedCacheService } from '~lib/cache';
 import type { KbApplyPlan, KbReconcileSummary } from '~types';
 
 import { KbApplyService } from './kb-apply.service';
@@ -41,14 +43,18 @@ export class KbReconcileService {
 
   private readonly apply: KbApplyService;
 
+  private readonly cache: VersionedCacheService;
+
   public constructor(
     producers: CoreProducerService,
     products: CoreProductService,
     apply: KbApplyService,
+    cache: VersionedCacheService,
   ) {
     this.producers = producers;
     this.products = products;
     this.apply = apply;
+    this.cache = cache;
   }
 
   /**
@@ -107,6 +113,16 @@ export class KbReconcileService {
       factWrites,
       flavorWrites.length,
     );
+
+    /**
+     * One bump for the whole pass, and it covers every caller: the four
+     * review endpoints, the boot apply, and `pnpm reconcile-flavors`. The
+     * three writes above are separate autocommits, so there is no
+     * transaction to wait for and this runs immediately — which is correct,
+     * because by the time control reaches this line all three have
+     * committed.
+     */
+    this.cache.bumpAfterCommit(CACHE_GENERATION_CATALOGUE, 'kb:reconcile');
 
     return {
       plan,

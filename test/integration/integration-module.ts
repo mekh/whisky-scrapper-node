@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import 'reflect-metadata';
 
+import type { ModuleMetadata } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DataSource, DataSourceOptions } from 'typeorm';
@@ -22,9 +23,17 @@ let contextReady = false;
  * available. Integration tests resolve core services from the returned module
  * and run against a live Postgres.
  *
+ * Note that this compiles the graph without initialising it, so
+ * `onApplicationBootstrap` hooks do not run — which is what keeps a suite
+ * from inheriting startup side effects it did not ask for.
+ *
+ * @param extraImports - Modules a suite needs beyond the core graph, for the
+ *   rare case where what is under test is not a core service.
  * @returns The compiled testing module.
  */
-export async function bootIntegrationModule(): Promise<TestingModule> {
+export async function bootIntegrationModule(
+  extraImports: NonNullable<ModuleMetadata['imports']> = [],
+): Promise<TestingModule> {
   if (!contextReady) {
     initializeTransactionalContext();
 
@@ -54,6 +63,7 @@ export async function bootIntegrationModule(): Promise<TestingModule> {
         },
       }),
       CoreWhiskyModule,
+      ...extraImports,
     ],
   }).compile();
 }

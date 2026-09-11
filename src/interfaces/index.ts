@@ -2,6 +2,7 @@ export * from './app.interface';
 export * from './auth-throttle.interfaces';
 export * from './auth.interfaces';
 export * from './brand.interfaces';
+export * from './cache.interfaces';
 export * from './collection.interfaces';
 export * from './crud.interfaces';
 export * from './ctx.interfaces';

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Transactional } from 'typeorm-transactional';
 
-import { SEARCH_DEFAULT_LIMIT } from '~constants';
+import { CACHE_GENERATION_CATALOGUE, SEARCH_DEFAULT_LIMIT } from '~constants';
 import { CoreCountryService } from '~core/country';
 import { CoreFlavorService } from '~core/flavor';
 import { CoreProductService } from '~core/product';
@@ -9,6 +9,7 @@ import { CoreStoreProductService } from '~core/store-product';
 import { CoreTypeService } from '~core/type';
 import { FactSource, ProductFactField } from '~enums';
 import { BadRequestError, NotFoundError } from '~errors';
+import { VersionedCacheService } from '~lib/cache';
 import type {
   ID,
   ProductCanonicalInput,
@@ -28,6 +29,7 @@ export class ProductService {
     private readonly countries: CoreCountryService,
     private readonly types: CoreTypeService,
     private readonly flavors: CoreFlavorService,
+    private readonly cache: VersionedCacheService,
   ) {}
 
   /**
@@ -117,6 +119,8 @@ export class ProductService {
       ? updated
       : await this.products.findByIdOrThrow(survivorId);
 
+    this.cache.bumpAfterCommit(CACHE_GENERATION_CATALOGUE, 'product:update');
+
     /**
      * The caller's own id is echoed back rather than the canonical one, so the
      * response still names the thing the client asked about. `nameOrig` has to
@@ -171,6 +175,8 @@ export class ProductService {
     if (previous !== null && previous !== target.id) {
       await this.products.deleteIfUnreferenced(previous);
     }
+
+    this.cache.bumpAfterCommit(CACHE_GENERATION_CATALOGUE, 'product:relink');
 
     return {
       id: offer.id,

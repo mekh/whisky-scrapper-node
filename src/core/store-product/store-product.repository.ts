@@ -40,24 +40,39 @@ const LIFECYCLE_SCOPED_SQL: Record<DashboardSeriesGrouping, string> = {
     WHERE ($3::text[] IS NULL OR st.slug = ANY($3))`,
 };
 
-// Latest snapshot per store offer (+ the immediately previous price), joined to
-// the bottling it is an offer of and to the lookup tables. `rn = 1` keeps only
-// the newest snapshot; `LEAD` reaches the one before it. One result row is one
-// store's offer: `id`, `sku`, `url`, `nameOrig`, `inStock` and `firstSeen` are
-// the offer's, while the name, specs, brand, type, country and flavors are the
-// bottling's and so read identically for every store carrying it. Numeric
-// columns are cast to float8 and dates to text so the raw driver returns JS
-// numbers / `YYYY-MM-DD` strings rather than strings/Dates.
+/**
+ * Latest snapshot per store offer (+ the immediately previous price), joined
+ * to the bottling it is an offer of and to the lookup tables. One result row
+ * is one store's offer: `id`, `sku`, `url`, `nameOrig`, `inStock` and
+ * `firstSeen` are the offer's, while the name, specs, brand, type, country
+ * and flavors are the bottling's and so read identically for every store
+ * carrying it. Numeric columns are cast to float8 and dates to text so the
+ * raw driver returns JS numbers / `YYYY-MM-DD` strings rather than
+ * strings/Dates.
+ *
+ * **The two snapshots are reached by LATERAL, one index probe each, and that
+ * is the load-bearing part.** The window form this replaces (`ROW_NUMBER` +
+ * `LEAD` partitioned by offer) read and sorted the *entire* `price_snapshot`
+ * table on every request to keep one row per offer: measured on a
+ * production-shaped copy, 571 383 rows scanned to produce 9 555, 324 ms of a
+ * 422 ms query — and growing by ~8k rows a day, so the cost rose with the
+ * history rather than with the catalogue. Driving from `store_product`
+ * instead costs one `price_snapshot_store_product_created_idx` probe per
+ * offer (105 ms for the same result) and stays flat as history grows.
+ *
+ * `pv` takes the newest row strictly *older* than `r`, which reproduces
+ * `LEAD` exactly rather than approximately: an offer cannot hold two
+ * snapshots with the same `createdAt`, because the unique
+ * `(storeProductId, capturedOn)` index allows one row per offer per day and
+ * `createdAt` is never rewritten (`ON CONFLICT DO UPDATE` leaves it alone).
+ * Verified against the whole table — zero ties, and both forms return
+ * byte-identical rows for all 9 555 offers. It is a LEFT JOIN because an
+ * offer seen only once has no previous price (38 of them today).
+ *
+ * The trailing `WHERE TRUE` is the anchor every caller appends its own `AND`
+ * predicates to.
+ */
 const CURRENT_SQL = `
-  WITH ranked AS (
-    SELECT s."storeProductId",
-           s.price, s."oldPrice", s.currency, s.promo,
-           s."createdAt"::date AS captured,
-           ROW_NUMBER() OVER w AS rn,
-           LEAD(s.price) OVER w AS prev
-    FROM price_snapshot s
-    WINDOW w AS (PARTITION BY s."storeProductId" ORDER BY s."createdAt" DESC)
-  )
   SELECT sp.id, sp."productId", sp.sku, sp.url, sp."nameOrig",
          sp."firstSeen"::text AS "firstSeen", sp."inStock",
          p.name, p.age, p.abv, p."volumeMl",
@@ -68,8 +83,8 @@ const CURRENT_SQL = `
          r.price::float8 AS price,
          r."oldPrice"::float8 AS "oldPrice",
          r.currency, r.promo,
-         r.prev::float8 AS "previousPrice",
-         r.captured::text AS "capturedDate",
+         pv.price::float8 AS "previousPrice",
+         r."createdAt"::date::text AS "capturedDate",
          COALESCE((
            SELECT array_agg(f.name ORDER BY f.name)
            FROM product_flavor pf
@@ -78,6 +93,7 @@ const CURRENT_SQL = `
          ), '{}') AS flavors,
          pr.name AS distillery, pr.region AS region,
          bo.name AS bottler,
+         p."producerId", p."bottlerId",
          json_build_object(
            'name', p."nameSource",
            'type', p."typeSource",
@@ -87,15 +103,29 @@ const CURRENT_SQL = `
            'volume', p."volumeSource",
            'producer', p."producerSource"
          ) AS "factSources"
-  FROM ranked r
-  JOIN store_product sp ON sp.id = r."storeProductId"
+  FROM store_product sp
   JOIN product p ON p.id = sp."productId"
   JOIN store st ON st.id = sp."storeId"
   LEFT JOIN type t ON t.id = p."typeId"
   LEFT JOIN country c ON c.id = p."countryId"
   LEFT JOIN producer pr ON pr.id = p."producerId"
   LEFT JOIN producer bo ON bo.id = p."bottlerId"
-  WHERE r.rn = 1
+  JOIN LATERAL (
+    SELECT s.price, s."oldPrice", s.currency, s.promo, s."createdAt"
+    FROM price_snapshot s
+    WHERE s."storeProductId" = sp.id
+    ORDER BY s."createdAt" DESC
+    LIMIT 1
+  ) r ON true
+  LEFT JOIN LATERAL (
+    SELECT s.price
+    FROM price_snapshot s
+    WHERE s."storeProductId" = sp.id
+      AND s."createdAt" < r."createdAt"
+    ORDER BY s."createdAt" DESC
+    LIMIT 1
+  ) pv ON true
+  WHERE TRUE
 `;
 
 // A SKU the store has not listed before. `productId` appears in the INSERT and
@@ -293,22 +323,18 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
    * does match the standard `Glenfiddich 12` through some store's raw name,
    * and stopping there is exactly what used to hide every other 12-year-old.
    *
-   * The last three predicates are the running user's own, and all three filter
-   * the bottling rather than the offer, so they compose with the report's
-   * grouping for free: a group is either wholly present or wholly gone. The two
-   * blacklist ones are unconditional — a hidden bottling or brand is hidden on
-   * every report kind, and no query parameter turns them off.
+   * **The query knows nothing about users, and that is deliberate.** It used
+   * to end with three anti-joins against the caller's blacklists and
+   * favorites, which made every row of every report specific to one person.
+   * They now run in `ReportService.personalize`, over the grouped result,
+   * and the move is exact rather than close: all three tested the *bottling*
+   * (`product.id`, and the blacklist of makers against both producer slots),
+   * and every row of a group shares its bottling, so a group was already
+   * either wholly kept or wholly dropped. What the move buys is that this
+   * answer is the same for everybody and can therefore be computed once.
    *
-   * The brand rule tests **both producer slots**, and that is load-bearing
-   * rather than thorough: an independently bottled whisky carries its bottler
-   * in `bottlerId` and the distillery in `producerId`, so a rule naming
-   * Douglas Laing would otherwise hide none of the eighty-one bottlings it
-   * released. Its NULL semantics are unchanged from the `brandId` version it
-   * replaces — `IN (NULL, NULL)` is UNKNOWN, so the subquery finds nothing and
-   * `NOT EXISTS` holds, and a bottling the knowledge base cannot place
-   * survives every brand rule. That is still the only sane reading: there is
-   * no "unknown brand" to hide. `favoritesOnly` is the one that is opt-in, and
-   * with no favorites at all it correctly yields nothing.
+   * The row carries `producerId` and `bottlerId` for that pass to test
+   * against; they are stripped before the response leaves `ReportService`.
    *
    * @param filter - The report filter; empty fields mean no constraint.
    * @returns One row per matching offer.
@@ -342,8 +368,6 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
       filter.excludeFlavors?.length ? filter.excludeFlavors : null,
       aged?.name ?? null,
       aged?.age ?? null,
-      filter.userId,
-      filter.favoritesOnly ?? null,
       TRUSTED_FACT_SOURCES,
       hasUnknownCountry,
       filter.regions?.length ? filter.regions : null,
@@ -360,20 +384,20 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
       AND ($5::int IS NULL OR p."volumeMl" <= $5)
       AND ($6::text[] IS NULL
            OR (lower(c.code) = ANY($6)
-               AND p."countrySource" = ANY($16::text[]))
-           OR ($17 AND (p."countryId" IS NULL
+               AND p."countrySource" = ANY($14::text[]))
+           OR ($15 AND (p."countryId" IS NULL
                         OR p."countrySource" IS NULL
-                        OR NOT (p."countrySource" = ANY($16::text[])))))
+                        OR NOT (p."countrySource" = ANY($14::text[])))))
       AND ($7::text IS NULL OR p.name ILIKE '%' || $7 || '%'
            OR sp."nameOrig" ILIKE '%' || $7 || '%'
            OR ($12::text IS NOT NULL AND p.age = $13::int
                AND (p.name ILIKE '%' || $12 || '%'
                     OR sp."nameOrig" ILIKE '%' || $12 || '%')))
       AND ($8::text[] IS NULL
-           OR (t.name = ANY($8) AND p."typeSource" = ANY($16::text[]))
+           OR (t.name = ANY($8) AND p."typeSource" = ANY($14::text[]))
            OR ($9 AND (p."typeId" IS NULL
                        OR p."typeSource" IS NULL
-                       OR NOT (p."typeSource" = ANY($16::text[])))))
+                       OR NOT (p."typeSource" = ANY($14::text[])))))
       AND ($10::text[] IS NULL OR EXISTS (
         SELECT 1 FROM product_flavor pf
         JOIN flavor f ON f.id = pf."flavorId"
@@ -382,22 +406,12 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
         SELECT 1 FROM product_flavor pf
         JOIN flavor f ON f.id = pf."flavorId"
         WHERE pf."productId" = p.id AND f.name = ANY($11)))
-      AND NOT EXISTS (
-        SELECT 1 FROM blacklist_product bp
-        WHERE bp."userId" = $14 AND bp."productId" = p.id)
-      AND NOT EXISTS (
-        SELECT 1 FROM blacklist_producer bp
-        WHERE bp."userId" = $14
-          AND bp."producerId" IN (p."producerId", p."bottlerId"))
-      AND ($18::text[] IS NULL OR pr.region = ANY($18))
-      AND ($19::text[] IS NULL
-           OR pr.region IS NULL OR NOT (pr.region = ANY($19)))
-      AND ($20::boolean IS NOT TRUE
-           OR (p."typeSource" = ANY($16::text[])
-               AND p."countrySource" = ANY($16::text[])))
-      AND ($15::boolean IS NOT TRUE OR EXISTS (
-        SELECT 1 FROM favorite f
-        WHERE f."userId" = $14 AND f."productId" = p.id))
+      AND ($16::text[] IS NULL OR pr.region = ANY($16))
+      AND ($17::text[] IS NULL
+           OR pr.region IS NULL OR NOT (pr.region = ANY($17)))
+      AND ($18::boolean IS NOT TRUE
+           OR (p."typeSource" = ANY($14::text[])
+               AND p."countrySource" = ANY($14::text[])))
     `;
 
     return this.query(sql, params) as Promise<ReportCurrentRow[]>;
@@ -424,11 +438,12 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
    * Loads the current rows of every in-stock offer of the given bottlings.
    *
    * The collection reads its offers through this rather than through
-   * `findCurrentRows`: that query is the report's, so it mandates a `userId`
-   * and applies the caller's blacklist unconditionally. A bottle already
-   * bought must keep showing where it is sold even after its bottling is
-   * hidden from the catalogue — the exception `/report/history` already makes
-   * — and there is no user-scoped predicate to apply here at all.
+   * `findCurrentRows` because it wants no report semantics at all — not the
+   * filter, not the grouping. Since the user predicates moved out of that
+   * query into `ReportService`, neither reads a user here, so a bottle
+   * already bought keeps showing where it is sold even after its bottling is
+   * hidden from the catalogue: the same exception `/report/history` makes,
+   * now true by construction rather than by omission.
    *
    * @param productIds - Canonical bottling ids; an empty array reads nothing.
    * @returns One row per in-stock offer of those bottlings, unordered.

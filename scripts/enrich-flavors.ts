@@ -17,6 +17,8 @@ import { CoreProductService } from '~core/product';
 import { LlmFlavorService, ScrapeModule } from '~scrape';
 import { FlavorCandidateRow, ID } from '~types';
 
+import { bumpCatalogueCache, suppressBootBump } from './cache-bump';
+
 /**
  * How often to print a progress line, in classified items.
  */
@@ -280,6 +282,8 @@ async function main(): Promise<number> {
 
   initializeTransactionalContext();
 
+  suppressBootBump();
+
   const app = await NestFactory.createApplicationContext(EnrichFlavorsModule, {
     logger: ['error', 'warn'],
   });
@@ -343,6 +347,14 @@ async function main(): Promise<number> {
 
     return 0;
   } finally {
+    /**
+     * In the `finally`, so a run that failed halfway still invalidates what
+     * it had already written.
+     */
+    if (!options.dryRun) {
+      await bumpCatalogueCache(app, 'enrich-flavors');
+    }
+
     await app.close();
   }
 }

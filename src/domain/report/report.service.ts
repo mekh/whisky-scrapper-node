@@ -3,57 +3,88 @@ import { Injectable } from '@nestjs/common';
 import {
   BEST_MERGE_GUARD,
   BEST_MIN_STORES,
+  CACHE_GENERATION_CATALOGUE,
+  CACHE_SCOPE_REPORT,
   HISTORY_LIMIT,
   NEW_DAYS,
   WINDOW_DAYS,
 } from '~constants';
+import { CorePreferenceService } from '~core/preference';
 import { CorePriceSnapshotService } from '~core/price-snapshot';
 import { CoreStoreProductService } from '~core/store-product';
 import { ReportKind, ReportWindow } from '~enums';
 import { NotFoundError, ServerError } from '~errors';
+import { VersionedCacheService } from '~lib/cache';
 import {
   ID,
+  PreferenceFilterIds,
   PriceHistory,
   ReportCurrentRow,
   ReportFilter,
   ReportGroup,
   ReportOffer,
   ReportOptions,
+  ReportPersonalization,
+  ReportPublicGroup,
+  ReportPublicRow,
   ReportRow,
   TypePaginated,
 } from '~types';
-import { OfferPriceUtils } from '~utils';
+import { OfferPriceUtils, ReportCacheKeyUtils } from '~utils';
 
 @Injectable()
 export class ReportService {
   public constructor(
     private readonly offers: CoreStoreProductService,
     private readonly snapshots: CorePriceSnapshotService,
+    private readonly preferences: CorePreferenceService,
+    private readonly cache: VersionedCacheService,
   ) {}
 
   /**
    * Runs a report: builds the product groups for the requested kind, applies
-   * an optional global sort, then paginates.
+   * the caller's own view of them, then an optional global sort, then
+   * paginates.
    *
    * Pagination counts groups, not offers: a page of 50 is 50 distinct
    * bottlings however many stores carry them, which is the whole point of
    * grouping — a screen of offers used to be a handful of whiskies repeated.
    *
+   * The two reads run in parallel because they are independent: the catalogue
+   * side is the same for everybody, the preference side is small and keyed by
+   * one id.
+   *
    * @param kind - Which report to run.
-   * @param filter - The SQL-level product filter.
+   * @param filter - The SQL-level product filter, identical for every user.
    * @param options - Window, min-discount, sort, and pagination settings.
+   * @param personalization - Who the report is for. Required: it is what
+   *   keeps a caller from serving one user another's catalogue.
    * @returns A page of report groups plus the total matched group count.
    */
   public async report(
     kind: ReportKind,
     filter: ReportFilter,
     options: ReportOptions,
-  ): Promise<TypePaginated<ReportGroup>> {
-    const groups = await this.buildGroups(kind, filter, options);
-    const sorted = this.sort(groups, options);
+    personalization: ReportPersonalization,
+  ): Promise<TypePaginated<ReportPublicGroup>> {
+    const [groups, preferences] = await Promise.all([
+      this.cachedGroups(kind, filter, options),
+      this.preferences.findFilterIds(personalization.userId),
+    ]);
+
+    const visible = this.personalize(
+      groups,
+      preferences,
+      personalization.favoritesOnly,
+    );
+
+    const sorted = this.sort(visible, options);
 
     const offset = (options.page - 1) * options.perPage;
-    const data = sorted.slice(offset, offset + options.perPage);
+
+    const data = sorted
+      .slice(offset, offset + options.perPage)
+      .map((group) => this.toPublicGroup(group));
 
     return { data, total: sorted.length, limit: options.perPage, offset };
   }
@@ -79,12 +110,126 @@ export class ReportService {
       ? series[series.length - 2].price
       : null;
 
-    const product = this.enrich(current, {
+    const product = this.toPublicRow(this.enrich(current, {
       referencePrice: previous,
       isNew: false,
-    });
+    }));
 
     return { product, series };
+  }
+
+  /**
+   * The report's groups, from the cache when the catalogue has not changed
+   * since they were built.
+   *
+   * What is cached is this — the whole matching set, unsorted and
+   * unpaginated, before anybody's preferences are applied. Everything about
+   * that is deliberate: the set is the expensive part and it is the same for
+   * every user, so one entry serves them all; sorting and paging are applied
+   * to it afterwards, so one entry also serves every page of a report
+   * instead of one entry per page.
+   *
+   * `new` and `drops` additionally carry the UTC day, because they are the
+   * two kinds that read the clock: `daysNew`, `daysDiscount` and the
+   * `today`/`yesterday` windows all change at midnight with no write to
+   * trigger a generation bump, so without the day in the key the morning
+   * would serve yesterday's arithmetic. The other three derive their window
+   * from the data (`cutoff`), not from the clock, and need no day.
+   *
+   * @param kind - Which report to build.
+   * @param filter - The catalogue filter, identical for every user.
+   * @param options - Window, min-discount, sort and pagination settings.
+   * @returns The groups in their natural order.
+   */
+  private async cachedGroups(
+    kind: ReportKind,
+    filter: ReportFilter,
+    options: ReportOptions,
+  ): Promise<ReportGroup[]> {
+    const readsTheClock = kind === ReportKind.NEW || kind === ReportKind.DROPS;
+    const day = readsTheClock ? this.today() : null;
+
+    return this.cache.getOrCompute(
+      {
+        scope: CACHE_SCOPE_REPORT,
+        suffix: ReportCacheKeyUtils.suffix(kind, filter, options, day),
+      },
+      CACHE_GENERATION_CATALOGUE,
+      () => this.buildGroups(kind, filter, options),
+    );
+  }
+
+  /**
+   * Applies one user's own view to the groups the report selected: their
+   * blacklists always, their favorites when they asked for only those.
+   *
+   * This is the pass that replaced three anti-joins inside the current-rows
+   * query, and it is equivalent rather than merely similar. Each predicate
+   * tested the bottling — the hidden product by id, the hidden maker against
+   * both producer slots — and every row of a group shares its bottling, so a
+   * group could never have been half-selected in SQL either. Filtering rows
+   * before grouping and groups after grouping therefore choose the same
+   * groups with the same offers, which is what lets `best` keep its
+   * two-store guard and `low` its per-offer groups untouched.
+   *
+   * A bottling the knowledge base could not place survives every maker rule,
+   * exactly as the SQL did: `IN (NULL, NULL)` was UNKNOWN there, and a null
+   * id is in no `Set` here. There is no "unknown maker" to hide.
+   *
+   * @param groups - The groups the report selected, before sorting.
+   * @param preferences - The caller's favorites and blacklists, as ids.
+   * @param favoritesOnly - When true, keep only favorited bottlings.
+   * @returns The groups this user may see, in the input order.
+   */
+  private personalize(
+    groups: ReportGroup[],
+    preferences: PreferenceFilterIds,
+    favoritesOnly?: boolean,
+  ): ReportGroup[] {
+    const hiddenProducts = new Set(preferences.blacklistProducts);
+    const hiddenMakers = new Set(preferences.blacklistProducers);
+    const favorites = new Set(preferences.favorites);
+
+    return groups.filter((group) => {
+      const hidden = hiddenProducts.has(group.productId)
+        || (group.producerId !== null && hiddenMakers.has(group.producerId))
+        || (group.bottlerId !== null && hiddenMakers.has(group.bottlerId));
+
+      if (hidden) {
+        return false;
+      }
+
+      return !favoritesOnly || favorites.has(group.productId);
+    });
+  }
+
+  /**
+   * Drops the producer ids a group carries for {@link personalize} alone.
+   *
+   * They are stripped here rather than left to the response validator: the
+   * outgoing pipe strips undeclared properties silently, so relying on it
+   * would make the wire contract depend on a validator's default instead of
+   * on a statement in the code.
+   *
+   * @param group - The group to publish.
+   * @returns The group without its maker ids.
+   */
+  private toPublicGroup(group: ReportGroup): ReportPublicGroup {
+    const { producerId, bottlerId, ...published } = group;
+
+    return published;
+  }
+
+  /**
+   * Drops the producer ids a single row carries, for `/report/history`.
+   *
+   * @param row - The row to publish.
+   * @returns The row without its maker ids.
+   */
+  private toPublicRow(row: ReportRow): ReportPublicRow {
+    const { producerId, bottlerId, ...published } = row;
+
+    return published;
   }
 
   /**

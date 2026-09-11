@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 
+import { CACHE_GENERATION_CATALOGUE } from '~constants';
 import { FactSource, ListingStop } from '~enums';
 
 import { ScrapePersistService } from '../../src/scrape/persist/scrape-persist.service';
@@ -12,6 +13,8 @@ import type { CoreProductService } from '~core/product';
 import type { CoreStoreProductService } from '~core/store-product';
 import type { CoreTypeService } from '~core/type';
 import type { ListingResult, ProductSnapshot } from '~types';
+
+import type { VersionedCacheService } from '~lib/cache';
 
 import type { KbApplyService } from '../../src/scrape/kb/kb-apply.service';
 
@@ -107,6 +110,7 @@ interface KbMocks {
 }
 
 interface Harness {
+  cache: { bumpAfterCommit: jest.Mock };
   service: ScrapePersistService;
   kb: KbMocks;
   products: ProductMocks;
@@ -185,6 +189,10 @@ function makeService(
     markOutOfStockForDay: jest.fn().mockResolvedValue(0),
   };
 
+  const cache = {
+    bumpAfterCommit: jest.fn(),
+  };
+
   const service = new ScrapePersistService(
     lookups as unknown as CoreTypeService,
     lookups as unknown as CoreFlavorService,
@@ -194,9 +202,11 @@ function makeService(
     snapshots as unknown as CorePriceSnapshotService,
     producers as unknown as CoreProducerService,
     kbApply as unknown as KbApplyService,
+    cache as unknown as VersionedCacheService,
   );
 
   return {
+    cache,
     service,
     products,
     offers,
@@ -864,5 +874,45 @@ describe('ScrapePersistService: the knowledge-base pass', () => {
     await expect(
       service.persist(STORE_ID, [snap('a')], [], DAY, COMPLETE),
     ).resolves.toMatchObject({ stored: 1 });
+  });
+});
+
+describe('ScrapePersistService — telling the cache', () => {
+  it('registers a bump naming the store it wrote', async () => {
+    const { service, cache } = makeService(1);
+
+    await service.persist(STORE_ID, [snap('a')], [], DAY, COMPLETE);
+
+    expect(cache.bumpAfterCommit).toHaveBeenCalledWith(
+      CACHE_GENERATION_CATALOGUE,
+      `persist:${STORE_ID}`,
+    );
+  });
+
+  it('registers the bump rather than performing it', async () => {
+    /**
+     * The distinction the whole design rests on. A flush performed here
+     * would run inside the transaction, where the rows it is meant to
+     * supersede are still invisible to every other connection — so the next
+     * request would refill the cache from the pre-commit catalogue and the
+     * stale answer would outlive the write. Registration defers it past the
+     * commit.
+     */
+    const { service, cache } = makeService(1);
+
+    await service.persist(STORE_ID, [snap('a')], [], DAY, COMPLETE);
+
+    expect(cache.bumpAfterCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('registers nothing when the write fails', async () => {
+    const { service, cache, snapshots } = makeService(1);
+
+    snapshots.upsertForDate.mockRejectedValue(new Error('constraint'));
+
+    await expect(service.persist(STORE_ID, [snap('a')], [], DAY, COMPLETE))
+      .rejects.toThrow('constraint');
+
+    expect(cache.bumpAfterCommit).not.toHaveBeenCalled();
   });
 });

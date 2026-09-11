@@ -9,8 +9,9 @@ import type {
   CtxUser,
   PriceHistory,
   ReportFilter,
-  ReportGroup,
   ReportOptions,
+  ReportPersonalization,
+  ReportPublicGroup,
   TypePaginated,
 } from '~types';
 
@@ -37,18 +38,17 @@ export class ReportController {
     @CurrentUser() user: CtxUser,
     @Param() params: ReportKindParamsDto,
     @Query() query: ReportQueryDto,
-  ): Promise<TypePaginated<ReportGroup>> {
+  ): Promise<TypePaginated<ReportPublicGroup>> {
     return this.reportService.report(
       params.kind,
-      this.toFilter(query, user),
+      this.toFilter(query),
       this.toOptions(query),
+      this.toPersonalization(query, user),
     );
   }
 
-  private toFilter(query: ReportQueryDto, user: CtxUser): ReportFilter {
+  private toFilter(query: ReportQueryDto): ReportFilter {
     return {
-      userId: user.id,
-      favoritesOnly: query.favoritesOnly,
       stores: query.stores,
       minPrice: query.minPrice,
       maxPrice: query.maxPrice,
@@ -62,6 +62,16 @@ export class ReportController {
       excludeRegions: query.excludeRegions,
       verifiedFacts: query.verifiedFacts,
       name: query.name,
+    };
+  }
+
+  private toPersonalization(
+    query: ReportQueryDto,
+    user: CtxUser,
+  ): ReportPersonalization {
+    return {
+      userId: user.id,
+      favoritesOnly: query.favoritesOnly,
     };
   }
 

@@ -5,6 +5,7 @@ import { CoreFlavorService } from '~core/flavor';
 import { CoreProducerService } from '~core/producer';
 import { CoreProductService } from '~core/product';
 import { KbStatus, PeatProfile, ProducerKind } from '~enums';
+import { VersionedCacheService } from '~lib/cache';
 import {
   KbApplyService,
   KbReconcileService,
@@ -180,6 +181,9 @@ describe('producer review (integration)', () => {
       producers,
       products,
       new KbApplyService(resolver),
+      {
+        bumpAfterCommit: (): void => undefined,
+      } as unknown as VersionedCacheService,
     );
 
     const review = new ProductReviewService(

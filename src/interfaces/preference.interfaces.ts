@@ -122,6 +122,34 @@ export interface PreferenceProductRow extends PreferenceProduct {
 }
 
 /**
+ * The id sets a report needs to apply one user's view to a set of bottlings.
+ *
+ * Separate from {@link Preference}, which is the API payload: that one states
+ * blacklisted makers as names, because names are the only form the wire
+ * speaks, while the report has to compare ids against a bottling's two
+ * producer slots. Read once per report request and turned into `Set`s, so the
+ * order the ids arrive in carries no meaning and none is imposed.
+ */
+export interface PreferenceFilterIds {
+  /**
+   * Canonical product ids the user favorited.
+   */
+  favorites: ID[];
+
+  /**
+   * Canonical product ids the user hid.
+   */
+  blacklistProducts: ID[];
+
+  /**
+   * Producer ids the user hid. Matched against a bottling's distillery and
+   * its bottler alike, so a rule naming an independent bottler reaches what
+   * it released.
+   */
+  blacklistProducers: ID[];
+}
+
+/**
  * The resolved, core-level shape of a blacklist change: brand names have
  * already been turned into ids, so the persistence layer never resolves names.
  */

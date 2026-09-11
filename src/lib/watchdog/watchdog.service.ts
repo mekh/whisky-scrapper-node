@@ -9,6 +9,7 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { DataSource } from 'typeorm';
 
 import { WatchdogConfig } from '~config';
+import { VersionedCacheService } from '~lib/cache';
 import { ValkeyService } from '~lib/valkey';
 import type { DriverPoolLike, WatchdogPoolStats, WatchdogSample } from '~types';
 
@@ -58,6 +59,7 @@ export class WatchdogService
     private readonly config: WatchdogConfig,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly valkey: ValkeyService,
+    private readonly cache: VersionedCacheService,
   ) {}
 
   /**
@@ -110,7 +112,10 @@ export class WatchdogService
 
     this.histogram.reset();
 
-    const valkeyPingMs = await this.pingValkey();
+    const [valkeyPingMs, cachePingMs] = await Promise.all([
+      this.timedPing(() => this.valkey.ping()),
+      this.timedPing(() => this.cache.ping()),
+    ]);
 
     return {
       lagMeanMs,
@@ -120,6 +125,8 @@ export class WatchdogService
       handles: this.countHandles(),
       pool: this.poolStats(),
       valkeyPingMs,
+      cache: this.cache.stats(),
+      cachePingMs,
     };
   }
 
@@ -189,16 +196,19 @@ export class WatchdogService
   }
 
   /**
-   * Times a `PING` to Valkey under its own deadline.
+   * Times a `PING` under its own deadline.
    *
    * The deadline is not redundant with the client's `commandTimeout`: this is
    * the one call that has to survive a client whose own timeouts were
    * misconfigured, so it never trusts the client to come back.
    *
+   * @param probe - Issues the ping against one client.
    * @returns Round-trip time in milliseconds, or null when the ping failed or
    *   did not answer in time.
    */
-  private async pingValkey(): Promise<number | null> {
+  private async timedPing(
+    probe: () => Promise<unknown>,
+  ): Promise<number | null> {
     const startedAt = Date.now();
 
     const expired = new Promise<null>((resolve) => {
@@ -209,7 +219,7 @@ export class WatchdogService
       timer.unref();
     });
 
-    const ping = this.valkey.ping()
+    const ping = probe()
       .then(() => Date.now() - startedAt)
       .catch(() => null);
 
@@ -239,9 +249,13 @@ export class WatchdogService
    * @returns True when something in the sample is out of order.
    */
   private isDegraded(sample: WatchdogSample): boolean {
+    const cacheStalled = sample.cache?.enabled === true
+      && (sample.cachePingMs === null || sample.cache.dirty);
+
     return sample.lagMaxMs >= this.config.lagWarnMs
       || sample.valkeyPingMs === null
-      || (sample.pool?.waiting ?? 0) > 0;
+      || (sample.pool?.waiting ?? 0) > 0
+      || cacheStalled;
   }
 
   /**
@@ -261,7 +275,42 @@ export class WatchdogService
 
     return `heartbeat: loop lag ${sample.lagMeanMs}/${sample.lagMaxMs} ms `
       + `(mean/max), rss ${sample.rssMb} MB, heap ${sample.heapMb} MB, `
-      + `handles ${sample.handles}, db pool ${pool}, valkey ${valkey}`;
+      + `handles ${sample.handles}, db pool ${pool}, valkey ${valkey}, `
+      + `cache ${this.formatCache(sample)}`;
+  }
+
+  /**
+   * Renders the cache segment of the heartbeat.
+   *
+   * The four counters are cumulative since the process started, so an
+   * operator reads two consecutive lines and subtracts — the same way the
+   * pool numbers beside them are already read. `DIRTY` leads the segment
+   * when it applies, because it is the one state here that means the cache
+   * is knowingly being bypassed.
+   *
+   * @param sample - The heartbeat to render.
+   * @returns The cache segment.
+   */
+  private formatCache(sample: WatchdogSample): string {
+    const stats = sample.cache;
+
+    if (!stats?.enabled) {
+      return 'off';
+    }
+
+    const ping = sample.cachePingMs === null
+      ? 'NO ANSWER'
+      : `${sample.cachePingMs} ms`;
+
+    const counters = `${stats.hits}h/${stats.misses}m/`
+      + `${stats.errors}e/${stats.bypasses}b`;
+
+    const generation = stats.generation === null
+      ? 'unknown'
+      : String(stats.generation);
+
+    return `${stats.dirty ? 'DIRTY ' : ''}${counters} `
+      + `gen ${generation} ping ${ping}`;
   }
 
   /**

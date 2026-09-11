@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '~config';
 import { SCRAPE_ADAPTER_FACTORY } from '~constants';
 import { CoreWhiskyModule } from '~core/core-whisky.module';
+import { CacheModule } from '~lib/cache';
 
 import { AdapterRegistryService } from './adapters/adapter-registry.service';
 import { HttpClientFactory } from './http/http-client.factory';
@@ -26,6 +27,7 @@ import { ScrapeService } from './scrape.service';
  */
 @Module({
   imports: [
+    CacheModule,
     ConfigModule,
     CoreWhiskyModule,
   ],

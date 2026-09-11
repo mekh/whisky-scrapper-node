@@ -6,6 +6,7 @@ import {
   Preference,
   PreferenceBrand,
   PreferenceDetails,
+  PreferenceFilterIds,
   PreferenceProductRow,
 } from '~types';
 
@@ -33,6 +34,33 @@ const FIND_SQL = `
       JOIN producer pr ON pr.id = bp2."producerId"
       WHERE bp2."userId" = $1
     ), '{}') AS "blacklistBrands"
+`;
+
+/**
+ * The same three lists as {@link FIND_SQL}, as ids and for the report alone.
+ *
+ * It differs from that query in the one column that matters: blacklisted
+ * makers come back as `producerId`, not as `producer.name`, because the
+ * report compares them against a bottling's two producer slots. That also
+ * drops the join to `producer`, so a maker the knowledge base has since
+ * removed cannot quietly stop hiding what the user hid.
+ *
+ * No `ORDER BY`: every array here becomes a `Set`.
+ */
+const FILTER_IDS_SQL = `
+  SELECT
+    COALESCE((
+      SELECT array_agg(f."productId")
+      FROM favorite f WHERE f."userId" = $1
+    ), '{}') AS favorites,
+    COALESCE((
+      SELECT array_agg(bp."productId")
+      FROM blacklist_product bp WHERE bp."userId" = $1
+    ), '{}') AS "blacklistProducts",
+    COALESCE((
+      SELECT array_agg(bp2."producerId")
+      FROM blacklist_producer bp2 WHERE bp2."userId" = $1
+    ), '{}') AS "blacklistProducers"
 `;
 
 /**
@@ -121,6 +149,32 @@ export class PreferenceRepository extends Repository<FavoriteEntity> {
       favorites: [],
       blacklistProducts: [],
       blacklistBrands: [],
+    };
+  }
+
+  /**
+   * Loads the id sets the report applies one user's view with.
+   *
+   * The report used to ask this question in SQL, as three anti-joins inside
+   * the current-rows query, which made every row of every report
+   * user-specific. Asking it once per request instead is what lets the
+   * catalogue side of a report be computed for nobody in particular — and it
+   * is exact rather than approximate, because all three predicates test the
+   * bottling, so a group is either wholly kept or wholly dropped.
+   *
+   * @param userId - Whose preferences to read.
+   * @returns The three id sets; each is empty when the user has no entries.
+   */
+  public async findFilterIds(userId: ID): Promise<PreferenceFilterIds> {
+    const rows = await this.query(
+      FILTER_IDS_SQL,
+      [userId],
+    ) as PreferenceFilterIds[];
+
+    return rows[0] ?? {
+      favorites: [],
+      blacklistProducts: [],
+      blacklistProducers: [],
     };
   }
 

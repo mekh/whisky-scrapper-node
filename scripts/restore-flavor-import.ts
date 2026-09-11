@@ -16,7 +16,10 @@ import {
 
 import { ConfigModule, DbConfig } from '~config';
 import { CoreWhiskyModule } from '~core/core-whisky.module';
+import { CacheModule } from '~lib/cache';
 import { LLM_FLAVOR_TAGS } from '~scrape/normalize/brand-info.constants';
+
+import { bumpCatalogueCache, suppressBootBump } from './cache-bump';
 
 /**
  * The classification shipped by `1786350000000-flavor-llm-import`, which is the
@@ -55,6 +58,7 @@ const CSV = join(
           ?? addTransactionalDataSource(new DataSource(options));
       },
     }),
+    CacheModule,
     CoreWhiskyModule,
   ],
 })
@@ -87,6 +91,8 @@ async function main(): Promise<number> {
   const dryRun = process.argv.slice(2).includes('--dry-run');
 
   initializeTransactionalContext();
+
+  suppressBootBump();
 
   const app = await NestFactory.createApplicationContext(RestoreModule, {
     logger: ['error', 'warn'],
@@ -192,6 +198,14 @@ async function main(): Promise<number> {
 
     return 0;
   } finally {
+    /**
+     * In the `finally`, so a run that failed halfway still invalidates what
+     * it had already written.
+     */
+    if (!dryRun) {
+      await bumpCatalogueCache(app, 'restore-flavor-import');
+    }
+
     await app.close();
   }
 }

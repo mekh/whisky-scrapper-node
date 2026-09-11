@@ -1,17 +1,19 @@
 import { TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 
+import { CorePreferenceService } from '~core/preference';
 import { CorePriceSnapshotService } from '~core/price-snapshot';
 import { CoreProducerService } from '~core/producer';
 import { CoreProductService } from '~core/product';
 import { CoreStoreProductService } from '~core/store-product';
 import { ReportKind, ReportWindow, SortOrder } from '~enums';
-import type { ID, ReportGroup, ReportOptions } from '~types';
+import type { ID, ReportOptions, ReportPublicGroup } from '~types';
 
 import { ReportService } from '../../src/domain/report/report.service';
 import { KbApplyService } from '../../src/scrape/kb/kb-apply.service';
 import { KbResolverService } from '../../src/scrape/kb/kb-resolver.service';
 
+import { passthroughCache } from '../cache-stub';
 import {
   clearCatalogue,
   ensureFlavors,
@@ -158,16 +160,26 @@ describe('peat exclusion end to end (integration)', () => {
       strict: false,
     });
 
-    const report = new ReportService(offers, snapshots);
+    const preferences = moduleRef.get(CorePreferenceService, {
+      strict: false,
+    });
 
-    const names = (groups: ReportGroup[]): string[] =>
+    const report = new ReportService(
+      offers,
+      snapshots,
+      preferences,
+      passthroughCache(),
+    );
+
+    const names = (groups: ReportPublicGroup[]): string[] =>
       groups.map((group) => group.name ?? group.nameOrig);
 
     const run = async (excludeFlavors?: string[]): Promise<string[]> => {
       const page = await report.report(
         ReportKind.CATALOG,
-        { userId: USER_ID, name: TOKEN, excludeFlavors },
+        { name: TOKEN, excludeFlavors },
         OPTIONS,
+        { userId: USER_ID },
       );
 
       return names(page.data);

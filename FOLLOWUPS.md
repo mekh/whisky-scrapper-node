@@ -129,8 +129,16 @@ rows today, so there is no live bug — but nothing _enforces_ that agreement
 (a backdated upsert or a midnight-straddling run could split them), and the
 legacy form cannot use the `price_snapshot_captured_idx` index.
 
-**Fix**: migrate the legacy queries to `capturedOn`, one behavioral
-equivalence test per query. No schema change needed.
+**Partly done (2026-09-10).** The report path moved: `latestDate` now reads
+`MAX("capturedOn")` and `priceExtremes` bounds its window on `capturedOn`,
+both verified to agree with the old form over every row of a
+production-shaped copy (zero mismatches in 571 383). `CURRENT_SQL` still
+reports `capturedDate` as `createdAt::date`, and `priceSeries` and
+`currentPriceSince` still key on `createdAt` — they order by it rather than
+bucketing it, which is what the column is for.
+
+**Fix**: migrate `CURRENT_SQL`'s `capturedDate` projection, with a
+behavioural equivalence test. No schema change needed.
 
 ## 5. Dashboard cache lifetime is static for immutable ranges
 

@@ -17,8 +17,11 @@ import { CoreCountryService } from '~core/country';
 import { CoreProductService } from '~core/product';
 import { CoreTypeService } from '~core/type';
 import { FactSource } from '~enums';
+import { CacheModule } from '~lib/cache';
 import { NormalizeService } from '~scrape/normalize/normalize.service';
 import type { ID, ProductFillInput } from '~types';
+
+import { bumpCatalogueCache, suppressBootBump } from './cache-bump';
 
 import type { RederiveRow } from './rederive-name-facts.interfaces';
 
@@ -49,6 +52,7 @@ import type { RederiveRow } from './rederive-name-facts.interfaces';
           ?? addTransactionalDataSource(new DataSource(options));
       },
     }),
+    CacheModule,
     CoreWhiskyModule,
   ],
 })
@@ -82,6 +86,8 @@ async function main(): Promise<number> {
   const dryRun = argv.includes('--dry-run');
 
   initializeTransactionalContext();
+
+  suppressBootBump();
 
   const app = await NestFactory.createApplicationContext(RederiveModule, {
     logger: ['error', 'warn'],
@@ -216,6 +222,14 @@ async function main(): Promise<number> {
 
     return 0;
   } finally {
+    /**
+     * In the `finally`, so a run that failed halfway still invalidates what
+     * it had already written.
+     */
+    if (!dryRun) {
+      await bumpCatalogueCache(app, 'rederive-name-facts');
+    }
+
     await app.close();
   }
 }

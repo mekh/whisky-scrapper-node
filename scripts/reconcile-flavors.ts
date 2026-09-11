@@ -21,6 +21,8 @@ import { KbReconcileService } from '~scrape/kb/kb-reconcile.service';
 import { KbResolverService } from '~scrape/kb/kb-resolver.service';
 import type { ID, KbApplyPlan, KbReconcileRow, KbResolution } from '~types';
 
+import { suppressBootBump } from './cache-bump';
+
 import type { ReconcileOptions } from './reconcile-flavors.interfaces';
 
 /**
@@ -394,6 +396,8 @@ async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
 
   initializeTransactionalContext();
+
+  suppressBootBump();
 
   const app = await NestFactory.createApplicationContext(ReconcileModule, {
     logger: ['error', 'warn'],

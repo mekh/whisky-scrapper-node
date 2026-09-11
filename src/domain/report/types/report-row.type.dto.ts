@@ -8,9 +8,9 @@ import {
   IsString,
 } from 'class-validator';
 
-import type { ID, ReportRow } from '~types';
+import type { ID, ReportPublicRow } from '~types';
 
-export class ReportRowType implements ReportRow {
+export class ReportRowType implements ReportPublicRow {
   /**
    * Store-offer id: one row per store × SKU, and what `/report/history` and
    * `/product/:id` take.

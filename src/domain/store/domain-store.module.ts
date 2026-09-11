@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '~config';
 import { CoreWhiskyModule } from '~core/core-whisky.module';
 import { DomainPushModule } from '~domain/push';
+import { CacheModule } from '~lib/cache';
 import { SyncFileLogModule } from '~lib/sync-file-log';
 import { ScrapeModule } from '~scrape';
 
@@ -19,6 +20,7 @@ import { SyncOrchestratorService } from './sync-orchestrator.service';
  */
 @Module({
   imports: [
+    CacheModule,
     ConfigModule,
     CoreWhiskyModule,
     DomainPushModule,

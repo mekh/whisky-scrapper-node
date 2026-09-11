@@ -1,5 +1,6 @@
 export { AppConfig } from './parts/app.config';
 export { AuthConfig } from './parts/auth.config';
+export { CacheConfig } from './parts/cache.config';
 export { CurrencyConfig } from './parts/currency.config';
 export { DbConfig } from './parts/db.config';
 export { JwtAccessConfig } from './parts/jwt-access.config';

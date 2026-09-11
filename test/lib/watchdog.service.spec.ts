@@ -4,8 +4,10 @@ import { Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 import { WatchdogConfig } from '~config';
+import { VersionedCacheService } from '~lib/cache';
 import { ValkeyService } from '~lib/valkey';
 import { WatchdogService } from '~lib/watchdog';
+import type { CacheStats } from '~types';
 
 /**
  * Builds a watchdog over stub dependencies.
@@ -17,6 +19,8 @@ import { WatchdogService } from '~lib/watchdog';
 function build(options: {
   pool?: unknown;
   ping?: () => Promise<string>;
+  cachePing?: () => Promise<string>;
+  cache?: Partial<CacheStats>;
   config?: Partial<WatchdogConfig>;
 } = {}): WatchdogService {
   const config = {
@@ -36,7 +40,23 @@ function build(options: {
     ping: options.ping ?? ((): Promise<string> => Promise.resolve('PONG')),
   } as unknown as ValkeyService;
 
-  return new WatchdogService(config, dataSource, valkey);
+  const cache = {
+    ping: options.cachePing
+      ?? ((): Promise<string> => Promise.resolve('PONG')),
+    stats: (): CacheStats => ({
+      enabled: true,
+      hits: 0,
+      misses: 0,
+      errors: 0,
+      bypasses: 0,
+      generation: 1,
+      lastBumpAt: null,
+      dirty: false,
+      ...options.cache,
+    }),
+  } as unknown as VersionedCacheService;
+
+  return new WatchdogService(config, dataSource, valkey, cache);
 }
 
 /**
@@ -192,6 +212,96 @@ describe('WatchdogService', () => {
 
     expect(debug).not.toHaveBeenCalled();
 
+    debug.mockRestore();
+  });
+});
+
+describe('WatchdogService — the cache segment', () => {
+  /**
+   * Renders one heartbeat line.
+   *
+   * @param service - The service to sample.
+   * @returns The line an operator would read.
+   */
+  const line = async (service: WatchdogService): Promise<string> => {
+    const sample = await service.sample();
+
+    return (
+      service as unknown as { format: (s: typeof sample) => string }
+    ).format(sample);
+  };
+
+  it('states the counters, the generation and its own ping', async () => {
+    const service = build({
+      cache: { hits: 12, misses: 3, errors: 1, bypasses: 2, generation: 42 },
+    });
+
+    expect(await line(service))
+      .toContain('cache 12h/3m/1e/2b gen 42 ping');
+  });
+
+  it('says so plainly when the cache is off', async () => {
+    const service = build({ cache: { enabled: false } });
+
+    expect(await line(service)).toContain('cache off');
+  });
+
+  it('leads with DIRTY when a bump is outstanding', async () => {
+    const service = build({ cache: { dirty: true } });
+
+    expect(await line(service)).toContain('cache DIRTY');
+  });
+
+  it('pings the cache separately from the session store', async () => {
+    /**
+     * They can be different servers — production gives the cache its own so
+     * it can evict, which the session instance must never do — so one
+     * answering says nothing about the other.
+     */
+    const service = build({
+      cachePing: () => Promise.reject(new Error('down')),
+    });
+
+    const sample = await service.sample();
+
+    expect(sample.valkeyPingMs).not.toBeNull();
+    expect(sample.cachePingMs).toBeNull();
+  });
+
+  it('warns when the cache instance stops answering', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+
+    const service = build({
+      config: { intervalMs: 5 },
+      cachePing: () => Promise.reject(new Error('down')),
+    });
+
+    service.onApplicationBootstrap();
+    await until(() => warn.mock.calls.length > 0, 200);
+    service.onModuleDestroy();
+
+    expect(warn).toHaveBeenCalled();
+
+    warn.mockRestore();
+  });
+
+  it('does not warn about a cache that is switched off', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    const debug = jest.spyOn(Logger.prototype, 'debug').mockImplementation();
+
+    const service = build({
+      config: { intervalMs: 5 },
+      cache: { enabled: false },
+      cachePing: () => Promise.reject(new Error('down')),
+    });
+
+    service.onApplicationBootstrap();
+    await until(() => debug.mock.calls.length > 0, 200);
+    service.onModuleDestroy();
+
+    expect(warn).not.toHaveBeenCalled();
+
+    warn.mockRestore();
     debug.mockRestore();
   });
 });

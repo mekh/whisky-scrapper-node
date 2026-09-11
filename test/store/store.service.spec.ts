@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 
+import { CACHE_GENERATION_CATALOGUE } from '~constants';
 import { NotFoundError } from '~errors';
 
 import { StoreService } from '../../src/domain/store/store.service';
@@ -7,6 +8,7 @@ import { StoreService } from '../../src/domain/store/store.service';
 import type { CoreStoreService } from '~core/store';
 import type { CoreStoreProductService } from '~core/store-product';
 import type { CoreSyncLogService } from '~core/sync-log';
+import type { VersionedCacheService } from '~lib/cache';
 import type { SyncFileLogService } from '~lib/sync-file-log';
 import type { EntitySyncLog, StoreListItem } from '~types';
 import type {
@@ -18,6 +20,11 @@ interface Fakes {
    * The service under test.
    */
   service: StoreService;
+
+  /**
+   * The catalogue cache, so a test can assert it was told about a write.
+   */
+  cache: { bumpAfterCommit: jest.Mock };
 
   /**
    * Store lookups.
@@ -69,15 +76,18 @@ function makeService(
   const fileLog = {
     readLogFile: jest.fn().mockResolvedValue(content),
   };
+  const cache = { bumpAfterCommit: jest.fn() };
+
   const service = new StoreService(
     stores as unknown as CoreStoreService,
     {} as CoreStoreProductService,
     syncLogs as unknown as CoreSyncLogService,
     {} as SyncOrchestratorService,
     fileLog as unknown as SyncFileLogService,
+    cache as unknown as VersionedCacheService,
   );
 
-  return { service, stores, syncLogs, fileLog };
+  return { service, stores, syncLogs, fileLog, cache };
 }
 
 describe('StoreService.syncLogFile', () => {
@@ -136,5 +146,44 @@ describe('StoreService.syncLogFile', () => {
 
     await expect(service.syncLogFile('maudau', 'log-1'))
       .rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe('StoreService.setActive', () => {
+  it(
+    'registers a bump, because /meta states which stores are active',
+    async () => {
+      const { service, stores, syncLogs, cache } = makeService(
+        { id: 's1', slug: 'novus' } as unknown as StoreListItem,
+        null,
+      );
+
+      const withSetter = stores as unknown as { setActiveBySlug: jest.Mock };
+      withSetter.setActiveBySlug = jest.fn().mockResolvedValue(true);
+
+      const withLogs = syncLogs as unknown as {
+        lastSuccessfulByStore: jest.Mock;
+      };
+      withLogs.lastSuccessfulByStore = jest.fn()
+        .mockResolvedValue(new Map<string, Date>());
+
+      await service.setActive('novus', false);
+
+      expect(cache.bumpAfterCommit).toHaveBeenCalledWith(
+        CACHE_GENERATION_CATALOGUE,
+        'store:active',
+      );
+    },
+  );
+
+  it('registers nothing for a store that does not exist', async () => {
+    const { service, stores, cache } = makeService(null, null);
+
+    const withSetter = stores as unknown as { setActiveBySlug: jest.Mock };
+    withSetter.setActiveBySlug = jest.fn().mockResolvedValue(false);
+
+    await expect(service.setActive('nope', true)).rejects.toThrow();
+
+    expect(cache.bumpAfterCommit).not.toHaveBeenCalled();
   });
 });

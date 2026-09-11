@@ -1,7 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Transactional } from 'typeorm-transactional';
 
-import { ABV_TOLERANCE, PERSIST_SWEEP_GUARD_RATIO } from '~constants';
+import {
+  ABV_TOLERANCE,
+  CACHE_GENERATION_CATALOGUE,
+  PERSIST_SWEEP_GUARD_RATIO,
+} from '~constants';
 import { CoreCountryService } from '~core/country';
 import { CoreFlavorService } from '~core/flavor';
 import { CorePriceSnapshotService } from '~core/price-snapshot';
@@ -10,6 +14,7 @@ import { CoreProductService } from '~core/product';
 import { CoreStoreProductService } from '~core/store-product';
 import { CoreTypeService } from '~core/type';
 import { FactSource, ProductFactField } from '~enums';
+import { VersionedCacheService } from '~lib/cache';
 import { ProductMatchUtils, ProductNameUtils } from '~utils';
 
 import { KbApplyService } from '../kb/kb-apply.service';
@@ -88,6 +93,8 @@ export class ScrapePersistService {
 
   private readonly kb: KbApplyService;
 
+  private readonly cache: VersionedCacheService;
+
   public constructor(
     types: CoreTypeService,
     flavors: CoreFlavorService,
@@ -97,6 +104,7 @@ export class ScrapePersistService {
     snapshots: CorePriceSnapshotService,
     producers: CoreProducerService,
     kb: KbApplyService,
+    cache: VersionedCacheService,
   ) {
     this.types = types;
     this.flavors = flavors;
@@ -106,6 +114,7 @@ export class ScrapePersistService {
     this.snapshots = snapshots;
     this.producers = producers;
     this.kb = kb;
+    this.cache = cache;
   }
 
   /**
@@ -229,6 +238,21 @@ export class ScrapePersistService {
     );
 
     await this.snapshots.markOutOfStockForDay(storeId, capturedOn);
+
+    /**
+     * Registered here, fired after this transaction commits.
+     *
+     * The `persisted` event below reads as the same moment and is not: it is
+     * emitted from inside the transaction, so a cache flush hung on it would
+     * run while the rows are still invisible to everyone else, and the very
+     * next request would refill the cache from the pre-commit catalogue.
+     * That the two lines sit next to each other and mean different things is
+     * the reason this comment exists.
+     */
+    this.cache.bumpAfterCommit(
+      CACHE_GENERATION_CATALOGUE,
+      `persist:${storeId}`,
+    );
 
     reporter?.({
       kind: 'persisted',

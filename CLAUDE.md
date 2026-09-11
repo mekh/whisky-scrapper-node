@@ -69,6 +69,12 @@ Because `scripts/` sits beside `src/`, `nest build` nests the output under
 `dist/src/` — the built entry point is `dist/src/main.js` (which `start:prod`
 runs).
 
+**A script that writes the catalogue invalidates the running API's cache when
+it finishes** (`bumpCatalogueCache`, in its `finally`, so a run that failed
+halfway still does it), and suppresses the bump it would otherwise make as it
+starts (`suppressBootBump`) — a dry run leaves the cache exactly as it found
+it. See "Catalogue cache".
+
 Pass only the bare `<name>` — no path or extension. All four scripts route
 through `scripts/migration.ts`, a thin wrapper over the TypeORM CLI that pins
 the output to `./migrations/` (so generated/created files never land in the
@@ -153,6 +159,7 @@ be/
     ├── errors/              # ErrorBase + typed domain errors (*.error.ts)
     ├── interfaces/          # ALL shared interfaces/types (~types): *.interfaces.ts
     ├── lib/                 # thin wrappers around external infra packages
+    │   ├── cache/           # versioned catalogue cache (own Valkey instance)
     │   ├── db-logger/       # TypeORM logger that keeps query parameters out
     │   ├── logger/          # wraps @toxicoder/nestjs-pino (redaction, msg formatting)
     │   ├── valkey/          # wraps @toxicoder/nestjs-valkey (timeouts live here)
@@ -1395,7 +1402,22 @@ wrappers): `scrape/` has its own internal layering.
   **handed over rather than dropped** — persist takes its SKU to flag the
   offer, and the walk's terminator is a page bringing no new SKU, so
   dropping them would make a page of sold-out items read as the end of the
-  catalogue), `alcomag/`
+  catalogue.
+  **The store is scraped anonymously, and that is the decision, not the
+  default.** Availability is scoped to the session's account and its saved
+  delivery address, so a signed-in shopper and an anonymous request get
+  different answers — and the divergence runs **both ways**, which is what
+  proves it is assortment scoping rather than a stale view on either side:
+  on 2026-09-10 a `Tomintoul 10` read sold out for one signed-in session
+  while the anonymous listing sold it at 1599, and in the same session a
+  `Glenmorangie 18` read available while the anonymous listing marked it
+  `unavailable` and its product page answered `og:availability: out of
+  stock` with no price block at all. There is therefore no single true answer, and the catalogue
+  keeps the anonymous one: it is what any visitor can buy, it is the only
+  view that needs no credentials, and it is the same reasoning that made
+  silpo query a real branch rather than the guest one. Do **not** teach this
+  adapter to sign in or to set an address without deciding whose shop the
+  whole catalogue is supposed to describe), `alcomag/`
   (Bitrix/Aspro SSR via cheerio, `?PAGEN_1=N` pagination, `supportsDetail`;
   the article number is the SKU and may be non-numeric (`МТ10`), availability
   is a positive «Є в наявності» marker — an unknown label drops the card so a
@@ -1841,6 +1863,8 @@ has no rate against itself), `CURRENCY_RATE_CRON_ENABLED` (**true**, unlike
 An unusable cron expression fails the boot, as the sync one does.
 Rate-limit vars in `RateLimitConfig` — `RATE_LIMIT_ENABLED` (**true**), `RATE_LIMIT_RPS` (3) / `RATE_LIMIT_BURST` (10) for the global per-caller cap, `RATE_LIMIT_HEAVY_RPS` (1) / `RATE_LIMIT_HEAVY_BURST` (60) for the report and dashboard reads, `RATE_LIMIT_STRICT_RPS` (1) / `RATE_LIMIT_STRICT_BURST` (3) for the collection reads, `RATE_LIMIT_AUTH_RPS` (1) / `RATE_LIMIT_AUTH_BURST` (5) for the two public auth routes, plus `RATE_LIMIT_MAX_KEYS` (10000) and `RATE_LIMIT_SWEEP_MS` (60000) bounding the bucket map — see "Rate limiting". They replace `THROTTLE_TTL_MS`/`THROTTLE_LIMIT`, which are gone with `@nestjs/throttler`.
 `APP_TRUSTED_IP_HEADERS` (`x-real-ip,x-forwarded-for`) and `APP_TRUST_PROXY` (**true**) decide which forwarding headers the client's address may be read from, and whether any may — see "Who the caller is".
+Cache vars in `CacheConfig` — `CACHE_ENABLED` (**true**, the kill switch), `CACHE_TTL_SEC` (86400, garbage collection rather than freshness), `CACHE_READ_TIMEOUT_MS` (250, deliberately far under the client's own command timeout), `CACHE_MAX_ENTRY_BYTES` (8 MiB, measured after compression), `CACHE_BOOT_BUMP` (**true**; the scripts turn it off through `suppressBootBump()`), and the connection set `CACHE_VALKEY_HOST` / `CACHE_VALKEY_PORT` / `CACHE_VALKEY_DB` / `CACHE_VALKEY_PASSWORD` / `CACHE_VALKEY_PREFIX` / `CACHE_VALKEY_COMMAND_TIMEOUT_MS` / `CACHE_VALKEY_CONNECT_TIMEOUT_MS` / `CACHE_VALKEY_KEEP_ALIVE_MS` / `CACHE_VALKEY_MAX_RETRIES_PER_REQUEST`, **each falling back to its `VALKEY_*` equivalent**, so sharing the session instance is the zero-configuration default and giving the cache its own is one variable — see "Catalogue cache".
+
 `DB_LOG_PARAMETERS` (default false) decides whether a logged statement carries its bound values; see "Logging".
 
 In production every `SYNC_*`/`PUSH_*`/`CURRENCY_*`/`NBU_*`/`RATE_LIMIT_*` var is forwarded from the host `.env` by
@@ -1915,6 +1939,125 @@ There used to be three answers, and two of them were wrong. The CLS setup took t
 - **In-process is deliberate**: the API runs as a single container — the sync lock's boot sweep already relies on that — so a shared store would add a network hop to a decision made before anything else on the request path. `RateLimitStore` is the one place that changes if the process is ever scaled out.
 - **The client's half** (`web/src/shared/api/fetcher.ts`): a `429` is waited out and retried, up to three attempts, preferring the millisecond header and falling back to `Retry-After` and then to a 1 s default — never to zero, or a 429 becomes a hot retry loop. The back-off stamp is **shared by every request**, so a burst of parallel 429s becomes one pause instead of a thundering retry, and a little jitter keeps the released requests from arriving together. Retrying is safe for any method: a 429 is refused by the guard before the handler runs, so nothing happened that a retry could duplicate.
 
+## Catalogue cache (2026-09-11)
+
+`GET /report/:kind` and `GET /meta` are served from Valkey when the catalogue
+has not changed since the answer was built. `src/lib/cache/` holds the
+mechanism (`VersionedCacheService`), `~constants/cache.constants.ts` the key
+vocabulary, `CacheConfig` the settings.
+
+**What is cached is the unsorted, unpaginated result set** — the output of
+`ReportService.buildGroups`, before anybody's preferences are applied — plus
+the whole `/meta` payload. Everything about that is deliberate: the set is the
+expensive half and it is identical for every user, so one entry serves them
+all, and sorting and paging are applied to it on the way out, so one entry
+also serves every page instead of one entry per page. Measured on a
+production-shaped copy: `/report/catalog` 290 ms cold, 40 ms warm, and page 2
+costs the same 40 ms without writing a second entry.
+
+**Freshness is a generation counter, not a delete.** One counter,
+`cache:gen:catalogue`, is read _before_ the query and the entry is stored
+under the value that was read. A bump makes every entry of the old generation
+unreachable at once, and the old keys age out by TTL. The ordering is what
+makes it correct: a request that overlaps a minutes-long persist transaction
+reads pre-commit rows and stores them under the generation it read, which
+nobody addresses again once the writer has bumped. Deleting keys on write has
+the opposite property — the slow reader's stale answer lands _after_ the
+delete and is served until the next write, which for this catalogue can be a
+day later. (It is the "stale set" of Facebook's memcache paper; the same trap
+is why the bump must never hang off `ScrapePersistService`'s `persisted`
+event, which fires **inside** the transaction.)
+
+Key shape, readable on purpose so `valkey-cli --scan` shows what is cached:
+
+```
+cache:gen:catalogue
+cache:meta:g1789074305
+cache:report:g1789074305:catalog:-:a93f84069f4838aa99d6c1a6e8305e29
+cache:report:g1789074305:drops:2026-09-10:c0864db449f6e2a77d45ab2c0ff29d9e
+```
+
+**The day bucket belongs to `new` and `drops` alone.** Those two read the real
+UTC date — `daysNew`, `daysDiscount`, the `today`/`yesterday` windows — so
+their content changes at midnight with no write to bump anything. The other
+three derive their window from the data (`cutoff`) and carry `-`.
+
+**What goes into the hash** (`ReportCacheKeyUtils`, `~utils`): the kind, the
+day, and every catalogue filter, normalized to what the SQL actually applies.
+Multi-value filters are deduplicated and sorted (they reach the query as
+`= ANY`, which is set semantics), countries are case-folded, an empty array
+and an absent one hash alike, `verifiedFacts: false` and a zero `minDiscount`
+hash as absent, and a zero price or volume bound is kept because it does
+constrain. `sort`, `order`, `page` and `perPage` are absent by design.
+`best` keeps its price bounds in the key although its SQL drops them — it
+applies them to the winning offer in JavaScript, so they still decide the
+answer. An empty `name` is **not** folded into an absent one: `ILIKE '%%'` is
+NULL for a bottling with no cleaned name, so the two select different rows.
+
+**Personalization is applied per request and invalidates nothing.** The
+blacklists and `favoritesOnly` used to be three anti-joins inside
+`findCurrentRows`, which made every row of every report specific to one
+person. They now run in `ReportService.personalize` over the cached groups,
+from one small id read (`CorePreferenceService.findFilterIds`). Hiding a
+bottling therefore shows up on the very next request with no bump and no
+recomputation — verified live: 3137 groups became 3136 with the generation
+unchanged. The guarantee that a catalogue is never served unpersonalized
+moved with it: `ReportService.report` takes a required `ReportPersonalization`
+argument, and the query underneath has no user parameter left to forget.
+
+**Bump points, all after commit** (`TransactionUtils.afterCommit`, which
+registers `runOnTransactionCommit` inside a transaction and runs the callback
+immediately outside one — half this application's catalogue writers are plain
+autocommits):
+
+| Where                              | Reason string                                                                                  |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `ScrapePersistService.persist`     | `persist:<storeId>`                                                                            |
+| `KbReconcileService.run`           | `kb:reconcile` (covers the four review endpoints, the boot apply and `pnpm reconcile-flavors`) |
+| `ProductService.update` / `relink` | `product:update` / `product:relink`                                                            |
+| `StoreService.setActive`           | `store:active`                                                                                 |
+| Application bootstrap              | `boot`                                                                                         |
+| The six writing scripts            | `script:<name>`                                                                                |
+
+The **boot** bump is what makes a deploy safe: migrations run before the
+process exists, `KbBootApplyService` rewrites facts during startup, and a
+script may have run while the app was down — one bump supersedes all of it.
+A process that serves no reads skips it (`CACHE_BOOT_BUMP`), and the scripts
+turn it off through `suppressBootBump()`: a bump at a script's _start_
+discards entries it is about to supersede anyway, and it fired on dry runs,
+which must change nothing. **A script that writes the catalogue bumps at the
+end, in its `finally`**, so a run that failed halfway still invalidates what
+it had already written. Preference mutations bump nothing.
+
+**Failure is always a miss.** Every command is raced against
+`CACHE_READ_TIMEOUT_MS` (far below the client's own timeout, because a cache
+slower than the query it replaces has nothing to offer) and every error
+returns null, so the request falls through to the database. The one failure
+that is _not_ treated as harmless is a failed bump: a write committed that the
+cache was not told about, so the cache is bypassed entirely until a bump
+succeeds. That state is `dirty` on the heartbeat.
+
+**The cache has its own Valkey instance in production**, configured by
+`CACHE_VALKEY_*` with every field falling back to its `VALKEY_*` equivalent —
+so development shares one instance and production splits them by setting one
+variable. The split is not cosmetic: a cache wants its oldest entries evicted,
+a session store must never lose a key (a missing session reads as a revoked
+one and signs the user out of every device), and `maxmemory-policy` is per
+instance. `CacheModule` registers that second connection through
+`@toxicoder/nestjs-valkey` and exports only `VersionedCacheService`, so the
+client is unreachable from anywhere else. Ops procedure:
+[`docs/VALKEY-CACHE-PROD.md`](docs/VALKEY-CACHE-PROD.md).
+
+**TTL is garbage collection, not freshness** (`CACHE_TTL_SEC`, a day): it
+bounds how long superseded generations occupy memory and how long a bump that
+never happened — a process killed between commit and bump, a script run
+against a live app whose bump failed — can be believed. `CACHE_ENABLED=false`
+is the kill switch and restores exactly the behaviour that predates the cache.
+
+Not cached, deliberately: `GET /report/history` and the two search endpoints
+(free-text keys, little to gain), and everything under `/dashboard`,
+`/collection`, `/preference` and `/quick-filter`.
+
 ## Logging
 
 Use Nest's `Logger` with a class-name context:
@@ -1972,6 +2115,7 @@ Two rules follow, and new code is expected to keep them:
 | Postgres | `DB_ACQUIRE_TIMEOUT_MS`             | 5000    | Queueing forever for a drained pool    |
 | Postgres | `DB_STATEMENT_TIMEOUT_MS`           | 60000   | A statement that never finishes        |
 | Postgres | `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS` | 120000  | An abandoned transaction holding locks |
+| Cache    | `CACHE_READ_TIMEOUT_MS`             | 250     | A slow cache costing more than the DB  |
 | HTTP     | `APP_REQUEST_TIMEOUT_MS`            | 30000   | A handler chain that overruns → `503`  |
 | HTTP     | `APP_REQUEST_DEADLINE_MS`           | 45000   | A request stalled **in a guard**       |
 | HTTP     | `APP_KEEP_ALIVE_TIMEOUT_MS`         | 72000   | Racing the proxy's pool into `502`s    |
@@ -1992,12 +2136,19 @@ One line every `WATCHDOG_INTERVAL_MS` (10 s, on by default):
 
 ```
 heartbeat: loop lag 0.9/1.6 ms (mean/max), rss 216 MB, heap 97 MB,
-handles 4, db pool 1 open/1 idle/0 waiting, valkey 2 ms
+handles 4, db pool 1 open/1 idle/0 waiting, valkey 2 ms,
+cache 120h/8m/0e/0b gen 1789092974 ping 1 ms
 ```
 
+The cache segment is cumulative since boot (hits/misses/errors/bypasses),
+reads `off` when `CACHE_ENABLED` is false, and leads with `DIRTY` when a bump
+is outstanding. Its ping is separate from the session store's because the two
+are different instances in production — see "Catalogue cache".
+
 Logged at `debug`, promoted to `warn` when the loop lags past
-`WATCHDOG_LAG_WARN_MS`, when anyone is queued for a connection, or when the
-Valkey ping does not answer within `WATCHDOG_PING_TIMEOUT_MS`. **A heartbeat
+`WATCHDOG_LAG_WARN_MS`, when anyone is queued for a connection, when the
+Valkey ping does not answer within `WATCHDOG_PING_TIMEOUT_MS`, or when the
+cache is dirty or its own instance is silent. **A heartbeat
 that stops is itself a diagnosis** — it means the event loop is gone.
 
 Two details that are load-bearing:
@@ -2412,7 +2563,14 @@ Four things are easy to get wrong:
   transaction. Blacklisting a _brand_ does not: the report hides such a
   favorite while the rule stands, so lifting the rule restores it.
 
-The blacklist filters every report kind, for that user, in SQL. Products whose
+The blacklist filters every report kind, for that user, in
+`ReportService.personalize` — a JavaScript pass over the grouped result, not a
+SQL predicate. It moved out of the query so the query could be cached for
+everybody at once (see "Catalogue cache"), and the move is exact rather than
+close: all three predicates test the bottling, and every row of a group shares
+its bottling, so a group was never half-selected in SQL either. One
+consequence is worth knowing: a preference change is visible on the very next
+request and invalidates nothing. Products whose
 brand never resolved survive a brand rule (there is no unknown brand to hide).
 The single-item paths — `GET /report/history` and the price history behind it —
 are deliberately **not** filtered, so the product card that just hid a bottling
@@ -2938,9 +3096,23 @@ Pre-existing bugs fixed while wiring auth (context for future changes):
   `GET /meta` (filter options — all DB-sourced), `GET /report/:kind`
   (`catalog|drops|low|new|best`, paginated) + `GET /report/history`, `GET
   /store` + `GET /store/:slug` + `PATCH /store/:slug` (admin). The report SQL
-  (latest snapshot + previous + joins, keyed on `price_snapshot.createdAt`)
-  lives in `ProductRepository`; report logic (per-kind rules, sort, pagination,
-  best-offer grouping) in `ReportService`. **List items are product groups**
+  (latest snapshot + previous + joins) lives in `StoreProductRepository`;
+  report logic (per-kind rules, sort, pagination, best-offer grouping) in
+  `ReportService`. **The two snapshots are reached by `LATERAL`, one index
+  probe per offer** (2026-09-10). The window form it replaced (`ROW_NUMBER` +
+  `LEAD` partitioned by offer) read and sorted the _entire_ `price_snapshot`
+  table on every request to keep one row per offer — 571 383 rows scanned to
+  produce 9 555, and growing by ~8k a day, so the cost tracked the history
+  rather than the catalogue. `latestDate` and `priceExtremes` moved off
+  `createdAt::date` to the indexed `capturedOn` in the same pass, and
+  `currentPriceSince` from three whole-table passes to three probes per
+  offer. End to end through `ReportService`, on a production-shaped copy:
+  catalog 426 → 136 ms, drops 895 → 299 ms, low 444 → 146 ms, best 424 → 135
+  ms, new 400 → 128 ms, with every kind returning an identical total. The
+  superseded SQL is kept as the reference implementation in
+  `test/integration/current-rows-equivalence.integration.spec.ts`, which
+  diffs it against the new code over the live database and over a fixture
+  seeded for the edge cases. **List items are product groups**
   (2026-08-12): each kind still selects its offers exactly as before and then
   groups them by the persisted `productId`, so a page of 50 is 50 distinct
   bottlings (3 099 groups over 7 673 in-stock offers) and every top-level field
@@ -3038,9 +3210,11 @@ Pre-existing bugs fixed while wiring auth (context for future changes):
 
 - **Per-user preferences are built** (`core/preference`, `domain/preference`,
   2026-08-22): favorites and a blacklist of bottlings and/or brands, six
-  endpoints under `/preference` (contract in "API contract"), and three
-  predicates inside `findCurrentRows` that make every report kind personal.
-  The load-bearing decisions:
+  endpoints under `/preference` (contract in "API contract"), and a pass over
+  the grouped result that makes every report kind personal. The three
+  predicates began inside `findCurrentRows` and moved to
+  `ReportService.personalize` on 2026-09-10 so the query could be cached for
+  everybody at once — see "Catalogue cache". The load-bearing decisions:
   - **Three composite-keyed tables** (`favorite`, `blacklist_product`,
     `blacklist_producer`), all `(userId, <target>)` with a `createdAt` and no
     `updatedAt` — a membership row has nothing to update. They follow the

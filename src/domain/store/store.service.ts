@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
 
+import { CACHE_GENERATION_CATALOGUE } from '~constants';
 import { CoreStoreService } from '~core/store';
 import { CoreStoreProductService } from '~core/store-product';
 import { CoreSyncLogService } from '~core/sync-log';
 import { SyncTrigger } from '~enums';
 import { NotFoundError, ServerError } from '~errors';
+import { VersionedCacheService } from '~lib/cache';
 import { SyncFileLogService } from '~lib/sync-file-log';
 import {
   EntitySyncLog,
@@ -26,6 +28,7 @@ export class StoreService {
     private readonly syncLogs: CoreSyncLogService,
     private readonly orchestrator: SyncOrchestratorService,
     private readonly fileLog: SyncFileLogService,
+    private readonly cache: VersionedCacheService,
   ) {}
 
   /**
@@ -107,6 +110,15 @@ export class StoreService {
     }
 
     const lastSyncs = await this.syncLogs.lastSuccessfulByStore();
+
+    /**
+     * `/meta` states which stores are active, so its cached payload is stale
+     * the moment this write lands. No report entry is affected — `active`
+     * gates syncing, not reading — but both hang off the one catalogue
+     * generation, so this costs a recompute of the reports as well. Cheap,
+     * and rare: a store is activated by hand.
+     */
+    this.cache.bumpAfterCommit(CACHE_GENERATION_CATALOGUE, 'store:active');
 
     return { ...item, lastSuccessfulSyncAt: lastSyncs.get(item.id) ?? null };
   }

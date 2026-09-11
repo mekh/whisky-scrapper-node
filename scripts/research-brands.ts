@@ -25,6 +25,8 @@ import { LlmResearchService, ScrapeModule } from '~scrape';
 import type { ResearchedProducer } from '~types';
 import { KbGateUtils, KbKeyUtils } from '~utils';
 
+import { bumpCatalogueCache, suppressBootBump } from './cache-bump';
+
 import type { LlmResearchCandidate } from '../src/scrape/llm/llm.interfaces';
 
 /**
@@ -178,6 +180,8 @@ async function main(): Promise<number> {
 
   initializeTransactionalContext();
 
+  suppressBootBump();
+
   const app = await NestFactory.createApplicationContext(ResearchModule, {
     logger: ['error', 'warn'],
   });
@@ -265,6 +269,14 @@ async function main(): Promise<number> {
 
     return 0;
   } finally {
+    /**
+     * In the `finally`, so a run that failed halfway still invalidates what
+     * it had already written.
+     */
+    if (!dryRun) {
+      await bumpCatalogueCache(app, 'research-brands');
+    }
+
     await app.close();
   }
 }

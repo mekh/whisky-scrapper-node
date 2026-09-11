@@ -1,3 +1,5 @@
+import type { CacheStats } from './cache.interfaces';
+
 /**
  * Connection-pool occupancy at the moment a heartbeat was taken.
  *
@@ -76,6 +78,23 @@ export interface WatchdogSample {
    * cache that stops answering stalls every authenticated request.
    */
   valkeyPingMs: number | null;
+
+  /**
+   * What the catalogue cache has done since the process started, or null
+   * when this build has no cache wired to the heartbeat.
+   */
+  cache: CacheStats | null;
+
+  /**
+   * Round-trip time to the cache's own Valkey instance, in milliseconds, or
+   * null when it did not answer in time.
+   *
+   * Separate from {@link valkeyPingMs} because the two can be different
+   * servers: production gives the cache an instance of its own so it can
+   * evict, which the session instance must never do. On a deployment that
+   * shares one instance the two numbers simply agree.
+   */
+  cachePingMs: number | null;
 }
 
 /**

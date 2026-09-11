@@ -32,6 +32,7 @@ import { DomainReportModule } from '~domain/report';
 import { DomainStoreModule } from '~domain/store';
 import { DomainUserModule } from '~domain/user';
 import { ServerError } from '~errors';
+import { CacheModule } from '~lib/cache';
 import { LoggerModule } from '~lib/logger';
 import { WatchdogModule } from '~lib/watchdog';
 import { ScrapeModule } from '~scrape';
@@ -97,6 +98,14 @@ import { RateLimitModule, UserRateLimitGuard } from './rate-limit';
     DomainPushModule,
     DomainQuickFilterModule,
     ScrapeModule,
+    /**
+     * Registered here rather than only where it is used, because the boot
+     * bump has to happen on every start: the writers it covers — the
+     * migrations the deploy ran before this process existed, the
+     * knowledge-base pass during startup, any script run while the app was
+     * down — leave nothing behind for a lazier registration to react to.
+     */
+    CacheModule,
     /**
      * Last in the list on purpose: the heartbeat reads the data source and
      * the cache, so it is armed once everything it observes exists.

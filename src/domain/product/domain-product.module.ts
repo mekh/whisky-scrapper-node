@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { CoreWhiskyModule } from '~core/core-whisky.module';
+import { CacheModule } from '~lib/cache';
 import { ScrapeModule } from '~scrape/scrape.module';
 
 import { ProducerReachService } from './producer-reach.service';
@@ -12,6 +13,7 @@ import { ProductService } from './product.service';
 
 @Module({
   imports: [
+    CacheModule,
     CoreWhiskyModule,
     ScrapeModule,
   ],

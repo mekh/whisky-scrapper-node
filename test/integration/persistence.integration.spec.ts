@@ -19,13 +19,6 @@ import {
   closeIntegrationModule,
 } from './integration-module';
 
-/**
- * The report's per-user predicates are anti-joins against tables this suite
- * never writes, so any uuid reads as "a user with no preferences" — no `user`
- * row is needed.
- */
-const USER_ID = '0198d1f6-0000-7000-8000-0000000000a1' as ID;
-
 const SLUG = `__it_persist_${Date.now()}`;
 const DAY = '2026-07-25';
 
@@ -566,7 +559,7 @@ describe('persistence write path (integration)', () => {
 
     await offers.markOutOfStockBySkus(storeId, ['oos']);
 
-    expect(await offers.findCurrentRows({ userId: USER_ID, stores: [SLUG] }))
+    expect(await offers.findCurrentRows({ stores: [SLUG] }))
       .toHaveLength(0);
 
     const detail = await offers.findCurrentRowById(id);
@@ -596,7 +589,6 @@ describe('persistence write path (integration)', () => {
     });
 
     const byCleanName = await offers.findCurrentRows({
-      userId: USER_ID,
       stores: [SLUG],
       name: 'Aber Falls',
     });
@@ -606,7 +598,6 @@ describe('persistence write path (integration)', () => {
     // The descriptor was stripped from the canonical name; both search paths
     // still find it because they match the offer's raw name too.
     const byDescriptor = await offers.findCurrentRows({
-      userId: USER_ID,
       stores: [SLUG],
       name: descriptor,
     });

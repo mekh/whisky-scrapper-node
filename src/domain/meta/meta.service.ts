@@ -1,12 +1,19 @@
 import { Injectable } from '@nestjs/common';
 
-import { DEFAULT_PER_PAGE, PERIOD_WINDOWS, PER_PAGE_OPTIONS } from '~constants';
+import {
+  CACHE_GENERATION_CATALOGUE,
+  CACHE_SCOPE_META,
+  DEFAULT_PER_PAGE,
+  PERIOD_WINDOWS,
+  PER_PAGE_OPTIONS,
+} from '~constants';
 import { CoreCountryService } from '~core/country';
 import { CoreFlavorService } from '~core/flavor';
 import { CoreStoreService } from '~core/store';
 import { CoreStoreProductService } from '~core/store-product';
 import { CoreTypeService } from '~core/type';
 import { ScotlandLegalRegion, ScotlandRegion } from '~enums';
+import { VersionedCacheService } from '~lib/cache';
 import { Meta, MetaCountry, MetaStore } from '~types';
 
 @Injectable()
@@ -17,18 +24,39 @@ export class MetaService {
     private readonly types: CoreTypeService,
     private readonly offers: CoreStoreProductService,
     private readonly countries: CoreCountryService,
+    private readonly cache: VersionedCacheService,
   ) {}
 
   /**
-   * Builds the filter-form metadata: available stores, flavor/type chips, the
-   * countries present in the catalog, Scotland's regions, and
+   * The filter-form metadata, from the cache when the catalogue has not
+   * changed since it was built.
+   *
+   * It hangs off the same generation as the reports even though most of what
+   * moves it is different — a sync creating a type or a flavor row, a store
+   * being activated, a country becoming referenced. One counter for both
+   * costs a recomputation of five small queries whenever a report is
+   * invalidated, which is not worth a second counter to avoid.
+   *
+   * @returns The aggregated filter metadata.
+   */
+  public async build(): Promise<Meta> {
+    return this.cache.getOrCompute(
+      { scope: CACHE_SCOPE_META, suffix: '' },
+      CACHE_GENERATION_CATALOGUE,
+      () => this.load(),
+    );
+  }
+
+  /**
+   * Reads the metadata from the database: available stores, flavor/type
+   * chips, the countries present in the catalog, Scotland's regions, and
    * pagination/window options. Every list but the regions is sourced from the
    * database; the regions are closed vocabularies and come from the enums, so
    * a region no producer has been seeded with yet still offers a chip.
    *
    * @returns The aggregated filter metadata.
    */
-  public async build(): Promise<Meta> {
+  private async load(): Promise<Meta> {
     const [stores, flavors, types, countries, allCountries] = await Promise
       .all([
         this.stores.findAllWithConfig(),

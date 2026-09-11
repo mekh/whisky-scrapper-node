@@ -22,6 +22,8 @@ import { NAME_TAG_WORDS, ProductNameUtils } from '~utils';
 
 import type { LlmNameCandidate } from '~scrape/llm/llm.interfaces';
 
+import { bumpCatalogueCache, suppressBootBump } from './cache-bump';
+
 const SAMPLE_SIZE = 20;
 const PROGRESS_EVERY = 500;
 
@@ -326,6 +328,8 @@ async function main(): Promise<number> {
 
   initializeTransactionalContext();
 
+  suppressBootBump();
+
   const app = await NestFactory.createApplicationContext(CleanNamesModule, {
     logger: ['error', 'warn'],
   });
@@ -482,6 +486,14 @@ async function main(): Promise<number> {
 
     return 0;
   } finally {
+    /**
+     * In the `finally`, so a run that failed halfway still invalidates what
+     * it had already written.
+     */
+    if (!options.dryRun) {
+      await bumpCatalogueCache(app, 'clean-product-names');
+    }
+
     await app.close();
   }
 }

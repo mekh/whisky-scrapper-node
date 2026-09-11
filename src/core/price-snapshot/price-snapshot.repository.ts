@@ -161,11 +161,20 @@ export class PriceSnapshotRepository
   /**
    * Returns the most recent snapshot capture date across all offers.
    *
+   * Keyed on `capturedOn`, not on the `createdAt::date` this used to compute.
+   * The cast made the column unusable by any index, so finding one date cost
+   * a full scan of the table on every report request (15 ms and rising);
+   * `price_snapshot_captured_idx` answers the same question from its last
+   * entry in 0.3 ms. The two agree by construction — `capturedOn` is the day
+   * the run wrote the row for — and were verified to agree on every one of
+   * the 571 383 rows of a production-shaped copy before the switch. This is
+   * the report half of `FOLLOWUPS.md` item 4.
+   *
    * @returns The latest date (`YYYY-MM-DD`), or null when there are none.
    */
   public async latestDate(): Promise<string | null> {
     const rows = await this.query(
-      'SELECT MAX("createdAt"::date)::text AS d FROM price_snapshot',
+      'SELECT MAX("capturedOn")::text AS d FROM price_snapshot',
     ) as { d: string | null }[];
 
     return rows[0]?.d ?? null;
@@ -174,6 +183,10 @@ export class PriceSnapshotRepository
   /**
    * Computes the min and max price per store offer over snapshots on/after a
    * cutoff date.
+   *
+   * The window is bounded by `capturedOn` rather than by `createdAt::date`
+   * for the reason given on {@link latestDate}: the cast forced a full scan
+   * where the indexed column answers with a range scan.
    *
    * @param cutoff - Inclusive lower bound date (`YYYY-MM-DD`).
    * @returns Map from store-offer id to its `{ min, max }` over the window.
@@ -185,7 +198,7 @@ export class PriceSnapshotRepository
       `SELECT "storeProductId",
               MIN(price)::float8 AS min, MAX(price)::float8 AS max
        FROM price_snapshot
-       WHERE "createdAt"::date >= $1
+       WHERE "capturedOn" >= $1
        GROUP BY "storeProductId"`,
       [cutoff],
     ) as { storeProductId: ID; min: number; max: number }[];
@@ -203,28 +216,45 @@ export class PriceSnapshotRepository
    * one priced above the current price; when the price was never higher, the
    * offer's very first snapshot. Ages the `drops` report's current discount.
    *
+   * Driven per offer through three LATERAL probes rather than by the three
+   * whole-table passes it used to make (a `DISTINCT ON` over every row, a
+   * join of every row against it, then a grouped scan of every row again):
+   * 444 ms against 121 ms for the same 9 555 rows on a production-shaped
+   * copy, and the same shape of saving as `CURRENT_SQL`'s — the work now
+   * follows the catalogue rather than the history.
+   *
+   * The middle probe is a LEFT JOIN and that is not cosmetic: 7 048 of the
+   * 9 555 offers have never been listed above their current price, so an
+   * inner join would silently drop three offers in four. The last probe
+   * reads that as "take the offer's whole history", which is exactly what
+   * the previous form's `h."higherAt" IS NULL` branch did.
+   *
    * @returns Map from store-offer id to that date (`YYYY-MM-DD`).
    */
   public async currentPriceSince(): Promise<Map<ID, string>> {
     const rows = await this.query(
-      `WITH latest AS (
-         SELECT DISTINCT ON ("storeProductId")
-                "storeProductId", price AS "currentPrice"
-         FROM price_snapshot
-         ORDER BY "storeProductId", "createdAt" DESC
-       ),
-       last_higher AS (
-         SELECT s."storeProductId", MAX(s."createdAt") AS "higherAt"
+      `SELECT sp.id AS "storeProductId", w.since::date::text AS since
+       FROM store_product sp
+       JOIN LATERAL (
+         SELECT s.price
          FROM price_snapshot s
-         JOIN latest l ON l."storeProductId" = s."storeProductId"
-         WHERE s.price > l."currentPrice"
-         GROUP BY s."storeProductId"
-       )
-       SELECT s."storeProductId", MIN(s."createdAt")::date::text AS since
-       FROM price_snapshot s
-       LEFT JOIN last_higher h ON h."storeProductId" = s."storeProductId"
-       WHERE h."higherAt" IS NULL OR s."createdAt" > h."higherAt"
-       GROUP BY s."storeProductId"`,
+         WHERE s."storeProductId" = sp.id
+         ORDER BY s."createdAt" DESC
+         LIMIT 1
+       ) cur ON true
+       LEFT JOIN LATERAL (
+         SELECT s."createdAt" AS "higherAt"
+         FROM price_snapshot s
+         WHERE s."storeProductId" = sp.id AND s.price > cur.price
+         ORDER BY s."createdAt" DESC
+         LIMIT 1
+       ) hi ON true
+       JOIN LATERAL (
+         SELECT MIN(s."createdAt") AS since
+         FROM price_snapshot s
+         WHERE s."storeProductId" = sp.id
+           AND (hi."higherAt" IS NULL OR s."createdAt" > hi."higherAt")
+       ) w ON true`,
     ) as { storeProductId: ID; since: string }[];
 
     return new Map(rows.map((row) => [row.storeProductId, row.since]));

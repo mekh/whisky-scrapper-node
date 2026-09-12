@@ -20,14 +20,60 @@ interchangeable here.
   whisky-be` → **they run strictly one at a time**. nginx already targets
   `192.168.179.2:9977` and needs no change in either direction — nginx steps
   below are verify-only.
-- Postgres (`whisky-db`) and Valkey (`whisky-valkey`) live in their own
-  compose project and are never restarted by any step here.
+- Postgres (`whisky-db`) and the session store (`whisky-valkey`) **are now
+  services of the new stack**, alongside the catalogue cache
+  (`whisky-cache`). They used to live in their own compose project, which is
+  what the `external` networks in earlier revisions attached to. Two
+  consequences for anything below: `compose up -d` and `compose down` now
+  reach them, so a `down` takes the database with the app; and their data is
+  held in volumes declared `external` (`whisky_whisky_pg_data`,
+  `whisky_whisky_valkey_data` by default), so compose refuses to start rather
+  than silently creating an empty cluster if a name is wrong. Prefer
+  `compose up -d service` and `compose stop service` when the intent is the
+  application alone.
 - The Python collector is a separate checkout with its own cron; nothing
   here deploys or rolls it back. Its interaction with the new schema is
   covered in the post-checks.
 - Migrations apply in **one transaction** — a failed apply leaves the schema
   exactly as it was. There is nothing to roll back after a failed
   `migrate` step; only after a _successful_ one.
+
+## 0.1 One-time: adopting Postgres and the session store
+
+Only for the first deploy after they became services of this compose file.
+Skip it afterwards.
+
+The data stays where it is — `down` without `-v` never touches a named
+volume — and the new stack attaches to the very same volumes by name, which
+is why they are declared `external`: a wrong name fails the deploy instead of
+starting an empty cluster.
+
+```bash
+# 1. Confirm the volumes, and that the names match PG_VOLUME / VALKEY_VOLUME.
+docker volume ls | grep -E 'pg_data|valkey_data'
+
+# 2. Take a dump first. This is the step that makes the rest reversible.
+scripts/db-backup.sh backup
+
+# 3. Stop the old infrastructure project, whatever it is called. Its
+#    containers hold the names and networks the new stack wants.
+docker compose -p <old-project> -f <its-compose-file> down
+
+# 4. Confirm the volumes are still there.
+docker volume ls | grep -E 'pg_data|valkey_data'
+
+# 5. Deploy. It creates whisky-db, whisky-valkey, whisky-cache and the app.
+scripts/deploy.sh
+```
+
+If step 5 reports `external volume "..." not found`, the name in `.env` does
+not match step 1 — fix `PG_VOLUME`/`VALKEY_VOLUME` rather than letting compose
+create one. If it warns that a network `exists but was not created for
+project`, the old project's networks are still around: `docker network rm
+whisky_db whisky_valkey` once nothing is attached.
+
+**Rolling this back** is stopping the new stack and starting the old
+infrastructure project again; both read the same volumes, so no data moves.
 
 ## 1. Pre-flight (mandatory, BEFORE the upgrade)
 

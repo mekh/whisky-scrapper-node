@@ -1,4 +1,58 @@
 services:
+  db:
+    container_name: whisky-db
+    image: postgres:18
+    environment:
+      - POSTGRES_DB=${DB_NAME:?DB_NAME is required}
+      - POSTGRES_USER=${DB_USER:?DB_USER is required}
+      - POSTGRES_PASSWORD=${DB_PASS:?DB_PASS is required}
+    volumes:
+      # PG18 keeps its cluster in a versioned subdirectory, so the mount is the
+      # parent and not `/var/lib/postgresql/data`. Mounting the child against
+      # an existing volume gives an empty cluster.
+      - pg_data:/var/lib/postgresql
+    # Published because `scripts/db-backup.sh` reaches the database over TCP
+    # (`pg_dump -h $DB_HOST -p $DB_PORT`) rather than through `docker exec`.
+    # The left-hand side is a host address: naming one publishes on that
+    # interface alone, where omitting it would bind every interface the host
+    # has.
+    ports:
+      - '${PG_BIND_IP:-192.168.179.2}:${PG_BIND_PORT:-5431}:5432'
+    networks:
+      - whisky-db
+    healthcheck:
+      test: pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB
+      start_period: 5s
+      interval: 5s
+      timeout: 1s
+      retries: 10
+    stop_grace_period: 60s
+    restart: unless-stopped
+
+  valkey:
+    container_name: whisky-valkey
+    image: valkey/valkey:8
+    # The session store: auth sessions and the login throttle. It keeps its
+    # data — a lost session key is read as a revoked session and signs that
+    # user out of every device — and it is deliberately given no eviction
+    # policy, which is the whole reason the catalogue cache is a second
+    # instance further down.
+    command: valkey-server --save 60 1 --appendonly yes
+    volumes:
+      - valkey_data:/data
+    ports:
+      - '${VALKEY_BIND_IP:-192.168.179.2}:${VALKEY_BIND_PORT:-6378}:6379'
+    networks:
+      - whisky-valkey
+    healthcheck:
+      test: valkey-cli ping
+      start_period: 1s
+      interval: 10s
+      timeout: 2s
+      retries: 3
+    stop_grace_period: 30s
+    restart: unless-stopped
+
   migrate:
     container_name: whisky-be-migrate
     # Reuses the image built by `service`; there is no registry, so a missing
@@ -12,9 +66,62 @@ services:
       - DB_NAME=${DB_NAME:?DB_NAME is required}
       - DB_USER=${DB_USER:?DB_USER is required}
       - DB_PASS=${DB_PASS:?DB_PASS is required}
+    depends_on:
+      db:
+        condition: service_healthy
     networks:
-      - whisky_db
+      - whisky-db
     restart: 'no'
+
+  cache:
+    container_name: whisky-cache
+    image: valkey/valkey:8
+    # The catalogue cache, and deliberately NOT the instance holding auth
+    # sessions. The two want opposite things from a server that fills up: a
+    # cache should shed its oldest entries, while a session store must never
+    # lose a key — a missing session reads as a revoked one and signs the user
+    # out of every device — and `maxmemory-policy` is per instance, so no
+    # single policy serves both. Hence `allkeys-lru` here, and `whisky-valkey`
+    # left alone on its own network.
+    #
+    # No persistence: every entry is regenerable, and reloading an append-only
+    # file on restart would refill memory with entries the boot bump has
+    # already superseded.
+    #
+    # It sits on this project's own network rather than an external one
+    # because nothing else uses it, unlike the database and the session store.
+    command:
+      - valkey-server
+      - --maxmemory
+      - ${CACHE_MAXMEMORY:-512mb}
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ''
+      - --appendonly
+      - 'no'
+    # Nothing outside the compose network needs this one — the application
+    # reaches it by container name — so the published port is for a
+    # `valkey-cli` from the host and nothing else.
+    ports:
+      - '${CACHE_BIND_IP:-192.168.179.2}:${CACHE_BIND_PORT:-6377}:6379'
+    networks:
+      - whisky-be
+    healthcheck:
+      test: valkey-cli ping
+      start_period: 1s
+      interval: 10s
+      timeout: 2s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          # Must stay above `--maxmemory`, so that eviction is what bounds the
+          # data and this is only a backstop. Raising one without the other is
+          # the way to get the container OOM-killed instead of shedding its
+          # oldest entries, which is why both are variables.
+          memory: ${CACHE_MEMORY_LIMIT:-640M}
+    restart: unless-stopped
 
   service:
     container_name: whisky-be
@@ -30,34 +137,56 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      # Healthy, unlike the cache below: a session lookup runs in the auth
+      # guard ahead of everything, and it fails closed.
+      valkey:
+        condition: service_healthy
+      # Started, not healthy: every cache failure degrades to a miss, so the
+      # API must never wait on it to begin serving.
+      cache:
+        condition: service_started
     environment:
-      - APP_PORT=4000
+      - APP_PORT=${APP_PORT:-4000}
       - APP_HOST=0.0.0.0
+      - APP_NAME=${APP_NAME:-}
+      - APP_LOGGING=${APP_LOGGING:-}
+      - APP_LOGLEVEL=${APP_LOGLEVEL:-}
       - APP_REQUEST_TIMEOUT_MS=${APP_REQUEST_TIMEOUT_MS:-}
       - APP_REQUEST_DEADLINE_MS=${APP_REQUEST_DEADLINE_MS:-}
       - APP_KEEP_ALIVE_TIMEOUT_MS=${APP_KEEP_ALIVE_TIMEOUT_MS:-}
       - APP_TRUST_PROXY=${APP_TRUST_PROXY:-}
       - APP_TRUSTED_IP_HEADERS=${APP_TRUSTED_IP_HEADERS:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
+      # Addresses of the containers this same file defines, so they are
+      # facts of the compose project rather than deployment choices — as are
+      # `DB_HOST`/`DB_PORT` and the cache pair below.
       - VALKEY_HOST=whisky-valkey
       - VALKEY_PORT=6379
       - VALKEY_DB=0
+      - VALKEY_PASSWORD=${VALKEY_PASSWORD:-}
+      - VALKEY_PREFIX=${VALKEY_PREFIX:-}
       - VALKEY_COMMAND_TIMEOUT_MS=${VALKEY_COMMAND_TIMEOUT_MS:-}
       - VALKEY_CONNECT_TIMEOUT_MS=${VALKEY_CONNECT_TIMEOUT_MS:-}
       - VALKEY_KEEP_ALIVE_MS=${VALKEY_KEEP_ALIVE_MS:-}
       - VALKEY_MAX_RETRIES_PER_REQUEST=${VALKEY_MAX_RETRIES_PER_REQUEST:-}
       - VALKEY_OFFLINE_QUEUE=${VALKEY_OFFLINE_QUEUE:-}
       - CACHE_ENABLED=${CACHE_ENABLED:-}
+      - CACHE_BOOT_BUMP=${CACHE_BOOT_BUMP:-}
       - CACHE_TTL_SEC=${CACHE_TTL_SEC:-}
       - CACHE_READ_TIMEOUT_MS=${CACHE_READ_TIMEOUT_MS:-}
       - CACHE_MAX_ENTRY_BYTES=${CACHE_MAX_ENTRY_BYTES:-}
-      - CACHE_VALKEY_HOST=${CACHE_VALKEY_HOST:-}
-      - CACHE_VALKEY_PORT=${CACHE_VALKEY_PORT:-}
+      # Fixed, like the session store's address above: the container they
+      # name is defined in this same file, so it is a fact of the compose
+      # project rather than a deployment choice.
+      - CACHE_VALKEY_HOST=whisky-cache
+      - CACHE_VALKEY_PORT=6379
       - CACHE_VALKEY_DB=${CACHE_VALKEY_DB:-}
       - CACHE_VALKEY_PASSWORD=${CACHE_VALKEY_PASSWORD:-}
       - CACHE_VALKEY_PREFIX=${CACHE_VALKEY_PREFIX:-}
       - CACHE_VALKEY_COMMAND_TIMEOUT_MS=${CACHE_VALKEY_COMMAND_TIMEOUT_MS:-}
       - CACHE_VALKEY_CONNECT_TIMEOUT_MS=${CACHE_VALKEY_CONNECT_TIMEOUT_MS:-}
       - CACHE_VALKEY_KEEP_ALIVE_MS=${CACHE_VALKEY_KEEP_ALIVE_MS:-}
+      - CACHE_VALKEY_MAX_RETRIES_PER_REQUEST=${CACHE_VALKEY_MAX_RETRIES_PER_REQUEST:-}
       - DB_LOGGING=false
       - DB_HOST=whisky-db
       - DB_PORT=5432
@@ -67,15 +196,25 @@ services:
       - DB_SLOW_QUERY_MS=2500
       - DB_LOG_PARAMETERS=${DB_LOG_PARAMETERS:-}
       - DB_POOL_SIZE=${DB_POOL_SIZE:-}
+      - DB_RETRY_ATTEMPTS=${DB_RETRY_ATTEMPTS:-}
+      - DB_RETRY_DELAY=${DB_RETRY_DELAY:-}
       - DB_ACQUIRE_TIMEOUT_MS=${DB_ACQUIRE_TIMEOUT_MS:-}
       - DB_STATEMENT_TIMEOUT_MS=${DB_STATEMENT_TIMEOUT_MS:-}
       - DB_IDLE_IN_TRANSACTION_TIMEOUT_MS=${DB_IDLE_IN_TRANSACTION_TIMEOUT_MS:-}
       - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
+      - JWT_ACCESS_EXPIRES=${JWT_ACCESS_EXPIRES:-}
+      - REFRESH_EXPIRES_SEC=${REFRESH_EXPIRES_SEC:-}
       - LOG_LEVEL=trace
       - LOG_JSON=false
       - LOG_PRETTY=false
       - LOG_CALLSITES=false
-      - LOG_COLORS=true
+      - LOG_COLOR=true
+      - LOG_DB=${LOG_DB:-}
+      # The block above is pinned rather than passed through, and stays that
+      # way: these are this deployment's settled answers, and `SWAGGER_ENABLED`
+      # in particular is load-bearing — `../web` generates its API client by
+      # fetching /docs-json at deploy time, so turning it off breaks that build
+      # rather than merely hiding a page.
       - SWAGGER_ENABLED=true
       - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-}
       - RATE_LIMIT_RPS=${RATE_LIMIT_RPS:-}
@@ -101,12 +240,14 @@ services:
       - SYNC_LLM_DEADLINE_MARGIN_MS=${SYNC_LLM_DEADLINE_MARGIN_MS:-}
       - SYNC_LOG_DIR=${SYNC_LOG_DIR:-/app/log}
       - SYNC_LOG_RETENTION_DAYS=${SYNC_LOG_RETENTION_DAYS:-}
+      - SCRAPE_DELAY_MULTIPLIER=${SCRAPE_DELAY_MULTIPLIER:-}
       - LLM_API_KEY=${LLM_API_KEY:-}
       - LLM_BASE_URL=${LLM_BASE_URL:-}
       - LLM_MODEL=${LLM_MODEL:-}
       - LLM_REASONING=${LLM_REASONING:-}
       - LLM_FLAVOR_MODEL=${LLM_FLAVOR_MODEL:-}
       - LLM_FLAVOR_REASONING=${LLM_FLAVOR_REASONING:-}
+      - LLM_RESEARCH_MODEL=${LLM_RESEARCH_MODEL:-}
       - LLM_CONCURRENCY=${LLM_CONCURRENCY:-}
       - LLM_TIMEOUT_MS=${LLM_TIMEOUT_MS:-}
       - LLM_MAX_RETRIES=${LLM_MAX_RETRIES:-}
@@ -131,11 +272,15 @@ services:
     volumes:
       - ./log:/app/log
     ports:
-      - '192.168.179.2:9977:4000'
+      # The container side must stay the port the app is told to listen on,
+      # which is why `APP_PORT` appears here and in `environment` from the
+      # same variable: fixing one and parameterising the other would publish
+      # a port nothing is bound to.
+      - '${APP_BIND_IP:-192.168.179.2}:${APP_BIND_PORT:-9977}:${APP_PORT:-4000}'
     networks:
       - whisky-be
-      - whisky_db
-      - whisky_valkey
+      - whisky-db
+      - whisky-valkey
     deploy:
       resources:
         limits:
@@ -148,7 +293,25 @@ services:
 networks:
   whisky-be:
     name: whisky-be
-  whisky_db:
+  # Created by this project now that it owns the containers on them. The names
+  # are pinned so anything else that attaches by name keeps working.
+  whisky-db:
+    name: whisky_db
+  whisky-valkey:
+    name: whisky_valkey
+
+volumes:
+  # The production data, declared external on purpose: compose then fails with
+  # "volume not found" if the name is wrong, where a project-local volume would
+  # be created empty and the migrations would happily seed it. The defaults are
+  # the volumes the infrastructure compose project left behind.
+  #
+  # On a host that has none, create them first:
+  #   docker volume create whisky_whisky_pg_data
+  #   docker volume create whisky_whisky_valkey_data
+  pg_data:
     external: true
-  whisky_valkey:
+    name: ${PG_VOLUME:-whisky_whisky_pg_data}
+  valkey_data:
     external: true
+    name: ${VALKEY_VOLUME:-whisky_whisky_valkey_data}

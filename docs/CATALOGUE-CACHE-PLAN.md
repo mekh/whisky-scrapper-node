@@ -717,9 +717,11 @@ lists `lib/cache/`, and the `READ_CACHE_MAX_AGE_SECONDS` comment no longer
 claims there is no server-side cache. `FOLLOWUPS.md` item 4 is marked partly
 done: `latestDate` and `priceExtremes` moved to `capturedOn`, while
 `CURRENT_SQL`'s `capturedDate` projection has not.
-[`docs/VALKEY-CACHE-PROD.md`](VALKEY-CACHE-PROD.md) is the ops procedure — the
-one decision it asks for is a dedicated Valkey instance, and it says plainly
-what a shared one risks.
+[`docs/VALKEY-CACHE-PROD.md`](VALKEY-CACHE-PROD.md) is the ops procedure. It
+asks for no manual step: the dedicated instance is a `whisky-cache` service in
+both compose files, and the runbook explains why it is separate and what a
+shared one would risk. `.env.example` was added alongside it, listing every
+variable the application reads with its default.
 
 - CLAUDE.md: new "Catalogue cache" section (what is cached, key and
   canonicalization, generation semantics and why read-before-query closes the

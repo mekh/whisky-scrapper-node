@@ -40,6 +40,37 @@ services:
       timeout: 2s
       retries: 30
 
+  cache:
+    image: valkey/valkey:8
+    container_name: whisky-cache
+    restart: unless-stopped
+    # The catalogue cache, kept apart from the session store above for the
+    # reason the production compose spells out: a cache should evict its
+    # oldest entries and a session store must never lose a key, and
+    # `maxmemory-policy` is per instance. Local development runs it so the
+    # split is exercised here too, not only in production.
+    #
+    # No persistence and no volume — every entry is regenerable, and the
+    # application bumps its generation at boot anyway.
+    command:
+      - valkey-server
+      - --maxmemory
+      - 128mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ''
+      - --appendonly
+      - 'no'
+    ports:
+      - '6377:6379'
+    healthcheck:
+      test: valkey-cli ping
+      start_period: 1s
+      interval: 1s
+      timeout: 2s
+      retries: 30
+
 networks:
   whisky-db:
     name: whisky_db

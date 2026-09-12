@@ -1867,6 +1867,8 @@ Cache vars in `CacheConfig` — `CACHE_ENABLED` (**true**, the kill switch), `CA
 
 `DB_LOG_PARAMETERS` (default false) decides whether a logged statement carries its bound values; see "Logging".
 
+[`.env.example`](.env.example) lists every variable the application reads with the value it falls back to when unset, grouped and annotated `REQUIRED`/`OPTIONAL`. It is the inventory to update alongside any new setting.
+
 In production every `SYNC_*`/`PUSH_*`/`CURRENCY_*`/`NBU_*`/`RATE_LIMIT_*` var is forwarded from the host `.env` by
 the `environment` block of `docker-compose.yaml` — compose reads `.env` only to
 interpolate `${...}` in that file, and the image carries no `.env` of its own
@@ -2037,13 +2039,16 @@ that is _not_ treated as harmless is a failed bump: a write committed that the
 cache was not told about, so the cache is bypassed entirely until a bump
 succeeds. That state is `dirty` on the heartbeat.
 
-**The cache has its own Valkey instance in production**, configured by
-`CACHE_VALKEY_*` with every field falling back to its `VALKEY_*` equivalent —
-so development shares one instance and production splits them by setting one
-variable. The split is not cosmetic: a cache wants its oldest entries evicted,
-a session store must never lose a key (a missing session reads as a revoked
-one and signs the user out of every device), and `maxmemory-policy` is per
-instance. `CacheModule` registers that second connection through
+**The cache has its own Valkey instance**, the `whisky-cache` container both
+compose files define — `--maxmemory 512mb --maxmemory-policy allkeys-lru` and
+no persistence, since every entry is regenerable. The split is not cosmetic: a
+cache wants its oldest entries evicted, a session store must never lose a key
+(a missing session reads as a revoked one and signs the user out of every
+device), and `maxmemory-policy` is per instance, so no one policy serves both.
+Configured by `CACHE_VALKEY_*`, each field falling back to its `VALKEY_*`
+equivalent, so unsetting the two addresses the compose file fixes makes the
+cache share the session instance again — an acceptable emergency, not a
+posture. `CacheModule` registers that second connection through
 `@toxicoder/nestjs-valkey` and exports only `VersionedCacheService`, so the
 client is unreachable from anywhere else. Ops procedure:
 [`docs/VALKEY-CACHE-PROD.md`](docs/VALKEY-CACHE-PROD.md).

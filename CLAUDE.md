@@ -2903,7 +2903,7 @@ it and usable by anything.
   external API — the same rule `pnpm clean-names` follows. **Production
   therefore needs one manual step after every fresh deploy of this feature**,
   and `pnpm rates` is not it: the image carries no ts-node, so the compiled
-  `docker compose exec service node dist/scripts/currency-rates.js --full` is
+  `docker compose exec be node dist/scripts/currency-rates.js --full` is
   what runs there. The whole prod runbook — including the host-firewall check
   that has to happen first, since `bank.gov.ua` is a destination the containers
   have never used and `DOCKER-USER` is a whitelist ending in `LOG` + `DROP` —

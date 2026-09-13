@@ -255,7 +255,7 @@ Before any cleanup, save into `~/whisky-rollback/latest/`:
 
 ```bash
 docker logs whisky-be-migrate          > ~/whisky-rollback/latest/migrate.log 2>&1
-docker compose logs service            > ~/whisky-rollback/latest/service.log 2>&1
+docker compose logs be            > ~/whisky-rollback/latest/service.log 2>&1
 docker inspect whisky-be-migrate --format '{{.State.ExitCode}}' \
                                        > ~/whisky-rollback/latest/migrate-exit-code 2>&1
 ```

@@ -101,7 +101,7 @@ periodic heartbeat: the runtime heartbeat that used to carry a cache segment was
 instrumentation for the 2026-08-30 outage and has been removed.
 
 ```bash
-docker compose logs service | grep -i 'catalogue cache\|cache .*failed\|cache entry'
+docker compose logs be | grep -i 'catalogue cache\|cache .*failed\|cache entry'
 ```
 
 - **`Catalogue cache generation -> <n> (<reason>)`** — a bump landed. `<reason>` names the writer (`persist:<storeId>`, `kb:reconcile`, `boot`, `script:<name>`, …).

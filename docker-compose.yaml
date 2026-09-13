@@ -1,3 +1,16 @@
+# The compose project name, declared rather than inherited from the directory.
+# It is half of what every container is called — compose builds a replica's
+# name as `<project>-<service>-<number>` — so with the service below named
+# `be`, the replicas read `whisky-be-1..N` beside the `whisky-*` containers
+# that carry a fixed `container_name`. Stating it here also makes the name
+# independent of where the command is run from, which a `COMPOSE_PROJECT_NAME`
+# in the environment would not be.
+#
+# Changing it again is not a rolling change: a container cannot move between
+# projects while the old one holds its name, so it costs a `docker compose
+# down` (never `-v` — the data volumes are external) and a fresh `up`.
+name: whisky
+
 services:
   db:
     container_name: whisky-db
@@ -50,6 +63,15 @@ services:
       # this query touches is small enough to be scanned outright.
       - -c
       - random_page_cost=1.1
+      # Not tuning but attribution: the multi-instance ladder of 2026-09-13
+      # left the database as the constraint and nothing could say which
+      # statements its time went to, so every claim about that was an
+      # inference. The extension itself is installed by migration; this is
+      # the half that makes it collect. It costs a small per-statement
+      # bookkeeping overhead on the serving path, which is the honest price
+      # of being able to answer the question at all.
+      - -c
+      - shared_preload_libraries=pg_stat_statements
     environment:
       - POSTGRES_DB=${DB_NAME:?DB_NAME is required}
       - POSTGRES_USER=${DB_USER:?DB_USER is required}
@@ -171,9 +193,12 @@ services:
           memory: ${CACHE_MEMORY_LIMIT:-640M}
     restart: unless-stopped
 
-  service:
+  be:
     # No `container_name`: compose refuses a fixed name for a service with
     # more than one replica, and this one is scaled by `APP_INSTANCES` below.
+    # The replicas are therefore named after the project and this service —
+    # `whisky-be-1..N` — which is also the DNS name HAProxy resolves them by,
+    # so renaming this service means editing `haproxy.cfg` in the same breath.
     image: whisky-be
     build:
       context: .
@@ -359,7 +384,7 @@ services:
     container_name: whisky-lb
     image: haproxy:3.2-alpine
     depends_on:
-      service:
+      be:
         condition: service_started
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro

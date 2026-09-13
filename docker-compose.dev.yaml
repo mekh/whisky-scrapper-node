@@ -13,6 +13,11 @@ services:
       - postgres
       - -c
       - jit=off
+      # Mirrored for the same reason `jit` is: a query attributed locally has
+      # to be the query production runs. The extension is installed by
+      # migration; this makes it collect.
+      - -c
+      - shared_preload_libraries=pg_stat_statements
     environment:
       - POSTGRES_USER=${DB_USER}
       - POSTGRES_PASSWORD=${DB_PASS}

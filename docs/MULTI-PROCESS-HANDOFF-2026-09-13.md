@@ -1,241 +1,181 @@
 # Handoff — running the API as several instances (2026-09-13)
 
-Written to continue this work in a fresh session. Everything here was
-verified against the repository and the running production host at the time
-of writing; anything stated as "not done" was checked, not assumed.
+Everything here was verified against the repository, a live Valkey, a live
+Postgres and three real processes at the time of writing. Anything stated as
+"not done" was checked, not assumed.
 
-Supersedes `LOAD-TEST-HANDOFF-2026-09-13.md`, whose work is finished — that
-file can be deleted.
+Read with: [`MULTI-PROCESS-PLAN.md`](MULTI-PROCESS-PLAN.md) (the six steps,
+the three decisions, the HAProxy-versus-Traefik comparison and every
+measurement taken while building it), [`LOAD-TEST-2026-09.md`](LOAD-TEST-2026-09.md)
+(the four ladders), [`POSTGRES-TUNING.md`](POSTGRES-TUNING.md) (why the
+database is not the constraint) and [`../loadtest/README.md`](../loadtest/README.md)
+(the operating manual for a ladder — it is complete, follow it rather than
+this file for the mechanics).
 
-Read with: [`MULTI-PROCESS-PLAN.md`](MULTI-PROCESS-PLAN.md) (the plan and the
-three decisions), [`LOAD-TEST-2026-09.md`](LOAD-TEST-2026-09.md) (four
-ladders and what they measured), [`POSTGRES-TUNING.md`](POSTGRES-TUNING.md)
-(why the database is not the constraint) and
-[`../loadtest/README.md`](../loadtest/README.md) (how to run a ladder).
+## 1. Where things stand
 
-## 1. Where things stand, in one paragraph
+The code is **done, committed and tagged `v2.0.0`** (`04ead75`, pushed to
+`main`). Steps 1-5 of the plan plus step 6's deployment half are in it.
 
-The API's ceiling is **one JavaScript thread on an eight-core host**: about
-139 requests/s and roughly 350 concurrent users. That was established over
-four ladders and is not in doubt — at the ceiling the database ran 279
-commits/s with at most two backends waiting, and during the collapse past it
-the database went _quiet_ (49 commits/s, 2.4 active, ~50 connections idle)
-because the API stopped feeding it. The remedy is several instances. Steps 1
-to 5 of six are done and uncommitted, and step 6's deployment half with them
-(HAProxy in front of N replicas, `APP_INSTANCES` the only number). What is
-left is the ladder itself, against production.
+> **Deployed on 2026-09-13**, `APP_INSTANCES=3`, and the ladder has been run
+> against it. What remains is writing that result up in
+> `LOAD-TEST-2026-09.md` and closing step 6 of the plan.
 
-## 2. Decisions already taken — do not relitigate
+## 2. What changed, in one table
 
-| # | Question                           | Answer                                                                                                                     |
-| - | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| A | Node `cluster` or many instances   | **Neither is baked in.** Coordination is external (Valkey), so the same code runs under bare containers, pm2 or Kubernetes |
-| B | Mutex or atomic operation          | **Atomic** — one Valkey `EVAL` (Lua) for counters. Locks only where a _procedure_ must run once                            |
-| C | Telling a live run from a dead one | **`ownerId` + a Valkey heartbeat key**, which doubles as a liveness signal for monitoring                                  |
+|                        | Before                          | Now                                       |
+| ---------------------- | ------------------------------- | ----------------------------------------- |
+| Instances              | one container, `whisky-be`      | `APP_INSTANCES` replicas, `whisky-be-1..N` |
+| Who publishes the port | the app                         | the `lb` service (HAProxy), same address  |
+| Rate-limit buckets     | in-process `Map`                | Valkey, one Lua charge per request        |
+| Login ladder           | `GET` then `SET` (lost updates) | one script call per half                  |
+| Sync orphan sweep      | closed every open row           | only runs whose owner's heartbeat is gone |
+| Cron ticks             | armed per process               | one `SET NX EX` claims the tick           |
+| Pool                   | `DB_POOL_SIZE` per process      | `DB_POOL_SIZE_TOTAL / APP_INSTANCES`      |
+| Health                 | none (`/meta`'s 401)            | `GET /health`, outside the rate limiter   |
 
-A was chosen against the original recommendation of `cluster`, for a better
-reason than the ones weighed in the plan: `cluster` depends on a unique
-parent process, which does not exist under an orchestrator, so the code would
-have to be reopened on the way to Kubernetes. Two consequences follow and are
-already accounted for below — the cron needs a lock it would not otherwise
-have needed, and the instance count must come from configuration because no
-process can derive it alone.
+## 3. Before the deploy — the host `.env`
 
-B was approved with the trade named: the Lua lives in the repository as a
-second language and is only meaningfully testable against a live Valkey. The
-owner's position, which is right, is that an integration test is the only
-thing that can answer whether atomicity actually holds.
+Three edits:
 
-## 3. What is in the repository right now
+1. **Remove `DB_POOL_SIZE`.** `DbConfig` refuses to start when it sees one,
+   with a message naming the replacement rather than ignoring it while an
+   operator believes it applies — but that guard cannot fire in a container
+   here, because `docker-compose.yaml` no longer forwards the variable and
+   the image carries no `.env` of its own. So a leftover value is inert
+   rather than fatal; remove it anyway, and keep the guard for the paths
+   that do read the host environment directly.
+2. **Add `DB_POOL_SIZE_TOTAL=50`** — the pool across _all_ instances, sized
+   against the database's `max_connections` (100), not against the instance
+   count.
+3. **Add `APP_INSTANCES=<n>`.** Eight cores, and Postgres, two Valkeys, the
+   browser-tier scraper and HAProxy all want some, so this is a share of the
+   host rather than a count of the work. **Production runs 3.** Each replica
+   takes `floor(total / n)` connections and the boot log says so:
+   `Database pool: 8 connection(s) here (24 total / 3 instance(s))`.
 
-Pushed this session (`main`, working tree otherwise clean):
+`APP_BIND_IP` / `APP_BIND_PORT` keep their meaning — the `lb` container now
+publishes them instead of the app, so **the host nginx needs no change at
+all**. Nothing else in `.env` moves.
 
-- `0dca23d` — second ladder, after the page-addressable cache deploy
-- `f9391b7` — cache slow-command warnings aggregated to one line a minute
-- `ff1cbdb` — process guards: an orphaned rejection no longer kills the API
-- `c4d67cb` — third ladder: 139 requests/s, ~350 users
-- `0394376` — Postgres tuning, measured rather than calculated
+## 4. The deploy
 
-**Uncommitted — steps 1 and 2 of this work**, complete and verified (`tsc`,
-`eslint`, `dprint` clean; 1174 unit tests, 90 suites, plus 15 integration
-cases against a live Valkey):
+`scripts/deploy.sh` as always (build → `compose run --rm migrate` → `up -d`).
+It now prints the running instances at the end. What is new about this one:
 
-```
-step 1
- M src/config/parts/db.config.ts      DB_POOL_SIZE_TOTAL / APP_INSTANCES, divided
- M src/main.ts                        boot line naming the resolved share
- M docker-compose.yaml                forwards both, drops DB_POOL_SIZE
- M .env.example                       same, with the reasoning
- M docs/POSTGRES-TUNING.md            stale DB_POOL_SIZE reference
- M src/domain/collection/dto/collection-purchases-patch.dto.ts   same
-?? test/db-pool-size.spec.ts          8 cases pinning the arithmetic
+- The migration `1789296000000-sync-log-owner` runs in the migrate gate. One
+  nullable `varchar(64)`; it cannot fail on data.
+- The single container `whisky-be` becomes the replicas `whisky-be-1..N`,
+  and there is a new `whisky-lb`. The names come from the compose project
+  (`whisky`, declared in the file) plus the service (`be`), since compose
+  builds a replica's name as `<project>-<service>-<number>`. **Anything on
+  the host that names the bare `whisky-be` needs updating** — either to a
+  numbered replica or to `docker compose exec be` / `docker compose logs
+  be`, which address the first replica and every replica respectively.
+- `haproxy.cfg` is mounted from the repository root. `docker compose up -d`
+  pulls `haproxy:3.2-alpine` (~23 MB); the host must be able to reach the
+  registry.
+- Deploy when **no sync is running** — `GET /store/sync-status` answers with
+  an empty array when it is safe.
 
-step 6 (deployment half)
-?? haproxy.cfg                       the balancer, beside the compose file
-?? src/domain/health/*               GET /health, the liveness probe it calls
-?? src/constants/health.constants.ts, src/interfaces/health.interfaces.ts
-?? src/decorators/http/no-rate-limit.decorator.ts   the probe's exemption
-?? test/health.controller.spec.ts
- M src/app/rate-limit/user-rate-limit.guard.ts      honours the exemption
- M src/app/app.module.ts, src/constants/*, src/decorators/http/index.ts
- M docker-compose.yaml               app scaled + unpublished, `lb` added
- M .env.example, .dockerignore, scripts/deploy.sh, CLAUDE.md
+### After it, three checks
 
-step 5
-?? src/lib/cron-lock/*               the per-tick claim
-?? src/constants/cron.constants.ts
-?? test/cron-lock.service.spec.ts
-?? test/integration/cron-lock.integration.spec.ts
- M src/domain/store/sync-cron.service.ts       claims before running
- M src/domain/currency/services/currency-rate-cron.service.ts  the same
- M src/domain/currency/domain-currency-cron.module.ts
- M test/store/sync-cron.service.spec.ts
+```bash
+# 1. the balancer sees every replica
+docker compose exec lb sh -c 'wget -qO- http://127.0.0.1:8404/metrics' \
+  | grep 'haproxy_server_status.*state="UP"' | grep -c ' 1$'
 
-step 4
-?? migrations/1789296000000-sync-log-owner.ts  the ownerId column
-?? src/lib/instance/*                the instance id and its heartbeat
-?? src/constants/instance.constants.ts
-?? test/integration/sync-orphan.integration.spec.ts  9 cases, live Postgres
-?? test/instance.service.spec.ts
- M src/core/sync-log/*               ownerId written, liveness-aware sweep
- M src/domain/store/sync-orchestrator.service.ts  asks who is alive first
- M src/domain/store/domain-store.module.ts
- M src/interfaces/entity.interfaces.ts, src/constants/whisky.constants.ts
- M test/store/sync-orchestrator.service.spec.ts
+# 2. the probe answers through the whole chain
+curl -s -o /dev/null -w '%{http_code}\n' https://<site>/api/health
 
-step 3
-?? src/domain/auth/services/auth-throttle.script.ts  the two ladder scripts
-?? test/integration/auth-throttle.integration.spec.ts  14 cases, live Valkey
- M src/domain/auth/services/auth-throttle.service.ts  two script calls, new key
- M src/interfaces/auth-throttle.interfaces.ts  the state is the stored hash now
- M test/auth-throttle.service.spec.ts  what stays in TypeScript
- M CLAUDE.md
-
-step 2
-?? src/app/rate-limit/rate-limit-consume.script.ts  the Lua charge script
-?? src/lib/valkey/valkey-script.ts    defineCommand wrapper (EVALSHA + NOSCRIPT)
-?? src/utils/deadline.util.ts         the deadline race, lifted out of the cache
-?? src/constants/rate-limit.constants.ts   key root, failure-log window
-?? test/integration/rate-limit.integration.spec.ts  15 cases, live Valkey
- M src/app/rate-limit/*               store over Valkey, guard now async
- M src/config/parts/rate-limit.config.ts    -MAX_KEYS/-SWEEP_MS, +TIMEOUT_MS
- M src/lib/cache/versioned-cache.service.ts uses DeadlineUtils
- M src/interfaces/rate-limit.interfaces.ts  RateLimitBucket -> RateLimitCharge
- M .env.example, docker-compose.yaml, CLAUDE.md
- D test/rate-limit.store.spec.ts      its arithmetic is the integration spec now
-?? docs/MULTI-PROCESS-PLAN.md         the plan
+# 3. every replica divided the pool
+docker compose logs be | grep 'Database pool'
 ```
 
-**Commit policy, decided 2026-09-13: accumulate.** Nothing is committed until
-steps 2-6 are done; do not ask again.
+`docker compose exec lb sh -c 'wget -qO- http://127.0.0.1:8404/stats'` is the
+human view (which replicas are up, sessions, queues, errors). It is bound to
+the compose network only — nothing is published to the host.
 
-## 4. What step 1 did, so it is not re-derived
+## 5. The ladder
 
-`DB_POOL_SIZE` is gone; `DB_POOL_SIZE_TOTAL` (default 50) is the pool across
-**every** instance and is divided by `APP_INSTANCES` (default 1) at startup,
-rounding **down** so the instances can never sum past the total.
+Follow [`../loadtest/README.md`](../loadtest/README.md) → "The ceiling run".
+In short: `--cleanup`, re-seed 1000 users with `--prefs` (**the seeded refresh
+tokens rotate on use, so a previous ladder burned them**), run `observe.sh`
+beside k6 from the laptop over the VPN, `STAGES=50,100,200,300,400,500,650,800,1000`.
 
-Both ways of getting it wrong fail the boot with a message naming the fix: a
-leftover `DB_POOL_SIZE`, which would otherwise be ignored while the operator
-believed it applied, and a total smaller than the instance count, which would
-leave a pool of zero and surface later as a connection timeout on every
-request. The first is read with `nonEmpty`, not `??`, because compose
-forwards an omitted variable as an empty string.
+**What it has to be compared against** (v1.2.1, single instance, same harness):
 
-## 5. Steps remaining
-
-2. ~~**Rate-limit buckets to Valkey, atomically.**~~ **Done.** One script
-   call charges every bucket a request owes, from the server's own clock,
-   stopping at the first refusal. Keys are on the session instance and expire
-   when they would next be full, which replaced the in-process cap and sweep.
-   Fail-open, bounded by `RATE_LIMIT_TIMEOUT_MS` (250 ms).
-   **Measured, as required**: 0.48 µs of CPU per request before, ~10 µs plus
-   one round trip after (154 µs on the laptop, where `PING` is 153.6 µs) —
-   ~0.1% of the ~8.5 ms a cached report page spends. Details in
-   `MULTI-PROCESS-PLAN.md` and `CLAUDE.md` -> "Rate limiting".
-3. ~~**Login ladder to the same primitive.**~~ **Done.** Two scripts replace
-   the `GET`-then-`SET`: the attempt decides and stamps atomically, the
-   failure increments and imposes the rung atomically. State moved from a
-   JSON string to a hash under a **new** key root (`auth:throttle:ladder:`),
-   since a leftover string key would have answered `WRONGTYPE` — which fails
-   open — for up to its two-hour retention. 14 integration cases against a
-   live Valkey, plus an end-to-end HTTP check of the first rung.
-4. ~~**Orphan sweep.**~~ **Done.** `sync_log.ownerId` (migration
-   `sync-log-owner`) plus `InstanceService`'s Valkey heartbeat; the sweep
-   closes only runs whose owner's key is gone, with the age floor as the
-   fallback when liveness cannot be established. Verified with three real
-   processes against one database and one Valkey.
-5. ~~**Cron.**~~ **Done.** `CronLockService` (`~lib/cron-lock`) claims each
-   tick with one `SET NX EX` under `cron:<job>`; the losers no-op and the key
-   holds the winner's instance id. **`CurrencyRateCronService` had the same
-   defect and is fixed with it** — and it ships enabled, unlike the sync
-   cron. A claim that cannot be made runs the job anyway (fail-open), since
-   the `sync_log` lock and the rates' upserts are what make the jobs safe to
-   run twice. Verified with two real processes on one tick.
-6. **Turn on N instances and re-run the ladder.** Compare against 139
-   requests/s and the ~350-user ceiling on record. The deployment is built and
-   verified against a throwaway stack — `haproxy.cfg` beside the compose file,
-   the app scaled by `APP_INSTANCES`, the `lb` service publishing the address
-   nginx already proxies to — so what remains is the deploy and the run. Both
-   need the owner: a deploy, a window with no sync in flight, and re-seeded
-   load-test users.
-
-Also unaddressed and harmless: the cache boot bump fires once per instance
-(idempotent, noise only). `PushRepository.claimDrops` is already safe — an
-atomic database claim that concurrent dispatches split rather than duplicate.
-
-## 6. The measured facts this rests on
-
-Do not re-derive these; they cost four ladders.
-
-| Fact                                     | Value                                                                    |
-| ---------------------------------------- | ------------------------------------------------------------------------ |
-| Throughput plateau                       | ~139 requests/s (was ~40 before the cache work, ~95 after it)            |
-| Ceiling by the response-time limits      | between 300 and 400 users; zero failures through 400                     |
-| Database at the ceiling (400 users)      | 279 commits/s, 15.4 active backends, **≤2 waiting**                      |
-| Database during the collapse (500 users) | **49 commits/s, 2.4 active, ~50 idle** — it went quiet, it did not choke |
-| Highest database throughput observed     | 328 commits/s, **still climbing** when the API fell over                 |
+| Fact                                      | Value                                                                    |
+| ----------------------------------------- | ------------------------------------------------------------------------ |
+| Throughput plateau                        | ~139 requests/s                                                          |
+| Ceiling by the response-time limits       | between 300 and 400 users; zero failures through 400                     |
+| Database at the ceiling (400 users)       | 279 commits/s, 15.4 active backends, **≤2 waiting**                      |
+| Database during the collapse (500 users)  | **49 commits/s, 2.4 active, ~50 idle** — it went quiet, it did not choke |
+| Highest database throughput ever observed | 328 commits/s, **still climbing**                                        |
 
 The last row is the honest limit of what is known: the database's own ceiling
-is **not measured**, because nothing has ever managed to saturate it. So the
-expected gain from several instances is real but unquantified, and step 6 is
-what settles it.
+has never been reached, so the expected gain is real but unquantified. That is
+what this run settles.
 
-## 7. Traps, each of which has already cost something
+### What is new to watch this time
+
+- **Where the bottleneck went.** If it is now Postgres, `observe.sh` shows it
+  as waiting backends and a commits/s plateau — and the first lever is
+  `DB_POOL_SIZE_TOTAL` against `max_connections`, not more instances.
+- **The limiter's round trip.** Every request now charges a bucket in the
+  session Valkey. It measured ~10 µs of CPU and one round trip in isolation;
+  under load, watch that instance's ops/s and latency.
+- **`rate_limited` in the k6 summary.** Above ~1 % the scenario is outrunning
+  the per-account limits and nothing else in the run can be read. Keep the
+  limiter configured exactly as the earlier ladders had it, or the comparison
+  is not like for like — check `LOAD-TEST-2026-09.md` for what they used.
+- **HAProxy's own view**: `haproxy_backend_current_sessions` and the per-server
+  session counts say whether the spread is even.
+
+## 6. Traps, each of which has already cost something
 
 - **Never run k6 on the host under test.** Laptop only, over the VPN.
 - **Never run a ladder while production is syncing.** Ask first.
-- **Seeded refresh tokens rotate on use**, so a ladder burns the tokens of
-  every user it touches. Re-seed before each run (`--cleanup`, then
-  `--users 1000 --prefs`), which also matches the first run's conditions
-  (fresh access tokens, no refresh at start).
-- **Those 1000 `loadtest-*` users are in production and in the latest
-  backup.** Not harmful, but the next backup is clean only if they are
-  removed first. The database was verified undamaged after the runs: real
-  users, their preferences and the whole catalogue intact, no orphan rows, no
-  open `sync_log` rows.
-- **`BaseConfig` schedules its validation with `setImmediate` from the
-  constructor**, before subclass field initializers run — so a field that
-  throws leaves a validation queued against a half-built object and a second,
-  meaningless error arrives a tick later. Masked in production by
-  `process.exit(1)`; `test/db-pool-size.spec.ts` works around it with fake
-  timers. Worth fixing on its own, out of scope here.
+- **Re-seed before every ladder** — the tokens rotate on use.
+- **Those 1000 `loadtest-*` users live in production and in the latest
+  backup.** Harmless, but the next backup is clean only if they are removed
+  first. The database was verified undamaged after the earlier runs.
 - **A ladder cannot measure a database setting.** A cached request runs none
   of the queries the database compiles, and that column is what sets the
   ceiling — see `POSTGRES-TUNING.md`, where this nearly produced a wrong
   conclusion.
+- **`BaseConfig` schedules its validation with `setImmediate` from the
+  constructor**, before subclass field initializers run, so a field that
+  throws produces a second, meaningless error a tick later. Masked in
+  production by `process.exit(1)`; `test/db-pool-size.spec.ts` works around it
+  with fake timers. Worth fixing on its own, out of scope here.
+- **A failed cron claim is not a no-op.** With Valkey unreachable every
+  instance enters `runFullSync`; no store syncs twice (Postgres' partial
+  unique index is the guard), but the stores are distributed across the fleet
+  and the host runs up to `instances × SYNC_MAX_PARALLEL_TRACKS` scrapes at
+  once. Accepted deliberately — see CLAUDE.md → "Sync orchestration".
 
-## 8. The system under test
+## 7. The system under test
 
-| Thing          | Where                        | Note                                                    |
-| -------------- | ---------------------------- | ------------------------------------------------------- |
-| API            | `http://192.168.180.1:10001` | the container's own published port, beside nginx        |
-| Postgres       | `192.168.180.1:10432`        | tuning deployed and verified (`source = command line`)  |
-| Session Valkey | `192.168.180.1:10379`        | sessions, login ladder                                  |
-| Cache Valkey   | `192.168.180.1:10380`        | catalogue cache, ~976 MB cap, evicting dead generations |
-| Credentials    | `be/.env.loadtest`           | git-ignored, present on the laptop                      |
+| Thing          | Where                        | Note                                                             |
+| -------------- | ---------------------------- | ---------------------------------------------------------------- |
+| API            | `http://192.168.180.1:10001` | after the deploy this is HAProxy, not the app                    |
+| Postgres       | `192.168.180.1:10432`        | tuning deployed and verified                                     |
+| Session Valkey | `192.168.180.1:10379`        | sessions, limiter buckets, login ladder, heartbeats, cron claims |
+| Cache Valkey   | `192.168.180.1:10380`        | catalogue cache, ~976 MB cap                                     |
+| Credentials    | `be/.env.loadtest`           | git-ignored, present on the laptop                               |
 
 Deploys run through `scripts/deploy.sh`; a change to the `db` service's
-`command:` needs `docker compose up -d db` instead. `postgresql.auto.conf`
-was reset on 2026-09-13, so compose is the single source of the Postgres
-settings — keep it that way.
+`command:` needs `docker compose up -d db` instead. `postgresql.auto.conf` was
+reset on 2026-09-13, so compose is the single source of the Postgres settings
+— keep it that way.
+
+## 8. Open, unrelated to the ladder
+
+- `docs/LOAD-TEST-HANDOFF-2026-09-13.md` is superseded by this file and can be
+  deleted; it was committed rather than dropped because it had never been in
+  git.
+- `docs/LOAD-TEST-PLAN.md` tells an operator to watch `docker stats` for a
+  container called `whisky-be`. That name is now a prefix rather than a
+  container: the replicas are `whisky-be-1..N`. It is a record of a plan
+  rather than a runbook, so it was left alone.

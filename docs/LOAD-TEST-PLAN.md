@@ -116,7 +116,7 @@ to the API and every request answers `401`. Two ways to satisfy that:
 
 - **Alternative: inside the API container on the host.** The compiled script
   ships in the image as `dist/scripts/loadtest-seed.js` (every `scripts/*.ts`
-  does), so `docker compose exec service node dist/scripts/loadtest-seed.js
+  does), so `docker compose exec be node dist/scripts/loadtest-seed.js
   --users 1000 --prefs --out /app/log/users.json` runs with exactly the
   API's environment and no secret leaves the server; `./log` is already a
   bind mount, so the file appears on the host and one `scp` brings it to the

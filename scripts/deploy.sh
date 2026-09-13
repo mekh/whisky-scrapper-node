@@ -50,6 +50,6 @@ echo '==> Starting the app'
 compose up -d
 
 echo '==> Running instances'
-compose ps service --format '{{.Name}}\t{{.State}}'
+compose ps be --format '{{.Name}}\t{{.State}}'
 
 echo '==> Deploy finished'

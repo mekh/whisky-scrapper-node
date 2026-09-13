@@ -39,7 +39,7 @@ The last one should not list any `172.*` container address. If it does, the API 
 **Quick reachability probe**, once the new app container is running:
 
 ```bash
-docker compose exec service node -e "fetch('https://bank.gov.ua/NBU_Exchange/exchange?json',{signal:AbortSignal.timeout(15000)}).then(r=>console.log('HTTP',r.status)).catch(e=>console.error('FAILED:',e.message))"
+docker compose exec be node -e "fetch('https://bank.gov.ua/NBU_Exchange/exchange?json',{signal:AbortSignal.timeout(15000)}).then(r=>console.log('HTTP',r.status)).catch(e=>console.error('FAILED:',e.message))"
 ```
 
 Expect `HTTP 200`. Anything else — a timeout above all — means step 2 will fail, and the whitelist is where to look.
@@ -55,10 +55,10 @@ Without this the table only ever holds the trailing week the daily job fetches, 
 Run it inside the already-running app container:
 
 ```bash
-docker compose exec service node dist/scripts/currency-rates.js --full
+docker compose exec be node dist/scripts/currency-rates.js --full
 ```
 
-`docker compose exec` rather than `run`: the `service` entry has a fixed `container_name: whisky-be`, so `compose run` would collide with the running container.
+`docker compose exec` rather than `run`, and it lands in the first replica — the service is scaled by `APP_INSTANCES` since v2.0.0, so there is no longer one container to name. (The old reason, a fixed `container_name: whisky-be` that `compose run` would have collided with, is gone with it.)
 
 Expect roughly this, in about 30 seconds (58 requests, ~4 MB):
 
@@ -122,7 +122,7 @@ CurrencyRateCronService: Currency rate schedule armed: "30 16 * * *" (Europe/Kyi
 The daily job runs at **16:30 Kyiv** — after the bank's 15:30 publication cutoff, so each run stores the _next_ business day's rate and a missed run costs nothing. Confirm one fired:
 
 ```bash
-docker compose logs service --since 24h | grep -i 'Currency rates synced'
+docker compose logs be --since 24h | grep -i 'Currency rates synced'
 ```
 
 Expect `16 day(s) fetched, 16 written` — a trailing 7-day window plus tomorrow, times two currencies. The window is deliberate: a run missed to a restart or an outage heals itself at the next tick instead of leaving a permanent hole.

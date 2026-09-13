@@ -11,6 +11,16 @@ The settings themselves live in the `db` service's `command:` in
 `postgresql.auto.conf` inside the data volume, where a fresh environment
 would not inherit it and a reader of this repository would not see it.
 
+> **Superseded in one respect, 2026-09-13 evening.** The headline below was
+> true of a single API process and is no longer true of three: with the
+> event loop no longer the constraint, the database became one. Commits per
+> second now flatten at ~350-360 while the offered load doubles. What is
+> still true is the reasoning — the ceiling is not made of connections, and
+> the ladder still cannot measure a planner setting. The two
+> multi-instance ladders and the `pg_stat_statements` attribution are in
+> [`LOAD-TEST-2026-09.md`](LOAD-TEST-2026-09.md); the one change that
+> follows from them is a query rewrite, not a setting.
+
 ## The headline, before the values
 
 **Tuning Postgres does not raise this API's ceiling, because Postgres is not
@@ -167,13 +177,18 @@ and should be removed with `ALTER SYSTEM RESET <name>`.
 
 Not more of this. The remaining work in order of what the evidence supports:
 
-1. **Several API processes behind nginx.** The ceiling is the single Node
-   event loop, and nothing in this document moves it. Blocked first by the
-   in-process rate limiter and the sync lock's single-instance boot sweep,
-   both documented in `CLAUDE.md`.
-2. **A materialised rollup for the dashboard aggregate**, which is 1.5
-   seconds of database work per request and the slowest route in every
-   ladder run.
-3. **`pg_stat_statements`.** The extension is available but not installed;
-   installing it needs `shared_preload_libraries` and a restart, and it is
-   what turns the next round of this from reasoning into measurement.
+1. ~~**Several API processes behind nginx.**~~ **Done** (2026-09-13) — three
+   replicas behind HAProxy. It removed the ceiling this document describes
+   and put the constraint on this database instead.
+2. ~~**`pg_stat_statements`.**~~ **Done**, and it was worth the restart: it
+   immediately contradicted two assumptions. The largest single consumer is
+   `/currency/rate/latest` at **24 %** of all statement time — 235 ms a call,
+   one call per page load — which `EXPLAIN` then showed to be a full sort of
+   `currency_rate` on every call, fixable to 0.338 ms by a lateral rewrite.
+   The catalogue, which every optimisation so far has targeted, is not in
+   the top of the list at all.
+3. **A materialised rollup for the dashboard aggregate**, now quantified:
+   the dashboard is ~8 % of visits in the scenario and about **60 %** of
+   database time, `/dashboard/series` alone 20 % at 2 799 ms a call. Measure
+   the real persona mix before spending on it — that 8 % is a guess, while
+   the currency read above rides every page load and is real under any mix.

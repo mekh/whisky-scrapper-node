@@ -5,14 +5,19 @@ Plan and harness: [`LOAD-TEST-PLAN.md`](LOAD-TEST-PLAN.md),
 `loadtest/out/20260913-0020/` (git-ignored) — `k6.log`, `summary.json`,
 `report.html` (the k6 dashboard export), `observer.tsv`.
 
-**Three runs are recorded here, in order.** Everything down to "The fix,
-measured locally" is the first, which found the ceiling and diagnosed it.
-"Repeat run after the fix" is the second, after the page-addressable cache
-was deployed. **"Third run" is the current one** — after the outgoing DTO
-pipeline came off `/report`, `DB_POOL_SIZE` went to 50 and the process
-guards landed. Read it for today's numbers: the service holds about
-**139 requests/s** and roughly **350 concurrent users** of this workload,
-not the 100 below or the 200 of the second run.
+**Six ladders are recorded here, in order**, and each section states what
+had changed since the one before it. The first found the ceiling and
+diagnosed it; the second followed the page-addressable cache; the third
+followed the DTO opt-out and the wider pool; a fourth measured nothing and
+says so. The two at the end are the ones to read for today's numbers — the
+multi-instance deploy and then the halved pool.
+
+**Where it stands after the last one**: about **216 requests/s**, both
+response-time limits met at **400 concurrent users** of this mix, no
+collapse anywhere on a ladder that reaches 1 000, and the constraint now in
+the database's share of eight cores rather than in one JavaScript thread.
+Against the 100 users and 40 requests/s this document opens with, and the
+139 requests/s of the third run.
 
 ## Headline (first run, before the fix)
 
@@ -546,6 +551,225 @@ database cannot raise this ceiling at all: at 400 users the database is idle
 and a cached page still takes 1 609 ms, which is queueing in the Node
 process.
 
+## Multi-instance ladder — production, 2026-09-13 17:19-17:46
+
+Artefacts `loadtest/out/20260913-1719/`. The first ladder against `v2.0.0`:
+**three API replicas behind HAProxy**, rate-limit buckets and the login
+ladder moved into Valkey, the sync sweep owner-aware, one-tick crons, and
+`DB_POOL_SIZE_TOTAL=50` divided by `APP_INSTANCES=3` — sixteen connections
+per replica, forty-eight in all. Everything else is the third run's
+configuration, and the users were freshly re-seeded.
+
+**The collapse is gone.** The ladder ran all nine rungs to 1 000 users for
+the first time; the third run's valve ended it at 650 with 29 % of requests
+failing and throughput halved. 193 424 requests, 17 355 visits, **zero 429s**.
+
+| Users | Third run (one instance) | This run (three) |
+| ----- | ------------------------ | ---------------- |
+| 400   | 136.8 req/s, 0 % failed  | 141.7, 0 %       |
+| 500   | 139.1, **2.10 %**        | 172.2, **0 %**   |
+| 650   | 81.2, **29.34 %**        | 174.2, 0.89 %    |
+| 800   | —                        | 185.1, 3.47 %    |
+| 1 000 | —                        | 214.8, 14.89 %   |
+
+### What the server was doing (observer, per step)
+
+| Step  | Commits/s | Active avg | Waiting | Conns |
+| ----- | --------- | ---------- | ------- | ----- |
+| 300   | 227       | 5.5        | 0.0     | 40    |
+| 400   | 292       | 15.8       | 0.3     | 47    |
+| 500   | 348       | 29.2       | 0.6     | 49    |
+| 650   | 332       | 45.2       | 0.7     | 49    |
+| 800   | 349       | 45.1       | 0.6     | 49    |
+| 1 000 | 355       | 44.1       | 0.8     | 49    |
+
+**The bottleneck left the event loop and landed on the database.** Commits
+per second flatten at ~350 from 500 users upward while the offered load
+doubles, with 45 of 48 pooled connections executing at any moment, almost
+nothing waiting on a lock, and zero disk reads. Every failed request in the
+run is one thing — `timeout exceeded when trying to connect` from `pg-pool`,
+the five-second `DB_ACQUIRE_TIMEOUT_MS` expiring in the queue for a free
+connection. HAProxy counted 7 206 5xx and **zero invalid responses**, so the
+API answered each of them itself.
+
+Two things were confirmed rather than assumed:
+
+- **The replicas are loaded evenly.** HAProxy's own counters: 64 048 /
+  64 904 / 64 535 sessions, 0.7 % apart, all three `L7OK`. `leastconn` is
+  doing what it was chosen for.
+- **The limiter's Valkey round trip is free at this scale.** 194 065
+  `evalsha` calls — one per request — at **68.3 µs** of server time each,
+  13.3 s over a 26-minute run, about 0.9 % of one core. Inside the script,
+  1.41 buckets are charged per request, which is the global rule plus the
+  profile bucket on `/report`, `/dashboard` and `/collection`.
+
+### The obvious next lever pointed the wrong way
+
+A flat commits-per-second curve with a fully occupied pool reads as "too few
+connections" and invites raising `DB_POOL_SIZE_TOTAL`. It is the wrong
+reading: 48 backends is six times the host's core count, and that host also
+runs three Node replicas, two Valkeys and HAProxy. A saturated service does
+not do more work because a wider queue feeds it — the queue merely moves
+from the pool into Postgres. So the next run halved the pool instead, which
+is a falsifiable test of exactly that.
+
+## Second multi-instance ladder — production, 2026-09-13 18:35-19:02
+
+Artefacts `loadtest/out/20260913-1835/`. Two changes, and they were deployed
+together, so this run cannot separate them: **`DB_POOL_SIZE_TOTAL` 50 → 24**
+(eight per replica) and the **cache instance 976 MiB → 3 GiB**. The database
+also gained `pg_stat_statements`, which measures rather than changes.
+
+The cache was empty after its restart, so a three-minute 30-user warm-up ran
+first — the earlier ladders all started against a production-warm cache, and
+without it the low rungs would have been unfairly slow.
+
+**Both response-time limits are met at 400 users for the first time in six
+ladders.** 196 340 requests, 17 670 visits, **zero 429s**, 3.23 % failed
+overall against 3.74 %.
+
+### Where the limits are crossed now
+
+p95 of the report reads against the harness limits — 1 000 ms for a request
+the cache is expected to hold, 2 000 ms for one that runs the query:
+
+| Users | Cached: one / three / three+small pool | Uncached: one / three / three+small pool |
+| ----- | -------------------------------------- | ---------------------------------------- |
+| 300   | 583 / 312 / **289**                    | 1 358 / 1 102 / 1 343                    |
+| 400   | 1 836 ✗ / 941 ✓ / **959 ✓**            | 2 471 ✗ / 2 675 ✗ / **1 995 ✓**          |
+| 500   | 10 751 ✗ / 1 592 ✗ / 1 514 ✗           | 8 141 ✗ / 4 146 ✗ / 3 658 ✗              |
+| 650   | 29 590 ✗ / 4 914 ✗ / **4 300 ✗**       | 15 090 ✗ / 12 985 ✗ / **7 797 ✗**        |
+
+Read honestly: 1 995 ms clears a 2 000 ms limit by five milliseconds, which
+is inside run-to-run noise. The defensible statement is that the uncached
+p95 at 400 users **fell by 25 %** and now sits on the limit rather than
+clearly past it. The unambiguous gain is one rung higher — at 650 users the
+uncached p95 nearly halved, 12 985 → 7 797 ms, and failures fell from
+0.89 % to 0.31 %.
+
+### Halving the pool cost nothing and gained something
+
+| Step  | Commits/s (48) | Commits/s (24) | Active (48) | Active (24) |
+| ----- | -------------- | -------------- | ----------- | ----------- |
+| 300   | 227            | 226            | 5.5         | 7           |
+| 400   | 292            | 293            | 15.8        | 12          |
+| 500   | 348            | 346            | 29.2        | 19          |
+| 650   | 332            | **367**        | 45.2        | 23          |
+| 800   | 349            | 354            | 45.1        | 23          |
+| 1 000 | 355            | **365**        | 44.1        | 22          |
+
+Through 500 users the two are identical to within a percent — half the
+connections, the same work. Above it the smaller pool is ahead, and the
+shape of the difference is the whole point: at 650 users the large pool's
+curve **turned down** (348 → 332), the classic signature of over-subscription,
+while the small pool's kept climbing (346 → 367). Peak over the whole run:
+25 connections, 25 active, **3 waiting**.
+
+So the plateau is real but it is not made of connections, and
+`DB_POOL_SIZE_TOTAL` should not be raised. It rose from ~340 to ~360 when
+the pool was halved; the remaining ceiling is the eight cores the database
+shares with three Node replicas, two Valkeys and HAProxy.
+
+One number went the other way: at 800 users this run failed 4.97 % against
+3.47 %. That is the expected cost — once a queue does form, 24 slots are
+exhausted sooner than 48, so the acquire timeout fires earlier. At 650 and
+at 1 000 the smaller pool still wins.
+
+### The cache was evicting, and now is not
+
+|             | Pool 48 / 976 MiB | Pool 24 / 3 GiB |
+| ----------- | ----------------- | --------------- |
+| Peak memory | 978 MiB (at cap)  | **1.16 GiB**    |
+| Keys        | 2 221             | 2 618           |
+| **Evicted** | **4 038**         | **0**           |
+| Hit ratio   | 99.1 %            | 99.2 %          |
+
+The old cap was crossed during the run — memory passed 927 MiB at the 800
+rung — so the earlier ladder was shedding live entries near the top of the
+ladder, and each shed entry is a database query later. Whether that is what
+improved the uncached p95 at 650, or whether the pool did, this run cannot
+say: both changed at once. The miss rate stayed ~1/s in both, which argues
+for the pool; the absence of eviction argues for the cache. It is a
+measurement worth separating if either is ever tuned again.
+
+### Where the database's time actually goes
+
+The first ladder ever run with `pg_stat_statements` collecting, reset
+immediately before the run so the numbers describe it alone: **16 789 s of
+statement execution across 371 432 calls**.
+
+| Share     | Statement                                  | Calls  | Mean       |
+| --------- | ------------------------------------------ | ------ | ---------- |
+| **24 %**  | `DISTINCT ON (c.code)` — latest rate       | 17 224 | **235 ms** |
+| 20 %      | `/dashboard/series`                        | 1 217  | 2 799 ms   |
+| 14 %      | `/dashboard/meta` bounds + distinct counts | 6 303  | 364 ms     |
+| 8 % + 8 % | `/dashboard/movers`, two variants          | ~1 200 | ~1 065 ms  |
+| 5 %       | `/collection` list                         | 7 871  | 107 ms     |
+| 5 %       | `currentPriceSince` (report)               | 259    | 2 984 ms   |
+| 4 % + 4 % | `/dashboard` bounds, store coverage        | ~1 260 | ~525 ms    |
+
+Three findings, the first two contrary to what was assumed before the
+extension was installed:
+
+- **The single largest consumer is `/currency/rate/latest`** — 24 % of the
+  database, one call per page load, 235 ms each. See the section below.
+- **The dashboard is 8 % of visits and about 60 % of the database.** It is
+  deliberately uncached (`CLAUDE.md` → "Catalogue cache"), and this is the
+  price of that decision, now measured. Caveat: 8 % is the scenario's
+  persona weight, so a real usage mix would move this number; the currency
+  read rides every page load and is real under any mix.
+- **The catalogue — what the whole cache effort was for — is absent from
+  the top of the list.** The cache is doing its job.
+
+### The currency query, explained on production
+
+`EXPLAIN (ANALYZE, BUFFERS)` against the live database, idle:
+
+```
+Unique  (actual time=48.304..51.905 rows=2 loops=1)
+  ->  Sort  (actual time=48.300..49.525 rows=21329)
+        Sort Key: c.code, cr."effectiveOn" DESC
+        Sort Method: quicksort  Memory: 1768kB
+        ->  Hash Join  (rows=21329)
+              ->  Seq Scan on currency_rate  (rows=21329)
+Execution Time: 52.200 ms
+```
+
+Fifty-two milliseconds to return two rows, and 235 ms under load. Nothing
+is wrong with the storage — 250 buffers, all shared hits, no disk — and no
+index can help as written: `DISTINCT ON (c.code)` must order by a column of
+the _other_ table, so the whole of `currency_rate` is read and sorted on
+every call. The unique index `(currencyId, effectiveOn)` is unusable for it.
+
+A lateral probe per currency asks the same question of the same index:
+
+```sql
+SELECT c.code, r."effectiveOn"::text, r.rate::float8
+FROM currency c
+CROSS JOIN LATERAL (
+  SELECT cr."effectiveOn", cr.rate FROM currency_rate cr
+  WHERE cr."currencyId" = c.id ORDER BY cr."effectiveOn" DESC LIMIT 1
+) r
+ORDER BY c.code
+```
+
+```
+Sort  (actual time=0.294..0.295 rows=2 loops=1)
+  ->  Nested Loop
+        ->  Seq Scan on currency  (rows=3)
+        ->  Limit  (loops=3)
+              ->  Index Scan Backward using currency_rate_currency_effective_uindex
+Execution Time: 0.338 ms
+```
+
+**52.200 ms → 0.338 ms, a factor of 154**, byte-identical output (the two
+were diffed on production), three index probes instead of a 21 329-row
+sort. `CROSS JOIN LATERAL` preserves the inner-join semantics — a currency
+with no rates, which is the base currency, yields no row either way.
+
+Not implemented in this pass: measured, verified and written down, so that
+the change and its verification are one decision rather than two.
+
 ## Next steps proposed
 
 In the order the evidence now ranks them:
@@ -562,28 +786,45 @@ share of the 95 -> 139 requests/s measured in production.
 ~~2. Raise `DB_POOL_SIZE`.~~ **Done** — 10 -> 50, which moved the first
 failed request from 400 users to 500.
 
-Remaining, re-ranked on the third run:
+~~4. Slim the stored group to stop the cache evicting.~~ **Superseded** —
+the instance was given 3 GiB instead, and the last ladder evicted nothing
+at a 1.16 GiB peak. Worth doing for its own sake, no longer urgent.
 
+~~6. Several API processes behind nginx.~~ **Done** — three replicas behind
+HAProxy (`v2.0.0`). The collapse at 500-650 users is gone, the plateau went
+139 -> 216 requests/s, and both response-time limits are now met at 400
+users where one instance met neither.
+
+Remaining, re-ranked on the last ladder:
+
+1. **Fix the currency latest-rate query** — 24 % of all database time, one
+   call per page load, 235 ms each, and a lateral rewrite measured at
+   **0.338 ms against 52.200 ms** on production with identical output. It
+   is the cheapest change on this list by a wide margin: one query, no
+   architecture, no new dependency. The plan and both `EXPLAIN`s are above.
+2. **Decide what the dashboard costs.** 8 % of visits, ~60 % of database
+   time, deliberately uncached. Its data changes once a day, which is what
+   the versioned cache is for; the counter-argument is that nobody has
+   complained and the persona weight here is a guess. Measure the real mix
+   before spending anything.
 3. **Memoise the index in process.** It is immutable for the life of a
    generation, so one decode per generation would remove most of the 13 %
    that decoding still costs.
-4. **Slim the stored group**, which now buys memory as well as CPU: 1.9 KB
-   per group is what makes a cached set 5.4 MB, and the instance now runs
-   pinned at its 976 MB cap, evicting continuously. Harmless today — the
-   third run evicted only dead generations and held a 99 % hit ratio — but
-   it is the headroom that disappears first as the catalogue grows.
+4. **Slim the stored group**, which buys memory as well as CPU: 1.9 KB per
+   group is what makes a cached set 5.4 MB. No longer urgent (see above),
+   but it is the headroom that disappears first as the catalogue grows.
 5. **Then the unoptimised reads**, which are the tail of the third run:
    `/dashboard/series` (p95 10 983 ms), `/report/history` (8 765 ms),
    `/product/search` (6 184 ms), `/collection` (6 053 ms) and `/meta`
    (3 052 ms, still blob-cached). `/report` is no longer among them.
-6. **Several API processes behind nginx**, which is now the move with the
-   most left in it: at 500 users the fifty-connection pool is nearly all in
-   use and commits per second have stopped growing, so the next gain is
-   more than one process feeding the eight cores rather than a cheaper
-   request. Still blocked by the in-process rate limiter and the sync
-   lock's single-instance boot sweep, both documented in `CLAUDE.md`.
+6. **More cores**, which is what the remaining plateau is made of. Three
+   replicas, Postgres, two Valkeys and HAProxy share eight of them, and
+   halving the pool showed the database gaining work when it contends for
+   fewer of them. More replicas on this host would take cores from the
+   database, not add any.
 
-- The 1 000 seeded users stay in place for a repeat run after any change;
-  `DOTENV_CONFIG_PATH=.env.loadtest pnpm loadtest:seed --cleanup` removes
-  them. Their refresh tokens expire around **2026-09-20**, after which the
-  seed must be recreated rather than reused.
+- **The seeded users are removed after every ladder** — the last run's
+  were, and the database was verified afterwards (0 left, 8 real users,
+  3 843 bottlings, 9 575 offers, 593 634 snapshots, no open sync runs). A
+  ladder re-seeds from scratch rather than reusing a population, because
+  the seeded refresh tokens rotate on use and a previous run burns them.

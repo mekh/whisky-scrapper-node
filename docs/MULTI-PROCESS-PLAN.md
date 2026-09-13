@@ -8,8 +8,9 @@ went quiet because the API stopped feeding it. See
 [`LOAD-TEST-2026-09.md`](LOAD-TEST-2026-09.md) and
 [`POSTGRES-TUNING.md`](POSTGRES-TUNING.md).
 
-Status: decisions taken (2026-09-13), **steps 1-5 done**, step 6's deployment
-half done — the ladder against N instances is what remains.
+Status: **all six steps done** (2026-09-13). Deployed at `APP_INSTANCES=3`
+and measured by two ladders; the results are in
+[`LOAD-TEST-2026-09.md`](LOAD-TEST-2026-09.md) and summarised in step 6.
 
 | Decision                  | Answer                                                                                                            |
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -225,14 +226,26 @@ arithmetic is visible rather than inferred.
    processes**: on the same tick one logged the sync and the other logged
    `Skipping the currency-rate-sync tick: instance mac.local:71234:70d900
    claimed it`.
-6. Turn on N instances; re-run the ladder and compare against the 139
-   requests/s and ~350-user ceiling on record. **The deployment half is
-   done** — see section 7.
+6. ~~Turn on N instances; re-run the ladder and compare against the 139
+   requests/s and ~350-user ceiling on record.~~ **Done** — deployed at
+   `APP_INSTANCES=3` and measured twice (`loadtest/out/20260913-1719/` and
+   `.../20260913-1835/`). Throughput plateau **139 → 216 requests/s**; the
+   collapse that ended the single-instance ladder at 650 users with 29 % of
+   requests failing is gone, and the ladder now reaches 1 000; **both
+   response-time limits are met at 400 users**, where one instance met
+   neither. Zero 429s in both runs, and HAProxy spread the load across the
+   three replicas to within 0.7 %.
 
-Step 6 is the only one that proves anything, and the honest expectation is
-stated in `POSTGRES-TUNING.md`: the gain is bounded by the database, whose
-own ceiling is **not** measured — 328 commits/s is the highest observed and
-it was still climbing when the API fell over.
+Step 6 was the only one that proves anything, and it settled the question
+`POSTGRES-TUNING.md` left open. The database's own ceiling **has** now been
+seen: commits per second flatten at ~350 and stay there while the offered
+load doubles. It is not made of connections — halving `DB_POOL_SIZE_TOTAL`
+from 50 to 24 raised the plateau to ~360 rather than lowering it, because
+48 backends is six times the host's core count and the host also runs three
+Node replicas, two Valkeys and HAProxy. What remains is the eight cores
+themselves, and `pg_stat_statements` (installed for that ladder) says where
+they go: 24 % to `/currency/rate/latest`, one call per page load, which a
+lateral rewrite measures at 0.338 ms against 52.200 ms.
 
 ## 7. How N instances are actually deployed (2026-09-13)
 

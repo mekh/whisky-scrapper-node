@@ -29,11 +29,14 @@ services:
     # the queue is in the Node process; it makes each uncached query cheaper,
     # which is worth having anyway.
     #
-    # `max_connections` is deliberately NOT raised and so is not listed: with
-    # eight cores the ladder already ran 27 active backends on average and 51
-    # at peak, and more of them buys context switching rather than work. The
-    # pool that feeds it (`DB_POOL_SIZE_TOTAL`, shared across every
-    # instance) is 50.
+    # `max_connections` is deliberately NOT raised and so is not listed, and
+    # the 2026-09-13 ladders turned that from a precaution into a measurement:
+    # the pool feeding it (`DB_POOL_SIZE_TOTAL`, shared across every instance)
+    # was cut from 50 to 24 and the database did MORE work, ~360 commits/s
+    # against ~340, because 48 backends is six times this host's core count
+    # and the host also runs three Node replicas, two Valkeys and HAProxy.
+    # Raising either number is the wrong direction; see
+    # `docs/LOAD-TEST-2026-09.md`.
     #
     # `max_parallel_workers_per_gather` is left at its default for the same
     # discipline: no query measured here launches a worker at all.
@@ -52,7 +55,7 @@ services:
       # Per sort/hash NODE, not per query, so it multiplies by the pool. 16 MB
       # clears the small spills; the dashboard's 60 MB percentile sort still
       # goes to disk on purpose, because the global value that would hold it
-      # risks gigabytes across 50 connections for no measured latency gain.
+      # risks gigabytes across the whole pool for no measured latency gain.
       - -c
       - work_mem=${PG_WORK_MEM:-16MB}
       # VACUUM, index builds and migrations only — never the serving path.

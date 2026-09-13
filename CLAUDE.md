@@ -108,7 +108,19 @@ in the host `.env` is the only number: compose reads it as the app service's
 replica count and the pool share cannot drift apart. The app publishes no
 host port any more — the `lb` service does, on exactly the address the host
 nginx already proxies to, so **nginx needs no change when the count
-changes**. `haproxy.cfg` sits beside the compose file and finds the replicas
+changes**. Production runs **three** replicas, and the containers are named
+`whisky-be-1..N` (the compose project is `whisky`, declared in the file, and
+the service is `be`).
+
+**Measured, not assumed** (`docs/LOAD-TEST-2026-09.md`): throughput went
+139 → 216 requests/s, the collapse that ended the single-instance ladder at
+650 users is gone, and both response-time limits are met at 400 concurrent
+users where one instance met neither. The constraint moved onto the
+database, and **its ceiling is not made of connections**:
+`DB_POOL_SIZE_TOTAL` was cut 50 → 24 and commits per second _rose_, ~340 →
+~360, because 48 backends is six times this host's core count and those
+cores are shared with Postgres, two Valkeys and HAProxy. Raising the pool is
+the wrong direction. `haproxy.cfg` sits beside the compose file and finds the replicas
 through Docker's own DNS (`server-template` + `resolvers`), so it needs no
 change either; only raising the count past its 16 slots would.
 
@@ -1108,6 +1120,13 @@ Measured on a production-shaped copy: 2 splits (Dalmore 12/15/18/30, West Cork
 Bourbon Cask 3/5), 6 merges, 19 ages filled in, 27 offers re-linked (10 by
 split, 17 by merge), 1 bottling created, 7 rows left with no offers; snapshot
 and offer counts unchanged.
+
+Then `pg-stat-statements` (2026-09-13), which installs the extension of that
+name; `shared_preload_libraries` in both compose files is the half that makes
+it collect, and the migration is safe to apply before that restart because
+creating it succeeds either way. It is observability rather than schema, and
+it earned its place immediately: it showed `/currency/rate/latest` to be 24 %
+of all statement time (see `docs/LOAD-TEST-2026-09.md`).
 
 Then `sync-log-owner` (2026-09-13), one nullable `varchar(64)` column
 recording which instance holds an open run — see "Sync orchestration". Rows
@@ -2222,8 +2241,12 @@ cache was not told about, so the cache is bypassed entirely until a bump
 succeeds. `VersionedCacheService.stats()` reports that state as `dirty`.
 
 **The cache has its own Valkey instance**, the `whisky-cache` container both
-compose files define — `--maxmemory 512mb --maxmemory-policy allkeys-lru` and
-no persistence, since every entry is regenerable. The split is not cosmetic: a
+compose files define — `--maxmemory ${CACHE_MAXMEMORY:-512mb}
+--maxmemory-policy allkeys-lru` and no persistence, since every entry is
+regenerable. **Production runs 3 GiB**, raised from 976 MiB after a ladder
+peaked at 1.16 GiB and evicted 4 038 live entries, each of which is a
+database query later; `CACHE_MEMORY_LIMIT` must stay above it or the
+container is OOM-killed instead of evicting. The split is not cosmetic: a
 cache wants its oldest entries evicted, a session store must never lose a key
 (a missing session reads as a revoked one and signs the user out of every
 device), and `maxmemory-policy` is per instance, so no one policy serves both.

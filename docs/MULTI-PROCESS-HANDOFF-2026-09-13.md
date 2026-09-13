@@ -17,22 +17,25 @@ this file for the mechanics).
 The code is **done, committed and tagged `v2.0.0`** (`04ead75`, pushed to
 `main`). Steps 1-5 of the plan plus step 6's deployment half are in it.
 
-> **Deployed on 2026-09-13**, `APP_INSTANCES=3`, and the ladder has been run
-> against it. What remains is writing that result up in
-> `LOAD-TEST-2026-09.md` and closing step 6 of the plan.
+> **Finished 2026-09-13.** Deployed at `APP_INSTANCES=3`, measured by two
+> ladders, written up in [`LOAD-TEST-2026-09.md`](LOAD-TEST-2026-09.md) and
+> step 6 of the plan is closed. Throughput 139 → 216 requests/s, no collapse
+> anywhere on a ladder that reaches 1 000 users, and both response-time
+> limits met at 400. This file is kept for the deploy procedure and the
+> traps; the numbers live in the load-test document.
 
 ## 2. What changed, in one table
 
-|                        | Before                          | Now                                       |
-| ---------------------- | ------------------------------- | ----------------------------------------- |
+|                        | Before                          | Now                                        |
+| ---------------------- | ------------------------------- | ------------------------------------------ |
 | Instances              | one container, `whisky-be`      | `APP_INSTANCES` replicas, `whisky-be-1..N` |
-| Who publishes the port | the app                         | the `lb` service (HAProxy), same address  |
-| Rate-limit buckets     | in-process `Map`                | Valkey, one Lua charge per request        |
-| Login ladder           | `GET` then `SET` (lost updates) | one script call per half                  |
-| Sync orphan sweep      | closed every open row           | only runs whose owner's heartbeat is gone |
-| Cron ticks             | armed per process               | one `SET NX EX` claims the tick           |
-| Pool                   | `DB_POOL_SIZE` per process      | `DB_POOL_SIZE_TOTAL / APP_INSTANCES`      |
-| Health                 | none (`/meta`'s 401)            | `GET /health`, outside the rate limiter   |
+| Who publishes the port | the app                         | the `lb` service (HAProxy), same address   |
+| Rate-limit buckets     | in-process `Map`                | Valkey, one Lua charge per request         |
+| Login ladder           | `GET` then `SET` (lost updates) | one script call per half                   |
+| Sync orphan sweep      | closed every open row           | only runs whose owner's heartbeat is gone  |
+| Cron ticks             | armed per process               | one `SET NX EX` claims the tick            |
+| Pool                   | `DB_POOL_SIZE` per process      | `DB_POOL_SIZE_TOTAL / APP_INSTANCES`       |
+| Health                 | none (`/meta`'s 401)            | `GET /health`, outside the rate limiter    |
 
 ## 3. Before the deploy — the host `.env`
 
@@ -119,9 +122,13 @@ what this run settles.
 
 ### What is new to watch this time
 
-- **Where the bottleneck went.** If it is now Postgres, `observe.sh` shows it
-  as waiting backends and a commits/s plateau — and the first lever is
-  `DB_POOL_SIZE_TOTAL` against `max_connections`, not more instances.
+- ~~**Where the bottleneck went.**~~ **Answered, and the lever named here was
+  the wrong one.** It is now Postgres — commits/s flatten at ~350 while the
+  offered load doubles — but the queue is not for connections: cutting
+  `DB_POOL_SIZE_TOTAL` from 50 to 24 _raised_ throughput to ~360, because 48
+  backends is six times this host's core count. Raising it against
+  `max_connections` would have made things worse. What the plateau is made
+  of is the cores themselves, and `pg_stat_statements` says where they go.
 - **The limiter's round trip.** Every request now charges a bucket in the
   session Valkey. It measured ~10 µs of CPU and one round trip in isolation;
   under load, watch that instance's ops/s and latency.

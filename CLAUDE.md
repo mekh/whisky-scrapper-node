@@ -1902,7 +1902,38 @@ barrel.
   message.
 - Outgoing: `ValidationInterceptor` runs `validateOrReject` on response
   objects (arrays supported) — a mismatch is a 500 `ServerError`, so response
-  DTOs must carry class-validator decorators and be class instances.
+  DTOs must carry class-validator decorators and be class instances. It runs
+  with `whitelist: true`, which also **deletes** every property the DTO does
+  not declare, so the outgoing pass is a response filter as well as a check.
+- **A route can opt out of the whole outgoing DTO pipeline** with
+  `@ValidateResponse(false)` (`~decorators/http`), on a controller or on one
+  handler, the handler winning (`getAllAndOverride`, the `@RateLimit`
+  pattern). The flag is read by `ValidationInterceptor` and by `@Plain`'s
+  wrapper, so it skips the `plainToInstance` conversion too — measured at
+  half the cost each, and on a route with validation off the conversion
+  exists only to give the validator a decorated instance. `@Plain` reads it
+  when the handler runs, not when it is decorated, so the decorator works
+  written above or below it and a controller-level flag is visible at all.
+  `ApiOkResponse` and `Permission` are untouched: `/docs-json` is
+  byte-identical either way, verified by diffing it across both arms.
+  **Two things follow.** The handler's return value becomes the wire contract
+  verbatim, so a route only opts out once its shape is asserted elsewhere —
+  and JSON key order changes, from the DTO's declaration order to the order
+  the service constructed the object in (stable across requests, values
+  identical; nothing should depend on it, but it is observable).
+- **`/report` is the one route opted out** (2026-09-13). `ReportService`
+  already emits the exact wire shape by naming its fields — `toOffer` picks
+  its 19, `toPublicGroup`/`toPublicRow` drop the producer ids, the history
+  SQL selects two columns — so the pipeline stripped nothing and cost
+  ~5 ms of event loop per page: measured over HTTP on a production-shaped
+  copy, four closed-loop callers, cache warm, **121.6 → 316.7 requests/s**
+  and p50 **32.3 → 12.5 ms**, with both arms returning the same 103 KB page.
+  The assertion it replaces lives in
+  `test/integration/report-contract.integration.spec.ts`, which compares the
+  key sets of a group, an offer, the page envelope, a history product and a
+  history point against the class-validator metadata of their types — the
+  same set `whitelist` computed. A column added to the report SQL used to be
+  stripped in silence and now reaches the client, so that test is the gate.
 - Reusable field rules belong in `~decorators/fields` composites, with limits
   in `~constants`.
 - **A date field validates the calendar, not just the shape.** `IsDateFormat(format)` (`~decorators/fields`) matches one of `YYYYMMDDHHMMSS` / `YYYYMMDD` / `YYYY-MM-DD` / `YYYY-MM` and then feeds the parts to `Date.UTC` and reads them back, so a value the calendar has to normalize is rejected. Extending it is one entry in its pattern table plus one member of `DateFormat`. `IsoDate` and `IsoMonth` are composites over it, which is what closed a `500`: a regex-only check accepted `2026-99-99` and `2026-02-30`, which reached Postgres as a `date` and failed there with SQLSTATE `22008`. Years under 100 are rejected as a side effect of the read-back, deliberately — Postgres has no year 0.

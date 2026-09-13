@@ -2,7 +2,7 @@ import { Controller, Get, Param, Query } from '@nestjs/common';
 
 import { DEFAULT_PER_PAGE, READ_CACHE_MAX_AGE_SECONDS } from '~constants';
 import { CurrentUser } from '~decorators/auth';
-import { CacheControl, RateLimit } from '~decorators/http';
+import { CacheControl, RateLimit, ValidateResponse } from '~decorators/http';
 import { Paginated, Plain } from '~decorators/types';
 import { RateLimitProfile, ReportWindow, Resource, SortOrder } from '~enums';
 import type {
@@ -19,8 +19,17 @@ import { HistoryQueryDto, ReportKindParamsDto, ReportQueryDto } from './dto';
 import { ReportService } from './report.service';
 import { PriceHistoryType, ReportGroupType } from './types';
 
+/**
+ * Opted out of the outgoing DTO pipeline: the service already emits the exact
+ * wire shape by naming its fields, so conversion and validation cost ~5 ms of
+ * event loop a page and change nothing but the key order.
+ *
+ * The shape is asserted instead by `report-contract.integration.spec.ts`,
+ * which is what a field added to the report SQL now has to answer to.
+ */
 @Controller('report')
 @RateLimit(RateLimitProfile.HEAVY)
+@ValidateResponse(false)
 export class ReportController {
   public constructor(private readonly reportService: ReportService) {}
 

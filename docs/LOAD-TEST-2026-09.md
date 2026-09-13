@@ -5,11 +5,14 @@ Plan and harness: [`LOAD-TEST-PLAN.md`](LOAD-TEST-PLAN.md),
 `loadtest/out/20260913-0020/` (git-ignored) — `k6.log`, `summary.json`,
 `report.html` (the k6 dashboard export), `observer.tsv`.
 
-**Two runs are recorded here.** Everything down to "The fix, measured
-locally" is the first one, which found the ceiling and diagnosed it. The
-page-addressable report cache was then deployed and the ladder repeated —
-that is "Repeat run after the fix", and **its numbers are the current
-ones**. The ceiling it measures is about 200 users, not the 100 below.
+**Three runs are recorded here, in order.** Everything down to "The fix,
+measured locally" is the first, which found the ceiling and diagnosed it.
+"Repeat run after the fix" is the second, after the page-addressable cache
+was deployed. **"Third run" is the current one** — after the outgoing DTO
+pipeline came off `/report`, `DB_POOL_SIZE` went to 50 and the process
+guards landed. Read it for today's numbers: the service holds about
+**139 requests/s** and roughly **350 concurrent users** of this workload,
+not the 100 below or the 200 of the second run.
 
 ## Headline (first run, before the fix)
 
@@ -405,33 +408,180 @@ small. Worth either raising `--maxmemory` or slimming the stored group
   The link was again not the constraint: `http_req_receiving` for reports
   held p50 136 ms / p95 184 ms.
 
+## Third run — production, 2026-09-13 10:32-10:51
+
+Artefacts `loadtest/out/20260913-1032/`. Three changes since the second run,
+deployed together and therefore measured together: `/report` opts out of the
+outgoing `plainToInstance` + `validateOrReject` pipeline, `DB_POOL_SIZE` went
+from 10 to 50, and the process guards stop an orphaned rejection from killing
+the API. Freshly re-seeded users, so no virtual user had to refresh at start
+— the same footing as the first run.
+
+**The service sustains about 139 requests per second, and holds about 350
+simultaneously active users of this mix inside the response-time limits.**
+The ladder ran seven rungs to 650 before the valve ended it, against five in
+the second run and three in the first. Nothing failed at all through 400
+users; 97 074 requests, 9 065 visits, zero 429s.
+
+### Throughput per step, all three runs (k6 requests/s)
+
+| Users | First | Second   | Third     |
+| ----- | ----- | -------- | --------- |
+| 50    | 15    | 17.1     | 16.6      |
+| 100   | 41    | 36.0     | 37.0      |
+| 200   | 38    | 70.6     | 70.6      |
+| 300   | —     | 91.3     | 107.0     |
+| 400   | —     | **95.0** | 136.8     |
+| 500   | —     | 72.9     | **139.1** |
+| 650   | —     | —        | 81.2      |
+
+The plateau is the number that matters: ~40 requests/s became ~95 and is now
+**~139**, a 3.5x improvement over where this started. Below 200 users the
+three runs are identical, which is the expected shape — at that load nothing
+was ever queueing, so nothing could get faster.
+
+### Cached reports (`cache:hit`) p95, all three runs
+
+| Users | First      | Second   | Third   |
+| ----- | ---------- | -------- | ------- |
+| 50    | 623 ms     | 306 ms   | 332 ms  |
+| 100   | **1 460**  | 379      | **267** |
+| 200   | **11 526** | 1 159    | **539** |
+| 300   | —          | 2 751    | **583** |
+| 400   | —          | 5 130    | 1 836   |
+| 500   | —          | 22 183 ⚠ | 10 751  |
+| 650   | —          | —        | 29 590  |
+
+At 200 users — the load that collapsed the first run — p95 is now 539 ms
+against 11 526 ms: **twenty-one times better**, and less than half what the
+second run managed there.
+
+### Uncached reports (`cache:miss`) p95
+
+| Users | First  | Second   | Third  |
+| ----- | ------ | -------- | ------ |
+| 50    | 759 ms | 716 ms   | 830 ms |
+| 100   | 1 179  | 735      | 896    |
+| 200   | 1 829  | 1 418    | 868    |
+| 300   | —      | 3 329    | 1 358  |
+| 400   | —      | 8 382    | 2 471  |
+| 500   | —      | 11 658 ⚠ | 8 141  |
+| 650   | —      | —        | 15 090 |
+
+### Where the limits are crossed now
+
+| Limit                    | First   | Second  | Third            |
+| ------------------------ | ------- | ------- | ---------------- |
+| Cached report, 1 s p95   | **100** | **200** | **400**          |
+| Uncached report, 2 s p95 | > 200   | **300** | **400**          |
+| First failed request     | none    | 400     | **500** (2.10 %) |
+
+Both limits now cross at the same rung, which they did not before: at 300
+users a cached page is 583 ms and an uncached one 1 358 ms, both comfortably
+inside; at 400 they are 1 836 ms and 2 471 ms, both outside. So the honest
+ceiling is **between 300 and 400 users**, and unlike the previous two runs
+the service is still answering _everything_ there — the first failure appears
+only at 500.
+
+### What the server was doing (observer, per step)
+
+| Step | req/s     | Postgres active avg / max | Waiting | Conns | Commits/s | Cache hit ratio | Cache memory |
+| ---- | --------- | ------------------------- | ------- | ----- | --------- | --------------- | ------------ |
+| 50   | 16.6      | 1.5 / 5                   | 0       | 29    | 36.2      | 97.2 %          | 774 MB       |
+| 100  | 37.0      | 2.1 / 8                   | 0       | 37    | 80.2      | 98.8 %          | 822 MB       |
+| 200  | 70.6      | 4.4 / 14                  | 1       | 52    | 145.9     | 99.1 %          | 899 MB       |
+| 300  | 107.0     | 11.5 / 39                 | 2       | 52    | 221.6     | 99.1 %          | 977 MB       |
+| 400  | 136.8     | 14.2 / 38                 | 3       | 52    | 279.7     | 99.2 %          | 976 MB       |
+| 500  | **139.1** | 27.7 / **51**             | **7**   | 52    | 275.3     | 99.2 %          | 976 MB       |
+| 650  | 81.2      | 9.3 / 45                  | 1       | 52    | 154.2     | 99.1 %          | 976 MB       |
+
+**The database is now genuinely working, which it never was before.** Active
+backends averaged 1.5-2.4 across the whole first run; here they reach 27.7 at
+500 users with a maximum of 51, and commits per second peaked at 280 against
+the first run's 73. That is the point of the whole exercise: the work has
+moved from one saturated JavaScript thread onto eight Postgres cores that
+were previously idle.
+
+It also shows where the next edge is. At 500 users the fifty-connection pool
+is nearly all in use (51 of 52 observed connections, seven backends waiting),
+and that is the rung where failures start. `DB_POOL_SIZE` moved the wall from
+400 users to 500-650; it did not remove it, and raising it further now runs
+into the machine rather than into a queue — commits per second stopped
+growing between 400 and 500 while latency tripled, which is the same
+saturation signature the first run showed on the event loop.
+
+### The run is clean, unlike the second
+
+Three checks, all of which the second run failed:
+
+- **The process never restarted.** The cache generation stood at
+  `1789224212` before the ladder and still does after it, and a restart is
+  two bumps. The guards committed this morning are the reason to expect
+  that, since the failure they catch — an orphaned `pg-pool` acquire
+  timeout — is exactly what 500 and 650 users produce.
+- **The cache stayed coherent.** No miss cliff anywhere in the observer;
+  the hit ratio held at 99.1-99.2 % from 200 users up.
+- **Eviction happened and cost nothing.** 866 keys were evicted once memory
+  reached the 976 MB cap, and `allkeys-lru` took them from the three dead
+  generations left by earlier restarts, exactly as it should. The live
+  generation was never touched — visible in that flat hit ratio.
+
+So the 500 and 650 rows are real overload measurements, not artefacts.
+
+### A fourth ladder was run, and measures nothing
+
+`loadtest/out/20260913-1118/`, immediately after `jit=off` was applied to
+Postgres. It is recorded here so nobody finds the artefacts and wonders: it
+reached 500 rather than 650, plateaued at 134 requests/s against 137, and its
+`cache:hit` latencies moved in both directions between steps (200 users
+539 → 309 ms, 300 users 583 → 988 ms).
+
+None of that is attributable. A cached request runs none of the queries JIT
+compiles, so no Postgres setting can move the column that defines the
+ceiling — those differences are run-to-run noise, and so is a collapse that
+lands one rung earlier. The isolated measurement of that change (312 → 213 ms
+on the catalogue query, three runs each way) is the reliable one, and it is
+in [`POSTGRES-TUNING.md`](POSTGRES-TUNING.md) together with why tuning the
+database cannot raise this ceiling at all: at 400 users the database is idle
+and a cached page still takes 1 609 ms, which is queueing in the Node
+process.
+
 ## Next steps proposed
 
 In the order the evidence now ranks them:
 
-0. **Settle why the API restarted twice at 500 users, and rerun the top of
-   the ladder.** Until that is known, where the service actually breaks is
-   unmeasured — everything below is ranked on the clean 50–400 rows.
-1. **Take the outgoing DTO pipeline off the hot path in production.** It
-   was 14 % of a catalogue page before the cache fix and is **55 %** after
-   it — the single largest remaining term. Keep `plainToInstance` +
-   `validateOrReject` in development and tests, where they catch contract
-   drift, and gate them by config in production.
-2. **Raise `DB_POOL_SIZE`, and measure.** The pool, not Postgres, is what
-   produced the acquire timeouts from 400 users up. Cheap, but it moves a
-   queue rather than removing one, so it wants a ladder to confirm.
+~~0. Settle why the API restarted twice at 500 users.~~ **Done** — an
+orphaned `pg-pool` acquire timeout was killing the process; the guards
+in `src/app/process/` log it and keep serving, and the third run
+restarted zero times.
+
+~~1. Take the outgoing DTO pipeline off the hot path.~~ **Done** —
+`/report` opts out; 121.6 -> 316.7 requests/s on the local replay and a
+share of the 95 -> 139 requests/s measured in production.
+
+~~2. Raise `DB_POOL_SIZE`.~~ **Done** — 10 -> 50, which moved the first
+failed request from 400 users to 500.
+
+Remaining, re-ranked on the third run:
+
 3. **Memoise the index in process.** It is immutable for the life of a
    generation, so one decode per generation would remove most of the 13 %
    that decoding still costs.
 4. **Slim the stored group**, which now buys memory as well as CPU: 1.9 KB
-   per group is what makes a cached set 5.4 MB and the instance 667 MB at
-   peak.
-5. **Then the unoptimised reads**: `/meta` (still blob-cached, p95 9.7 s
-   under load), `/dashboard/series` and `/report/history`, which are the
-   tail of this run.
-6. **Several API processes behind nginx**, once the per-request cost is
-   honest. Still blocked by the in-process rate limiter and the sync lock's
-   single-instance boot sweep, both documented in `CLAUDE.md`.
+   per group is what makes a cached set 5.4 MB, and the instance now runs
+   pinned at its 976 MB cap, evicting continuously. Harmless today — the
+   third run evicted only dead generations and held a 99 % hit ratio — but
+   it is the headroom that disappears first as the catalogue grows.
+5. **Then the unoptimised reads**, which are the tail of the third run:
+   `/dashboard/series` (p95 10 983 ms), `/report/history` (8 765 ms),
+   `/product/search` (6 184 ms), `/collection` (6 053 ms) and `/meta`
+   (3 052 ms, still blob-cached). `/report` is no longer among them.
+6. **Several API processes behind nginx**, which is now the move with the
+   most left in it: at 500 users the fifty-connection pool is nearly all in
+   use and commits per second have stopped growing, so the next gain is
+   more than one process feeding the eight cores rather than a cheaper
+   request. Still blocked by the in-process rate limiter and the sync
+   lock's single-instance boot sweep, both documented in `CLAUDE.md`.
 
 - The 1 000 seeded users stay in place for a repeat run after any change;
   `DOTENV_CONFIG_PATH=.env.loadtest pnpm loadtest:seed --cleanup` removes

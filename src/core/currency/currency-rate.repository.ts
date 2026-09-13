@@ -149,17 +149,38 @@ export class CurrencyRateRepository extends BaseRepository<CurrencyRateEntity> {
   /**
    * Reads the newest stored rate of every currency.
    *
+   * A lateral probe per currency rather than the obvious
+   * `DISTINCT ON (c.code)`, and that is not a stylistic preference. Ordering
+   * by a column of the *other* table makes every index on `currency_rate`
+   * unusable, so the obvious form read and sorted all 21 329 rows on every
+   * call to return two: 52.200 ms on the production database with nothing
+   * else running, 235 ms under load, and **24 % of the whole database's
+   * time** during the 2026-09-13 ladder — the largest single consumer there
+   * is, since this fires on every page load. This form walks
+   * `currency_rate_currency_effective_uindex` backwards once per currency:
+   * **0.338 ms**, three index probes, identical rows in identical order
+   * (both plans are in `docs/LOAD-TEST-2026-09.md`).
+   *
+   * `CROSS JOIN LATERAL` preserves the inner-join semantics the previous
+   * form had — a currency holding no rate at all, which is the base
+   * currency, yields no row either way.
+   *
    * @returns One row per currency that has any rate at all.
    */
   public async findLatest(): Promise<CurrencyLatestRate[]> {
     return await this.query(
-      `SELECT DISTINCT ON (c.code)
-         c.code AS code,
-         cr."effectiveOn"::text AS "effectiveOn",
-         cr.rate::float8 AS rate
-       FROM currency_rate cr
-       JOIN currency c ON c.id = cr."currencyId"
-       ORDER BY c.code, cr."effectiveOn" DESC`,
+      `SELECT c.code AS code,
+              r."effectiveOn"::text AS "effectiveOn",
+              r.rate::float8 AS rate
+       FROM currency c
+       CROSS JOIN LATERAL (
+         SELECT cr."effectiveOn", cr.rate
+         FROM currency_rate cr
+         WHERE cr."currencyId" = c.id
+         ORDER BY cr."effectiveOn" DESC
+         LIMIT 1
+       ) r
+       ORDER BY c.code`,
     ) as CurrencyLatestRate[];
   }
 

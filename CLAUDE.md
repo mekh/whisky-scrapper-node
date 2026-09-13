@@ -1870,7 +1870,7 @@ has no rate against itself), `CURRENCY_RATE_CRON_ENABLED` (**true**, unlike
 An unusable cron expression fails the boot, as the sync one does.
 Rate-limit vars in `RateLimitConfig` — `RATE_LIMIT_ENABLED` (**true**), `RATE_LIMIT_RPS` (3) / `RATE_LIMIT_BURST` (10) for the global per-caller cap, `RATE_LIMIT_HEAVY_RPS` (1) / `RATE_LIMIT_HEAVY_BURST` (60) for the report and dashboard reads, `RATE_LIMIT_STRICT_RPS` (1) / `RATE_LIMIT_STRICT_BURST` (3) for the collection reads, `RATE_LIMIT_AUTH_RPS` (1) / `RATE_LIMIT_AUTH_BURST` (5) for the two public auth routes, plus `RATE_LIMIT_MAX_KEYS` (10000) and `RATE_LIMIT_SWEEP_MS` (60000) bounding the bucket map — see "Rate limiting". They replace `THROTTLE_TTL_MS`/`THROTTLE_LIMIT`, which are gone with `@nestjs/throttler`.
 `APP_TRUSTED_IP_HEADERS` (`x-real-ip,x-forwarded-for`) and `APP_TRUST_PROXY` (**true**) decide which forwarding headers the client's address may be read from, and whether any may — see "Who the caller is".
-Cache vars in `CacheConfig` — `CACHE_ENABLED` (**true**, the kill switch), `CACHE_TTL_SEC` (86400, garbage collection rather than freshness), `CACHE_READ_TIMEOUT_MS` (250, deliberately far under the client's own command timeout), `CACHE_MAX_ENTRY_BYTES` (8 MiB, measured after compression), `CACHE_BOOT_BUMP` (**true**; the scripts turn it off through `suppressBootBump()`), and the connection set `CACHE_VALKEY_HOST` / `CACHE_VALKEY_PORT` / `CACHE_VALKEY_DB` / `CACHE_VALKEY_PASSWORD` / `CACHE_VALKEY_PREFIX` / `CACHE_VALKEY_COMMAND_TIMEOUT_MS` / `CACHE_VALKEY_CONNECT_TIMEOUT_MS` / `CACHE_VALKEY_KEEP_ALIVE_MS` / `CACHE_VALKEY_MAX_RETRIES_PER_REQUEST`, **each falling back to its `VALKEY_*` equivalent**, so sharing the session instance is the zero-configuration default and giving the cache its own is one variable — see "Catalogue cache".
+Cache vars in `CacheConfig` — `CACHE_ENABLED` (**true**, the kill switch), `CACHE_TTL_SEC` (86400, garbage collection rather than freshness), `CACHE_READ_TIMEOUT_MS` (250, deliberately far under the client's own command timeout), `CACHE_MAX_ENTRY_BYTES` (8 MiB, measured after compression — the `/meta` blob), `CACHE_MAX_SET_BYTES` (32 MiB, a report set's compressed index plus its uncompressed groups), `CACHE_BOOT_BUMP` (**true**; the scripts turn it off through `suppressBootBump()`), and the connection set `CACHE_VALKEY_HOST` / `CACHE_VALKEY_PORT` / `CACHE_VALKEY_DB` / `CACHE_VALKEY_PASSWORD` / `CACHE_VALKEY_PREFIX` / `CACHE_VALKEY_COMMAND_TIMEOUT_MS` / `CACHE_VALKEY_CONNECT_TIMEOUT_MS` / `CACHE_VALKEY_KEEP_ALIVE_MS` / `CACHE_VALKEY_MAX_RETRIES_PER_REQUEST`, **each falling back to its `VALKEY_*` equivalent**, so sharing the session instance is the zero-configuration default and giving the cache its own is one variable — see "Catalogue cache".
 
 `DB_LOG_PARAMETERS` (default false) decides whether a logged statement carries its bound values; see "Logging".
 
@@ -1957,12 +1957,32 @@ vocabulary, `CacheConfig` the settings.
 
 **What is cached is the unsorted, unpaginated result set** — the output of
 `ReportService.buildGroups`, before anybody's preferences are applied — plus
-the whole `/meta` payload. Everything about that is deliberate: the set is the
-expensive half and it is identical for every user, so one entry serves them
-all, and sorting and paging are applied to it on the way out, so one entry
-also serves every page instead of one entry per page. Measured on a
-production-shaped copy: `/report/catalog` 290 ms cold, 40 ms warm, and page 2
-costs the same 40 ms without writing a second entry.
+the whole `/meta` payload. The set is the expensive half and it is identical
+for every user, so one set serves them all and every page of a report.
+
+**A report set is stored page-addressably, and a request decodes only its
+page (2026-09-13).** The first version stored the set as one gzipped JSON
+blob and re-read it whole on every request; the load test showed that this
+was 70 % of a catalogue page's CPU — decompressing, UTF-8-decoding and
+parsing 4–6 MB of JSON to use fifty groups — and the ceiling of the API on
+the new host was ~100 concurrent users because of it (see
+`docs/LOAD-TEST-2026-09.md`). A set is now two keys: `…:idx`, a small
+gzipped index (`ReportPageIndex`: the product, producer and bottler id per
+position plus one precomputed order per `ReportSortField` and direction,
+nulls last, ties by primary offer id), and `…:grp`, a hash of the groups in
+their public shape, one field per position. `VersionedCacheService.getPage`
+reads the index, lets `ReportPageUtils.select` walk the requested order —
+skipping the caller's hidden bottlings and makers, which also yields
+`total` — and `HMGET`s exactly the page's fields. A miss builds the set,
+writes both keys in one pipeline and serves the page from memory through
+the same `select`, so hit and miss cannot drift; a hash missing a field its
+index names is dropped whole and rebuilt. `/meta` keeps the blob form.
+Measured on the same replay (four closed-loop users, production copy,
+limiter off): 28 → 113 requests/s, median 141 → 34 ms, ~35 → ~8.5 ms of
+CPU per page; the outgoing DTO pipeline (`plainToInstance` +
+`validateOrReject`) is now more than half of what remains. The cost is
+memory in Valkey: the unfiltered catalogue is ~5.7 MB as a hash against
+~0.4 MB as a blob, bounded per set by `CACHE_MAX_SET_BYTES`.
 
 **Freshness is a generation counter, not a delete.** One counter,
 `cache:gen:catalogue`, is read _before_ the query and the entry is stored
@@ -1982,8 +2002,10 @@ Key shape, readable on purpose so `valkey-cli --scan` shows what is cached:
 ```
 cache:gen:catalogue
 cache:meta:g1789074305
-cache:report:g1789074305:catalog:-:a93f84069f4838aa99d6c1a6e8305e29
-cache:report:g1789074305:drops:2026-09-10:c0864db449f6e2a77d45ab2c0ff29d9e
+cache:report:g1789074305:catalog:-:a93f84069f4838aa99d6c1a6e8305e29:idx
+cache:report:g1789074305:catalog:-:a93f84069f4838aa99d6c1a6e8305e29:grp
+cache:report:g1789074305:drops:2026-09-10:c0864db449f6e2a77d45ab2c0ff29d9e:idx
+cache:report:g1789074305:drops:2026-09-10:c0864db449f6e2a77d45ab2c0ff29d9e:grp
 ```
 
 **The day bucket belongs to `new` and `drops` alone.** Those two read the real

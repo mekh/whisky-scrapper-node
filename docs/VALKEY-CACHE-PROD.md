@@ -46,11 +46,18 @@ keeps nothing on disk because every entry is regenerable and a reloaded
 append-only file would only restore entries the boot bump has already
 superseded.
 
-**Sizing.** A full unfiltered `catalog` entry is ~800 KB compressed and most
-entries are far smaller, so the default 512 MB is generous for a handful of
-users. The cap matters more than its exact value: it is what turns "out of
-memory" into "evict something". `evicted_keys` climbing steadily means the mix
-outgrew it — nothing breaks, the hit rate falls.
+**Sizing.** Since 2026-09-13 a report set is stored page-addressably: a small
+gzipped index (`…:idx`, ~125 KB for the unfiltered catalogue) plus a hash of
+the groups as uncompressed JSON (`…:grp`, ~5.7 MB for the unfiltered
+catalogue, one field per group). That is about ten times the ~0.4 MB the
+one-blob form took, and the price of decoding only the requested page
+instead of the whole set. Filtered sets are far smaller, and a day of
+ordinary use produces on the order of a hundred sets, so the default cap
+still holds several generations. The cap matters more than its exact value:
+it is what turns "out of memory" into "evict something". `evicted_keys`
+climbing steadily means the mix outgrew it — nothing breaks, the hit rate
+falls; raise `CACHE_MAXMEMORY` and `CACHE_MEMORY_LIMIT` together. A single
+set larger than `CACHE_MAX_SET_BYTES` (32 MiB) is served and not stored.
 
 Both numbers are variables (`CACHE_MAXMEMORY`, `CACHE_MEMORY_LIMIT`) and they
 move together: the container limit has to stay above the Valkey cap, or the
@@ -102,6 +109,11 @@ Every `WATCHDOG_INTERVAL_MS` (10 s) the app logs one line ending in the cache's 
 - **`cache DIRTY ...`** — see §4. This one deserves attention.
 
 ---
+
+Two lines the page-addressable set adds, both at `warn`:
+
+- **`Cache set <key> is <n> bytes, past the <n>-byte cap; not storing it`** — the same for a report set (index plus groups). Raise `CACHE_MAX_SET_BYTES` or accept the miss.
+- **`Cache set <key> lacks entries its index names; dropping it`** — a hash lost fields its index still lists (eviction or an interrupted write). Both keys are deleted and the next request rebuilds them; a steady stream means the instance is evicting under memory pressure.
 
 ## 4. What `DIRTY` means, and how to clear it
 

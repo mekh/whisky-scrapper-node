@@ -32,6 +32,12 @@ const DEFAULT_READ_TIMEOUT_MS = 250;
  */
 const DEFAULT_MAX_ENTRY_BYTES = 8 * 1024 * 1024;
 
+/**
+ * Room for the unfiltered catalogue stored page-addressably several times
+ * over; a filter that produces more is refused, not truncated.
+ */
+const DEFAULT_MAX_SET_BYTES = 32 * 1024 * 1024;
+
 const DEFAULT_HOST = '127.0.0.1';
 
 const DEFAULT_PORT = 6379;
@@ -81,6 +87,11 @@ export class CacheConfig extends BaseConfig implements CacheSettings {
   @IsPositive()
   public readonly maxEntryBytes = this.asNumber('CACHE_MAX_ENTRY_BYTES')
     ?? DEFAULT_MAX_ENTRY_BYTES;
+
+  @IsInt()
+  @IsPositive()
+  public readonly maxSetBytes = this.asNumber('CACHE_MAX_SET_BYTES')
+    ?? DEFAULT_MAX_SET_BYTES;
 
   @IsString()
   public readonly host = this.shared('HOST') ?? DEFAULT_HOST;

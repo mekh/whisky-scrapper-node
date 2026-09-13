@@ -175,6 +175,7 @@ services:
       - CACHE_TTL_SEC=${CACHE_TTL_SEC:-}
       - CACHE_READ_TIMEOUT_MS=${CACHE_READ_TIMEOUT_MS:-}
       - CACHE_MAX_ENTRY_BYTES=${CACHE_MAX_ENTRY_BYTES:-}
+      - CACHE_MAX_SET_BYTES=${CACHE_MAX_SET_BYTES:-}
       # Fixed, like the session store's address above: the container they
       # name is defined in this same file, so it is a fact of the compose
       # project rather than a deployment choice.
@@ -204,7 +205,11 @@ services:
       - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
       - JWT_ACCESS_EXPIRES=${JWT_ACCESS_EXPIRES:-}
       - REFRESH_EXPIRES_SEC=${REFRESH_EXPIRES_SEC:-}
-      - LOG_LEVEL=trace
+      # Forwarded with `info` as the fallback, not pinned: at `trace` the
+      # request interceptor serialises every response body into the log, and
+      # the 2026-09-13 load test found the API bound by one event loop that
+      # has no room for that. `debug` is the level production has run at.
+      - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_JSON=false
       - LOG_PRETTY=false
       - LOG_CALLSITES=false

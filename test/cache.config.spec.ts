@@ -12,6 +12,7 @@ const VARS = [
   'CACHE_TTL_SEC',
   'CACHE_READ_TIMEOUT_MS',
   'CACHE_MAX_ENTRY_BYTES',
+  'CACHE_MAX_SET_BYTES',
   'CACHE_VALKEY_HOST',
   'CACHE_VALKEY_PORT',
   'CACHE_VALKEY_PREFIX',
@@ -38,6 +39,7 @@ describe('CacheConfig', () => {
     expect(config.ttlSec).toBeGreaterThan(0);
     expect(config.readTimeoutMs).toBeGreaterThan(0);
     expect(config.maxEntryBytes).toBeGreaterThan(0);
+    expect(config.maxSetBytes).toBeGreaterThan(config.maxEntryBytes);
     expect(config.commandTimeoutMs).toBeGreaterThan(0);
   });
 

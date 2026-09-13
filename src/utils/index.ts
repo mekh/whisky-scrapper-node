@@ -15,5 +15,6 @@ export { ProductMatchUtils } from './product-match.util';
 export { NAME_TAG_WORDS, ProductNameUtils } from './product-name.util';
 export { PushDigestUtils } from './push-digest.util';
 export { ReportCacheKeyUtils } from './report-cache-key.util';
+export { ReportPageUtils } from './report-page.util';
 export { SearchTermUtils } from './search-term.util';
 export { TransactionUtils } from './transaction.util';

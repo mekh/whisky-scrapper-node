@@ -1,5 +1,10 @@
 import type { VersionedCacheService } from '~lib/cache';
-import type { CacheEntryRef } from '~types';
+import type {
+  CacheEntryRef,
+  CacheIndexedSet,
+  CachePage,
+  CachePagePicker,
+} from '~types';
 
 /**
  * A cache that stores nothing and always calls the loader.
@@ -22,6 +27,23 @@ export function passthroughCache(): VersionedCacheService {
       _generation: string,
       loader: () => Promise<T>,
     ): Promise<T> => loader(),
+    getPage: <I, E>(
+      _ref: CacheEntryRef,
+      _generation: string,
+      loader: () => Promise<CacheIndexedSet<I, E>>,
+      pick: CachePagePicker<I>,
+    ): Promise<CachePage<E>> =>
+      loader().then(async (set) => {
+        const picked = await pick(set.index);
+
+        return {
+          entries: picked.positions.map((position) =>
+            set.entries[position] as E
+          ),
+          total: picked.total,
+          source: 'bypass',
+        };
+      }),
     bump: (): Promise<void> => Promise.resolve(),
     bumpAfterCommit: (): void => undefined,
   } as unknown as VersionedCacheService;

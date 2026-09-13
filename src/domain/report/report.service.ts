@@ -16,21 +16,22 @@ import { ReportKind, ReportWindow } from '~enums';
 import { NotFoundError, ServerError } from '~errors';
 import { VersionedCacheService } from '~lib/cache';
 import {
+  CacheIndexedSet,
   ID,
-  PreferenceFilterIds,
   PriceHistory,
   ReportCurrentRow,
   ReportFilter,
   ReportGroup,
   ReportOffer,
   ReportOptions,
+  ReportPageIndex,
   ReportPersonalization,
   ReportPublicGroup,
   ReportPublicRow,
   ReportRow,
   TypePaginated,
 } from '~types';
-import { OfferPriceUtils, ReportCacheKeyUtils } from '~utils';
+import { OfferPriceUtils, ReportCacheKeyUtils, ReportPageUtils } from '~utils';
 
 @Injectable()
 export class ReportService {
@@ -42,9 +43,9 @@ export class ReportService {
   ) {}
 
   /**
-   * Runs a report: builds the product groups for the requested kind, applies
-   * the caller's own view of them, then an optional global sort, then
-   * paginates.
+   * Runs a report: reads the cached set's index, applies the caller's own
+   * view of it, walks the requested order to the requested page, and
+   * decodes only that page's groups.
    *
    * Pagination counts groups, not offers: a page of 50 is 50 distinct
    * bottlings however many stores carry them, which is the whole point of
@@ -52,7 +53,7 @@ export class ReportService {
    *
    * The two reads run in parallel because they are independent: the catalogue
    * side is the same for everybody, the preference side is small and keyed by
-   * one id.
+   * one id. The page is chosen only once both have answered.
    *
    * @param kind - Which report to run.
    * @param filter - The SQL-level product filter, identical for every user.
@@ -67,26 +68,32 @@ export class ReportService {
     options: ReportOptions,
     personalization: ReportPersonalization,
   ): Promise<TypePaginated<ReportPublicGroup>> {
-    const [groups, preferences] = await Promise.all([
-      this.cachedGroups(kind, filter, options),
-      this.preferences.findFilterIds(personalization.userId),
-    ]);
+    const readsTheClock = kind === ReportKind.NEW || kind === ReportKind.DROPS;
+    const day = readsTheClock ? this.today() : null;
+    const preferences = this.preferences.findFilterIds(personalization.userId);
 
-    const visible = this.personalize(
-      groups,
-      preferences,
-      personalization.favoritesOnly,
+    const page = await this.cache.getPage<ReportPageIndex, ReportPublicGroup>(
+      {
+        scope: CACHE_SCOPE_REPORT,
+        suffix: ReportCacheKeyUtils.suffix(kind, filter, options, day),
+      },
+      CACHE_GENERATION_CATALOGUE,
+      () => this.buildSet(kind, filter, options),
+      async (index) =>
+        ReportPageUtils.select(
+          index,
+          await preferences,
+          personalization.favoritesOnly,
+          options,
+        ),
     );
 
-    const sorted = this.sort(visible, options);
-
-    const offset = (options.page - 1) * options.perPage;
-
-    const data = sorted
-      .slice(offset, offset + options.perPage)
-      .map((group) => this.toPublicGroup(group));
-
-    return { data, total: sorted.length, limit: options.perPage, offset };
+    return {
+      data: page.entries,
+      total: page.total,
+      limit: options.perPage,
+      offset: (options.page - 1) * options.perPage,
+    };
   }
 
   /**
@@ -119,92 +126,39 @@ export class ReportService {
   }
 
   /**
-   * The report's groups, from the cache when the catalogue has not changed
-   * since they were built.
+   * Builds a report's set in the shape the cache stores: an index a request
+   * reads whole — ids for personalisation and one precomputed order per
+   * sortable field — and the groups one by one, already in their public
+   * shape, addressed by position.
    *
-   * What is cached is this — the whole matching set, unsorted and
-   * unpaginated, before anybody's preferences are applied. Everything about
-   * that is deliberate: the set is the expensive part and it is the same for
-   * every user, so one entry serves them all; sorting and paging are applied
-   * to it afterwards, so one entry also serves every page of a report
-   * instead of one entry per page.
-   *
-   * `new` and `drops` additionally carry the UTC day, because they are the
-   * two kinds that read the clock: `daysNew`, `daysDiscount` and the
-   * `today`/`yesterday` windows all change at midnight with no write to
-   * trigger a generation bump, so without the day in the key the morning
-   * would serve yesterday's arithmetic. The other three derive their window
-   * from the data (`cutoff`), not from the clock, and need no day.
+   * The set is the whole match, unsorted and before anybody's preferences,
+   * so one set serves every user and every page; what changed against the
+   * blob it replaced is that a request decodes the page it returns and not
+   * the catalogue. `new` and `drops` carry the UTC day in their key because
+   * they read the clock (`daysNew`, `daysDiscount`, the `today`/`yesterday`
+   * windows) and would otherwise serve yesterday's arithmetic after midnight.
    *
    * @param kind - Which report to build.
    * @param filter - The catalogue filter, identical for every user.
-   * @param options - Window, min-discount, sort and pagination settings.
-   * @returns The groups in their natural order.
+   * @param options - Window and min-discount settings the kinds read.
+   * @returns The index and the public groups in the report's natural order.
    */
-  private async cachedGroups(
+  private async buildSet(
     kind: ReportKind,
     filter: ReportFilter,
     options: ReportOptions,
-  ): Promise<ReportGroup[]> {
-    const readsTheClock = kind === ReportKind.NEW || kind === ReportKind.DROPS;
-    const day = readsTheClock ? this.today() : null;
+  ): Promise<CacheIndexedSet<ReportPageIndex, ReportPublicGroup>> {
+    const groups = await this.buildGroups(kind, filter, options);
 
-    return this.cache.getOrCompute(
-      {
-        scope: CACHE_SCOPE_REPORT,
-        suffix: ReportCacheKeyUtils.suffix(kind, filter, options, day),
-      },
-      CACHE_GENERATION_CATALOGUE,
-      () => this.buildGroups(kind, filter, options),
-    );
+    return {
+      index: ReportPageUtils.buildIndex(groups),
+      entries: groups.map((group) => this.toPublicGroup(group)),
+    };
   }
 
   /**
-   * Applies one user's own view to the groups the report selected: their
-   * blacklists always, their favorites when they asked for only those.
-   *
-   * This is the pass that replaced three anti-joins inside the current-rows
-   * query, and it is equivalent rather than merely similar. Each predicate
-   * tested the bottling — the hidden product by id, the hidden maker against
-   * both producer slots — and every row of a group shares its bottling, so a
-   * group could never have been half-selected in SQL either. Filtering rows
-   * before grouping and groups after grouping therefore choose the same
-   * groups with the same offers, which is what lets `best` keep its
-   * two-store guard and `low` its per-offer groups untouched.
-   *
-   * A bottling the knowledge base could not place survives every maker rule,
-   * exactly as the SQL did: `IN (NULL, NULL)` was UNKNOWN there, and a null
-   * id is in no `Set` here. There is no "unknown maker" to hide.
-   *
-   * @param groups - The groups the report selected, before sorting.
-   * @param preferences - The caller's favorites and blacklists, as ids.
-   * @param favoritesOnly - When true, keep only favorited bottlings.
-   * @returns The groups this user may see, in the input order.
-   */
-  private personalize(
-    groups: ReportGroup[],
-    preferences: PreferenceFilterIds,
-    favoritesOnly?: boolean,
-  ): ReportGroup[] {
-    const hiddenProducts = new Set(preferences.blacklistProducts);
-    const hiddenMakers = new Set(preferences.blacklistProducers);
-    const favorites = new Set(preferences.favorites);
-
-    return groups.filter((group) => {
-      const hidden = hiddenProducts.has(group.productId)
-        || (group.producerId !== null && hiddenMakers.has(group.producerId))
-        || (group.bottlerId !== null && hiddenMakers.has(group.bottlerId));
-
-      if (hidden) {
-        return false;
-      }
-
-      return !favoritesOnly || favorites.has(group.productId);
-    });
-  }
-
-  /**
-   * Drops the producer ids a group carries for {@link personalize} alone.
+   * Drops the producer ids a group carries for page selection alone; they
+   * live in the set's index, not in the stored group.
    *
    * They are stripped here rather than left to the response validator: the
    * outgoing pipe strips undeclared properties silently, so relying on it
@@ -758,58 +712,6 @@ export class ReportService {
     }
 
     return rows.filter((row) => (row.discountPct ?? 0) >= min);
-  }
-
-  /**
-   * Sorts items by the requested field with nulls last, or returns them in the
-   * report's natural order when no sort field is set.
-   *
-   * Equal sort keys fall back to the item id. Without it the comparator leaves
-   * such items in whatever order the unordered current-rows query returned, so
-   * a product could appear on two pages or on none — which the client's
-   * infinite scroll would show as a duplicate or a gap.
-   *
-   * @param rows - The items to sort (report groups, or the rows behind them).
-   * @param options - Report options carrying `sort`/`order`.
-   * @returns The sorted items (a new array).
-   */
-  private sort<T extends ReportRow>(rows: T[], options: ReportOptions): T[] {
-    if (!options.sort) {
-      return rows;
-    }
-
-    const field = options.sort;
-    const direction = options.order === 'desc' ? -1 : 1;
-
-    return [...rows].sort((a, b) => {
-      const av = a[field] as number | string | null;
-      const bv = b[field] as number | string | null;
-
-      if (av === null || av === undefined) {
-        return bv === null || bv === undefined ? a.id.localeCompare(b.id) : 1;
-      }
-
-      if (bv === null || bv === undefined) {
-        return -1;
-      }
-
-      return this.compare(av, bv) * direction || a.id.localeCompare(b.id);
-    });
-  }
-
-  /**
-   * Compares two non-null values numerically or case-insensitively.
-   *
-   * @param a - First value.
-   * @param b - Second value.
-   * @returns Negative, zero, or positive per standard comparator semantics.
-   */
-  private compare(a: number | string, b: number | string): number {
-    if (typeof a === 'number' && typeof b === 'number') {
-      return a - b;
-    }
-
-    return String(a).toLowerCase().localeCompare(String(b).toLowerCase());
   }
 
   /**

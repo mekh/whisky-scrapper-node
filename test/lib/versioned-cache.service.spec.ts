@@ -17,8 +17,15 @@ const REF = { scope: 'report', suffix: 'abc' };
  * A chainable `MULTI` builder over the fake store.
  */
 interface FakeTransaction {
-  set: (key: string, value: string, mode: string) => FakeTransaction;
+  set: (
+    key: string,
+    value: Buffer | string,
+    ...rest: unknown[]
+  ) => FakeTransaction;
   incr: (key: string) => FakeTransaction;
+  del: (...keys: string[]) => FakeTransaction;
+  hset: (key: string, fields: Record<string, string>) => FakeTransaction;
+  expire: (key: string, seconds: number) => FakeTransaction;
   exec: () => Promise<[Error | null, unknown][]>;
 }
 
@@ -27,11 +34,15 @@ interface FakeTransaction {
  */
 interface FakeClient {
   store: Map<string, Buffer>;
+  hashes: Map<string, Map<string, string>>;
   get: jest.Mock;
   set: jest.Mock;
   getBuffer: jest.Mock;
   del: jest.Mock;
+  hmget: jest.Mock;
+  expire: jest.Mock;
   multi: jest.Mock;
+  pipeline: jest.Mock;
 }
 
 /**
@@ -41,9 +52,11 @@ interface FakeClient {
  */
 function makeClient(): FakeClient {
   const store = new Map<string, Buffer>();
+  const hashes = new Map<string, Map<string, string>>();
 
   const client: FakeClient = {
     store,
+    hashes,
     get: jest.fn((key: string) => {
       const value = store.get(key);
 
@@ -64,20 +77,53 @@ function makeClient(): FakeClient {
     getBuffer: jest.fn((key: string) =>
       Promise.resolve(store.get(key) ?? null)
     ),
-    del: jest.fn((key: string) => {
-      store.delete(key);
+    del: jest.fn((...keys: string[]) => {
+      const removed = keys.filter((key) =>
+        store.delete(key) || hashes.delete(key)
+      ).length;
 
-      return Promise.resolve(1);
+      return Promise.resolve(removed);
     }),
+    hmget: jest.fn((key: string, ...fields: string[]) => {
+      const hash = hashes.get(key);
+
+      return Promise.resolve(fields.map((field) => hash?.get(field) ?? null));
+    }),
+    expire: jest.fn(() => Promise.resolve(1)),
     multi: jest.fn(),
+    pipeline: jest.fn(),
   };
 
   client.multi.mockImplementation(() => {
     const queued: (() => unknown)[] = [];
 
     const transaction: FakeTransaction = {
-      set: (key, value, mode) => {
-        queued.push(() => client.set(key, value, mode));
+      set: (key, value, ...rest) => {
+        queued.push(() => client.set(key, value, ...rest));
+
+        return transaction;
+      },
+      del: (...keys) => {
+        queued.push(() => client.del(...keys));
+
+        return transaction;
+      },
+      hset: (key, fields) => {
+        queued.push(() => {
+          const hash = hashes.get(key) ?? new Map<string, string>();
+
+          Object.entries(fields).forEach(([field, value]) => {
+            hash.set(field, value);
+          });
+          hashes.set(key, hash);
+
+          return Object.keys(fields).length;
+        });
+
+        return transaction;
+      },
+      expire: (key, seconds) => {
+        queued.push(() => client.expire(key, seconds));
 
         return transaction;
       },
@@ -107,6 +153,8 @@ function makeClient(): FakeClient {
     return transaction;
   });
 
+  client.pipeline.mockImplementation(() => client.multi());
+
   return client;
 }
 
@@ -128,6 +176,7 @@ function makeCache(options: {
     ttlSec: 86400,
     readTimeoutMs: 50,
     maxEntryBytes: 8 * 1024 * 1024,
+    maxSetBytes: 32 * 1024 * 1024,
     ...options.config,
   } as CacheConfig;
 
@@ -349,5 +398,203 @@ describe('VersionedCacheService', () => {
 
     expect(client.store.size).toBe(0);
     expect(cache.stats().lastBumpAt).toBeNull();
+  });
+});
+
+describe('VersionedCacheService.getPage', () => {
+  const INDEX = { ids: ['a', 'b', 'c', 'd'] };
+  const ENTRIES = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }];
+
+  /**
+   * A loader answering the fixed set, as a fresh mock per test.
+   *
+   * @returns The mock loader.
+   */
+  const loader = (): jest.Mock =>
+    jest.fn().mockResolvedValue({ index: INDEX, entries: ENTRIES });
+
+  /**
+   * Picks the middle two positions and reports every id as visible.
+   *
+   * @param index - The set's index.
+   * @returns The pick.
+   */
+  const middle = (
+    index: typeof INDEX,
+  ): { positions: number[]; total: number } => ({
+    positions: [1, 2],
+    total: index.ids.length,
+  });
+
+  /**
+   * The keys the stored set occupies.
+   *
+   * @param client - The fake client.
+   * @returns The index key and the entries key.
+   */
+  const keysOf = (client: FakeClient): { index: string; entries: string } => ({
+    index: [...client.store.keys()].find((k) => k.endsWith(':idx')) ?? '',
+    entries: [...client.hashes.keys()].find((k) => k.endsWith(':grp')) ?? '',
+  });
+
+  it('runs the loader and picks in memory when disabled', async () => {
+    const { cache, client } = makeCache({ config: { enabled: false } });
+    const load = loader();
+
+    const page = await cache.getPage(REF, GENERATION, load, middle);
+
+    expect(page).toEqual({
+      entries: [{ id: 'b' }, { id: 'c' }],
+      total: 4,
+      source: 'bypass',
+    });
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(client.getBuffer).not.toHaveBeenCalled();
+    expect(client.hashes.size).toBe(0);
+  });
+
+  it('stores index and entries on a miss and picks in memory', async () => {
+    const { cache, client } = makeCache();
+    const load = loader();
+
+    const page = await cache.getPage(REF, GENERATION, load, middle);
+
+    expect(page.source).toBe('miss');
+    expect(page.entries).toEqual([{ id: 'b' }, { id: 'c' }]);
+    expect(page.total).toBe(4);
+
+    const keys = keysOf(client);
+
+    expect(keys.index).toMatch(/^cache:report:g\d+:abc:idx$/);
+    expect(keys.entries).toMatch(/^cache:report:g\d+:abc:grp$/);
+    expect([...(client.hashes.get(keys.entries) ?? new Map()).entries()])
+      .toEqual(ENTRIES.map((entry, i) => [String(i), JSON.stringify(entry)]));
+    expect(client.expire).toHaveBeenCalledWith(keys.entries, 86400);
+    expect(cache.stats().misses).toBe(1);
+  });
+
+  it('serves a hit reading only the picked entries', async () => {
+    const { cache, client } = makeCache();
+    const load = loader();
+
+    await cache.getPage(REF, GENERATION, load, middle);
+
+    client.getBuffer.mockClear();
+
+    const page = await cache.getPage(REF, GENERATION, load, middle);
+    const keys = keysOf(client);
+
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(page).toEqual({
+      entries: [{ id: 'b' }, { id: 'c' }],
+      total: 4,
+      source: 'hit',
+    });
+    expect(client.hmget).toHaveBeenCalledTimes(1);
+    expect(client.hmget).toHaveBeenCalledWith(keys.entries, '1', '2');
+    expect(client.getBuffer).toHaveBeenCalledTimes(1);
+    expect(client.getBuffer).toHaveBeenCalledWith(keys.index);
+    expect(cache.stats().hits).toBe(1);
+  });
+
+  it('makes no entries round trip for an empty page', async () => {
+    const { cache, client } = makeCache();
+    const load = loader();
+    const none = (): { positions: number[]; total: number } => ({
+      positions: [],
+      total: 4,
+    });
+
+    await cache.getPage(REF, GENERATION, load, none);
+
+    const page = await cache.getPage(REF, GENERATION, load, none);
+
+    expect(page).toEqual({ entries: [], total: 4, source: 'hit' });
+    expect(client.hmget).not.toHaveBeenCalled();
+  });
+
+  it('drops a set whose hash lacks an entry and rebuilds it', async () => {
+    const { cache, client } = makeCache();
+    const load = loader();
+
+    await cache.getPage(REF, GENERATION, load, middle);
+
+    const keys = keysOf(client);
+
+    client.hashes.get(keys.entries)?.delete('2');
+
+    const page = await cache.getPage(REF, GENERATION, load, middle);
+
+    expect(page.source).toBe('miss');
+    expect(page.entries).toEqual([{ id: 'b' }, { id: 'c' }]);
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(client.del).toHaveBeenCalledWith(keys.index, keys.entries);
+    expect(client.hashes.get(keys.entries)?.size).toBe(4);
+  });
+
+  it('drops a set with an undecodable entry', async () => {
+    const { cache, client } = makeCache();
+    const load = loader();
+
+    await cache.getPage(REF, GENERATION, load, middle);
+
+    const keys = keysOf(client);
+
+    client.hashes.get(keys.entries)?.set('1', '{not json');
+
+    const page = await cache.getPage(REF, GENERATION, load, middle);
+
+    expect(page.source).toBe('miss');
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(client.del).toHaveBeenCalledWith(keys.index, keys.entries);
+    expect(cache.stats().errors).toBe(1);
+  });
+
+  it('treats a failed entries read as a plain miss', async () => {
+    const { cache, client } = makeCache();
+    const load = loader();
+
+    await cache.getPage(REF, GENERATION, load, middle);
+
+    client.hmget.mockRejectedValueOnce(new Error('connection reset'));
+    client.del.mockClear();
+
+    const page = await cache.getPage(REF, GENERATION, load, middle);
+
+    expect(page.source).toBe('miss');
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(client.del).not.toHaveBeenCalledWith(
+      expect.stringMatching(/:idx$/),
+      expect.anything(),
+    );
+  });
+
+  it('refuses to store a set past the cap yet serves the page', async () => {
+    const { cache, client } = makeCache({ config: { maxSetBytes: 16 } });
+    const load = loader();
+
+    const page = await cache.getPage(REF, GENERATION, load, middle);
+
+    expect(page).toEqual({
+      entries: [{ id: 'b' }, { id: 'c' }],
+      total: 4,
+      source: 'miss',
+    });
+    expect(client.hashes.size).toBe(0);
+    expect(keysOf(client).index).toBe('');
+    expect(cache.stats().bypasses).toBe(1);
+  });
+
+  it('makes a stored set unreachable after a bump', async () => {
+    const { cache } = makeCache();
+    const load = loader();
+
+    await cache.getPage(REF, GENERATION, load, middle);
+    await cache.bump(GENERATION, 'test');
+
+    const page = await cache.getPage(REF, GENERATION, load, middle);
+
+    expect(page.source).toBe('miss');
+    expect(load).toHaveBeenCalledTimes(2);
   });
 });

@@ -57,3 +57,26 @@ export const CACHE_SLOW_COMMAND_MS = 50;
  * about, and it keeps a key readable in `valkey-cli`.
  */
 export const CACHE_HASH_LENGTH = 32;
+
+/**
+ * Key suffix of a page-addressable set's index: ids and precomputed orders.
+ */
+export const CACHE_SET_INDEX_SUFFIX = 'idx';
+
+/**
+ * Key suffix of a page-addressable set's entries, a hash keyed by position.
+ */
+export const CACHE_SET_ENTRIES_SUFFIX = 'grp';
+
+/**
+ * Fields per `HSET` when a set's entries are written, so one command never
+ * carries the whole catalogue.
+ */
+export const CACHE_SET_HSET_CHUNK = 500;
+
+/**
+ * How many read deadlines a set write may take: it moves megabytes where a
+ * read moves kilobytes, and an abandoned half-written set only costs a
+ * rebuild.
+ */
+export const CACHE_SET_WRITE_DEADLINE_FACTOR = 4;

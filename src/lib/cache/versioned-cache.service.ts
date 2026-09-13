@@ -9,6 +9,10 @@ import { CacheConfig } from '~config';
 import {
   CACHE_GENERATION_CATALOGUE,
   CACHE_KEY_ROOT,
+  CACHE_SET_ENTRIES_SUFFIX,
+  CACHE_SET_HSET_CHUNK,
+  CACHE_SET_INDEX_SUFFIX,
+  CACHE_SET_WRITE_DEADLINE_FACTOR,
   CACHE_SLOW_COMMAND_MS,
 } from '~constants';
 import {
@@ -16,7 +20,14 @@ import {
   type ValkeyClient,
   type ValkeyCluster,
 } from '~lib/valkey';
-import type { CacheEntryRef, CacheStats } from '~types';
+import type {
+  CacheEntryRef,
+  CacheIndexedSet,
+  CachePage,
+  CachePagePicker,
+  CachePageSource,
+  CacheStats,
+} from '~types';
 import { ErrorUtils, TransactionUtils } from '~utils';
 
 import { CacheCodec } from './cache-codec.util';
@@ -31,6 +42,27 @@ type CacheClient = ValkeyClient | ValkeyCluster;
  * queued command, or null when the transaction was discarded.
  */
 type TransactionReplies = [Error | null, unknown][] | null;
+
+/**
+ * The two keys a page-addressable set occupies.
+ */
+interface CacheSetKeys {
+  /**
+   * The index blob.
+   */
+  index: string;
+
+  /**
+   * The hash of entries by position.
+   */
+  entries: string;
+}
+
+/**
+ * How a read of a set's entries ended: the entries, a hash missing some of
+ * them, or a command that failed.
+ */
+type EntriesRead<E> = { entries: E[] } | { partial: true } | null;
 
 /**
  * A version-keyed cache: entries are never deleted, they are addressed by a
@@ -70,6 +102,42 @@ export class VersionedCacheService
    */
   private static seed(): number {
     return Math.floor(Date.now() / 1000);
+  }
+
+  /**
+   * Serves a page from a set held in memory — the miss and bypass paths.
+   *
+   * @param set - The freshly built set.
+   * @param pick - Chooses the page's positions from the index.
+   * @param source - How the page is labelled.
+   * @returns The page.
+   */
+  private static async pickInMemory<I, E>(
+    set: CacheIndexedSet<I, E>,
+    pick: CachePagePicker<I>,
+    source: CachePageSource,
+  ): Promise<CachePage<E>> {
+    const picked = await pick(set.index);
+
+    return {
+      entries: picked.positions.map((position) => set.entries[position] as E),
+      total: picked.total,
+      source,
+    };
+  }
+
+  /**
+   * Splits a list into consecutive slices.
+   *
+   * @param items - The list.
+   * @param size - Slice length.
+   * @returns The slices, in order.
+   */
+  private static chunks<T>(items: T[], size: number): T[][] {
+    return Array.from(
+      { length: Math.ceil(items.length / size) },
+      (_, i) => items.slice(i * size, (i + 1) * size),
+    );
   }
 
   private readonly logger = new Logger(VersionedCacheService.name);
@@ -178,6 +246,51 @@ export class VersionedCacheService
     await this.write(key, value);
 
     return value;
+  }
+
+  /**
+   * Answers one page of an indexed set, decoding only the entries the page
+   * holds. On a miss the whole set is built, stored page-addressably — an
+   * index blob plus a hash of entries by position — and the page is served
+   * from memory.
+   *
+   * @param ref - What is being cached.
+   * @param generation - Which generation counter governs it.
+   * @param loader - Builds the index and every entry on a miss.
+   * @param pick - Chooses the page's positions and the visible total from
+   *   the index alone; may be asynchronous, so a caller can finish a
+   *   parallel read of its own before choosing.
+   * @returns The page's entries, the total and where they came from.
+   */
+  public async getPage<I, E>(
+    ref: CacheEntryRef,
+    generation: string,
+    loader: () => Promise<CacheIndexedSet<I, E>>,
+    pick: CachePagePicker<I>,
+  ): Promise<CachePage<E>> {
+    const version = await this.usableGeneration(generation);
+
+    if (version === null) {
+      this.counters.bypasses += 1;
+
+      return VersionedCacheService.pickInMemory(await loader(), pick, 'bypass');
+    }
+
+    const keys = this.setKeys(this.entryKey(ref, version));
+    const hit = await this.readPage<I, E>(keys, pick);
+
+    if (hit) {
+      this.counters.hits += 1;
+
+      return hit;
+    }
+
+    const set = await loader();
+
+    this.counters.misses += 1;
+    await this.writeSet(keys, set);
+
+    return VersionedCacheService.pickInMemory(set, pick, 'miss');
   }
 
   /**
@@ -404,6 +517,7 @@ export class VersionedCacheService
    * Runs one cache command, bounded and logged on both sides.
    *
    * The line *before* the command is the point of the wrapper, and it is
+    deadlineMs = this.config.readTimeoutMs,
    * there for a reason this application has already paid for: a command that
    * never returns leaves no completion line and no error, so the only
    * evidence it was ever sent has to be written first.
@@ -425,7 +539,10 @@ export class VersionedCacheService
     this.logger.verbose('Cache %s: sending', operation);
 
     try {
-      const result = await this.bounded(run(this.valkey.getClient()));
+      const result = await this.bounded(
+        run(this.valkey.getClient()),
+        deadlineMs,
+      );
       const elapsed = Date.now() - startedAt;
 
       if (elapsed >= CACHE_SLOW_COMMAND_MS) {
@@ -461,13 +578,16 @@ export class VersionedCacheService
    * @returns Its reply.
    * @throws {Error} When the deadline passes first.
    */
-  private async bounded<T>(command: Promise<T>): Promise<T> {
+  private async bounded<T>(
+    command: Promise<T>,
+    deadlineMs: number,
+  ): Promise<T> {
     let timer: NodeJS.Timeout | undefined;
 
     const deadline = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
-        reject(new Error(`timed out after ${this.config.readTimeoutMs} ms`));
-      }, this.config.readTimeoutMs);
+        reject(new Error(`timed out after ${deadlineMs} ms`));
+      }, deadlineMs);
 
       timer.unref();
     });
@@ -513,6 +633,173 @@ export class VersionedCacheService
    * @returns Its key.
    */
   private generationKey(generation: string): string {
+
+  /**
+   * The two keys of a page-addressable set under one entry key.
+   *
+   * @param base - The entry key.
+   * @returns The index and entries keys.
+   */
+  private setKeys(base: string): CacheSetKeys {
+    return {
+      index: `${base}:${CACHE_SET_INDEX_SUFFIX}`,
+      entries: `${base}:${CACHE_SET_ENTRIES_SUFFIX}`,
+    };
+  }
+
+  /**
+   * Reads a page from a stored set: the index, the pick, then exactly the
+   * picked entries. A hash missing an entry its index names is dropped
+   * whole, so the next request rebuilds it.
+   *
+   * @param keys - The set's keys.
+   * @param pick - Chooses the page's positions from the index.
+   * @returns The page, or null when the set is absent, incomplete or
+   *   unreadable.
+   */
+  private async readPage<I, E>(
+    keys: CacheSetKeys,
+    pick: CachePagePicker<I>,
+  ): Promise<CachePage<E> | null> {
+    const cached = await this.read<I>(keys.index);
+
+    if (!cached) {
+      return null;
+    }
+
+    const picked = await pick(cached.value);
+    const read = await this.readEntries<E>(keys.entries, picked.positions);
+
+    if (read === null) {
+      return null;
+    }
+
+    if ('partial' in read) {
+      this.logger.warn(
+        'Cache set %s lacks entries its index names; dropping it',
+        keys.entries,
+      );
+
+      await this.command(
+        'set drop',
+        (client) => client.del(keys.index, keys.entries),
+      );
+
+      return null;
+    }
+
+    return { entries: read.entries, total: picked.total, source: 'hit' };
+  }
+
+  /**
+   * Fetches and decodes the entries at the given positions, with one
+   * `HMGET`; no round trip is made for an empty page.
+   *
+   * @param key - The entries hash.
+   * @param positions - The positions to fetch.
+   * @returns The entries, `partial` when any is missing or undecodable, or
+   *   null when the command failed.
+   */
+  private async readEntries<E>(
+    key: string,
+    positions: number[],
+  ): Promise<EntriesRead<E>> {
+    if (!positions.length) {
+      return { entries: [] };
+    }
+
+    const fields = positions.map(String);
+    const raw = await this.command(
+      'entries read',
+      (client) => client.hmget(key, ...fields),
+    );
+
+    if (raw === null) {
+      return null;
+    }
+
+    if (raw.length !== fields.length || raw.some((value) => value === null)) {
+      return { partial: true };
+    }
+
+    try {
+      return { entries: raw.map((value) => JSON.parse(value as string) as E) };
+    } catch (error) {
+      this.counters.errors += 1;
+      this.logger.warn(
+        'Cache set %s holds an entry that could not be decoded: %s',
+        key,
+        ErrorUtils.text(error),
+      );
+
+      return { partial: true };
+    }
+  }
+
+  /**
+   * Stores a set: the index through the codec, the entries as a hash of
+   * JSON strings by position, both with the entry TTL, in one pipeline. A
+   * set past the size cap is not stored.
+   *
+   * @param keys - The set's keys.
+   * @param set - The set to store.
+   */
+  private async writeSet<I, E>(
+    keys: CacheSetKeys,
+    set: CacheIndexedSet<I, E>,
+  ): Promise<void> {
+    const index = await CacheCodec.encode(set.index);
+    const entries = set.entries.map((entry) => JSON.stringify(entry));
+
+    const bytes = entries.reduce(
+      (sum, entry) => sum + Buffer.byteLength(entry, 'utf8'),
+      index.byteLength,
+    );
+
+    if (bytes > this.config.maxSetBytes) {
+      this.counters.bypasses += 1;
+      this.logger.warn(
+        'Cache set %s is %d bytes, past the %d-byte cap; not storing it',
+        keys.index,
+        bytes,
+        this.config.maxSetBytes,
+      );
+
+      return;
+    }
+
+    const ttl = this.config.ttlSec;
+
+    await this.command(
+      'set write',
+      (client) => {
+        const pipeline = client.pipeline()
+          .set(keys.index, index, 'EX', ttl)
+          .del(keys.entries);
+
+        VersionedCacheService.chunks(entries, CACHE_SET_HSET_CHUNK).forEach(
+          (chunk, i) => {
+            pipeline.hset(
+              keys.entries,
+              Object.fromEntries(
+                chunk.map((value, j) => [
+                  String(i * CACHE_SET_HSET_CHUNK + j),
+                  value,
+                ]),
+              ),
+            );
+          },
+        );
+
+        if (entries.length) {
+          pipeline.expire(keys.entries, ttl);
+        }
+
+        return pipeline.exec() as Promise<TransactionReplies>;
+      },
+      this.config.readTimeoutMs * CACHE_SET_WRITE_DEADLINE_FACTOR,
+    );
+  }
     return `${CACHE_KEY_ROOT}:gen:${generation}`;
   }
 

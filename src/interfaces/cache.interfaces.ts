@@ -74,6 +74,14 @@ export interface CacheSettings {
   maxEntryBytes: number;
 
   /**
+   * The largest page-addressable set that may be stored, in bytes: the
+   * compressed index plus every entry as it is written. The entries are
+   * stored uncompressed, one field per position, so a set costs about ten
+   * times its blob form; the unfiltered catalogue is a few megabytes.
+   */
+  maxSetBytes: number;
+
+  /**
    * Hostname of the Valkey instance holding the cache.
    */
   host: string;
@@ -200,4 +208,70 @@ export interface CacheStats {
    * bump.
    */
   dirty: boolean;
+}
+
+/**
+ * What a page selection over a cached set's index yields: which entries to
+ * fetch, and how many the caller may see in all.
+ */
+export interface CachePagePick {
+  /**
+   * Positions of the page's entries, in page order.
+   */
+  positions: number[];
+
+  /**
+   * Entries visible to the caller across every page.
+   */
+  total: number;
+}
+
+/**
+ * A result set stored so that a page can be read without the rest: the
+ * index a request reads whole, and the entries it reads fifty at a time.
+ */
+export interface CacheIndexedSet<I, E> {
+  /**
+   * What a page selection needs: ids, orders — small, read on every hit.
+   */
+  index: I;
+
+  /**
+   * The entries, addressed by position in this array.
+   */
+  entries: E[];
+}
+
+/**
+ * Chooses a page from a set's index alone. May be asynchronous, so the
+ * caller can wait for a read of its own that ran beside the index read.
+ */
+export type CachePagePicker<I> = (
+  index: I,
+) => CachePagePick | Promise<CachePagePick>;
+
+/**
+ * Where a page's entries came from.
+ */
+export type CachePageSource = 'hit' | 'miss' | 'bypass';
+
+/**
+ * One page of an indexed set, as the cache hands it back.
+ */
+export interface CachePage<E> {
+  /**
+   * The page's entries, in page order.
+   */
+  entries: E[];
+
+  /**
+   * Entries visible to the caller across every page.
+   */
+  total: number;
+
+  /**
+   * Whether the page was read from the cache, built and stored, or built
+   * with the cache out of the picture.
+   */
+  source: CachePageSource;
 }

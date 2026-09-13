@@ -578,3 +578,40 @@ export interface PriceHistory {
    */
   series: PriceHistoryPoint[];
 }
+
+/**
+ * Which precomputed order of a cached report set a page is read from:
+ * the report's own order, or one sortable field in one direction.
+ */
+export type ReportOrderKey = 'natural' | `${ReportSortField}:${SortOrder}`;
+
+/**
+ * The small part of a cached report set a request reads whole: what
+ * personalisation tests, and every order a page can be taken in. Positions
+ * index the set's groups, which are stored one by one beside it.
+ */
+export interface ReportPageIndex {
+  /**
+   * Canonical product id of the group at each position.
+   */
+  ids: ID[];
+
+  /**
+   * Resolved producer of the group at each position, for the maker
+   * blacklist; null when nothing resolved.
+   */
+  producers: (ID | null)[];
+
+  /**
+   * Bottler of the group at each position, tested by the maker blacklist
+   * alongside the producer; null for an original bottling.
+   */
+  bottlers: (ID | null)[];
+
+  /**
+   * Positions in each order a page can be read in: the report's natural
+   * order plus every sortable field in both directions, nulls last and
+   * ties broken by the primary offer's id ascending.
+   */
+  orders: Record<ReportOrderKey, number[]>;
+}

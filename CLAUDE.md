@@ -63,6 +63,13 @@ pnpm restore-flavor-import [--dry-run]
 # Safe to re-run and to interrupt — every write is an upsert.
 pnpm rates [--full] [--from <YYYY-MM-DD>] [--to <YYYY-MM-DD>]
            [--code <CODE>] [--dry-run]
+
+# Load test (docs/LOAD-TEST-PLAN.md). Seeds N unprivileged users with live
+# sessions and writes their tokens for k6; --cleanup deletes them and revokes
+# the sessions. Aim it at another environment with
+# DOTENV_CONFIG_PATH=.env.loadtest (template: .env.loadtest.example).
+pnpm loadtest:seed --users <n> [--out <file>] [--access-ttl <sec>] [--prefs]
+pnpm loadtest:seed --cleanup
 ```
 
 Because `scripts/` sits beside `src/`, `nest build` nests the output under

@@ -13,6 +13,9 @@ export default [
       'coverage/**',
       'migrations/**',
       'eslint.config.mjs',
+      // Load-test run artefacts: summaries, profiles and the throwaway
+      // scripts archived beside them. Git-ignored, never linted.
+      'loadtest/out/**',
       // Worktrees created by Claude Code sessions live inside the repo; a
       // bare `eslint --fix` must not walk into their checkouts.
       '.claude/**',
@@ -82,6 +85,31 @@ export default [
       globals: globals.browser,
     },
     rules: js.configs.recommended.rules,
+  },
+  {
+    /**
+     * k6 scripts: the `k6/*` modules exist only inside the k6 runtime, and
+     * `__ENV`/`open` are its init-context globals.
+     */
+    files: ['loadtest/**/*.js'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        __ENV: 'readonly',
+        __VU: 'readonly',
+        open: 'readonly',
+      },
+    },
+    settings: {
+      'import-x/core-modules': [
+        'k6',
+        'k6/data',
+        'k6/encoding',
+        'k6/execution',
+        'k6/http',
+        'k6/metrics',
+      ],
+    },
   },
   {
     files: ['{src,test,scripts}/**/*.ts'],

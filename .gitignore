@@ -15,3 +15,8 @@
 /.env.production.local
 /.env.local
 *.dump
+# Load test: the seeded users' tokens and the k6 run outputs, plus the env
+# file that points the seed at another environment (holds its secrets).
+/loadtest/users.json
+/loadtest/out
+/.env.loadtest

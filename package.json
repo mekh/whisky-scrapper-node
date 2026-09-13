@@ -33,7 +33,8 @@
     "research-brands": "ts-node -r tsconfig-paths/register ./scripts/research-brands.ts",
     "kb-export": "ts-node -r tsconfig-paths/register ./scripts/kb-export.ts",
     "kb-verify-merge": "ts-node -r tsconfig-paths/register ./scripts/kb-verify-merge.ts",
-    "restore-flavor-import": "ts-node -r tsconfig-paths/register ./scripts/restore-flavor-import.ts"
+    "restore-flavor-import": "ts-node -r tsconfig-paths/register ./scripts/restore-flavor-import.ts",
+    "loadtest:seed": "ts-node -r tsconfig-paths/register ./scripts/loadtest-seed.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

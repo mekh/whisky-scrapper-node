@@ -216,6 +216,15 @@ export class AuthService {
     };
 
     await this.session.register(data.user.id, payload, expiresEpochMs);
+  /**
+   * Drops every session a user holds, signing them out of every device.
+   *
+   * @param userId - Whose sessions to revoke.
+   */
+  public async revokeAllSessions(userId: ID): Promise<void> {
+    await this.session.revokeAll(userId);
+  }
+
 
     return { access, refresh: refresh.token };
   }

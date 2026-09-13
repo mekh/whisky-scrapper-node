@@ -14,6 +14,7 @@ import {
   CACHE_SET_INDEX_SUFFIX,
   CACHE_SET_WRITE_DEADLINE_FACTOR,
   CACHE_SLOW_COMMAND_MS,
+  CACHE_SLOW_LOG_WINDOW_MS,
 } from '~constants';
 import {
   ValkeyService,
@@ -27,6 +28,7 @@ import type {
   CachePagePicker,
   CachePageSource,
   CacheStats,
+  SlowCommandSample,
 } from '~types';
 import { ErrorUtils, TransactionUtils } from '~utils';
 
@@ -149,6 +151,10 @@ export class VersionedCacheService
     bypasses: 0,
   };
 
+  private readonly slowSamples = new Map<string, SlowCommandSample>();
+
+  private slowWindowStartedAt: number | null = null;
+
   private generation: number | null = null;
 
   private lastBumpAt: number | null = null;
@@ -200,6 +206,8 @@ export class VersionedCacheService
    * forever.
    */
   public onModuleDestroy(): void {
+    this.flushSlow(true);
+
     try {
       this.valkey.disconnect();
     } catch (error) {
@@ -531,7 +539,7 @@ export class VersionedCacheService
       const elapsed = Date.now() - startedAt;
 
       if (elapsed >= CACHE_SLOW_COMMAND_MS) {
-        this.logger.warn('Cache %s: slow, %d ms', operation, elapsed);
+        this.recordSlow(operation, elapsed);
       } else {
         this.logger.verbose('Cache %s: done in %d ms', operation, elapsed);
       }
@@ -549,6 +557,75 @@ export class VersionedCacheService
 
       return null;
     }
+  }
+
+  /**
+   * Records one slow command, and writes the window's summary when it is up.
+   *
+   * Deliberately driven by the samples themselves rather than by a timer:
+   * `onModuleDestroy` exists because an open client keeps the event loop
+   * alive, and an interval would reintroduce exactly that for every
+   * standalone script carrying this module. The cost is that the last
+   * samples of a quiet period wait for the next slow command — or for
+   * shutdown, which flushes.
+   *
+   * @param operation - What the command was called in the log.
+   * @param elapsed - How long it took, in milliseconds.
+   */
+  private recordSlow(operation: string, elapsed: number): void {
+    const sample = this.slowSamples.get(operation);
+
+    if (sample) {
+      sample.count += 1;
+      sample.min = Math.min(sample.min, elapsed);
+      sample.max = Math.max(sample.max, elapsed);
+      sample.total += elapsed;
+    } else {
+      this.slowSamples.set(operation, {
+        count: 1,
+        min: elapsed,
+        max: elapsed,
+        total: elapsed,
+      });
+    }
+
+    this.slowWindowStartedAt ??= Date.now();
+
+    this.flushSlow(false);
+  }
+
+  /**
+   * Writes one summary line per operation and starts a new window.
+   *
+   * @param force - Write now, whatever is left of the window.
+   */
+  private flushSlow(force: boolean): void {
+    if (this.slowWindowStartedAt === null || this.slowSamples.size === 0) {
+      return;
+    }
+
+    const elapsed = Date.now() - this.slowWindowStartedAt;
+
+    if (!force && elapsed < CACHE_SLOW_LOG_WINDOW_MS) {
+      return;
+    }
+
+    const summary = [...this.slowSamples.entries()]
+      .map(([operation, s]) =>
+        `${operation} x${s.count}`
+        + ` (min ${s.min}, avg ${Math.round(s.total / s.count)},`
+        + ` max ${s.max} ms)`
+      )
+      .join('; ');
+
+    this.logger.warn(
+      'Cache slow commands over %d s: %s',
+      Math.round(elapsed / 1000),
+      summary,
+    );
+
+    this.slowSamples.clear();
+    this.slowWindowStartedAt = null;
   }
 
   /**

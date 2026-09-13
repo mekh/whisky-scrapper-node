@@ -52,6 +52,17 @@ export const CACHE_GZIP_MIN_BYTES = 1024;
 export const CACHE_SLOW_COMMAND_MS = 50;
 
 /**
+ * How long slow commands are aggregated before one summary line is written.
+ *
+ * A line per slow command is unusable under load: the generation read alone
+ * runs once per request, so a cache having a bad minute buries every other
+ * line in the log at the exact moment someone is reading it. One line per
+ * operation per window carries the same information — count, min, max,
+ * mean — without the flood.
+ */
+export const CACHE_SLOW_LOG_WINDOW_MS = 60_000;
+
+/**
  * How much of a key's hash is kept. 128 bits of SHA-256 is far past the
  * point where a collision between two filter shapes is worth reasoning
  * about, and it keeps a key readable in `valkey-cli`.

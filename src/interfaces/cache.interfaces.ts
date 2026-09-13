@@ -151,6 +151,26 @@ export interface CacheEntryRef {
 }
 
 /**
+ * Slow commands of one operation, accumulated over one logging window.
+ *
+ * Held rather than logged per occurrence because the generation read runs
+ * once per request: under load a line each would bury the rest of the log.
+ */
+export interface SlowCommandSample {
+  /** How many commands of this operation were slow in the window. */
+  count: number;
+
+  /** The fastest of them, in milliseconds. */
+  min: number;
+
+  /** The slowest of them, in milliseconds. */
+  max: number;
+
+  /** Their total duration, from which the mean is derived on flush. */
+  total: number;
+}
+
+/**
  * A running count of what the cache has done since the process started.
  *
  * Cumulative rather than windowed: a reader takes two samples and subtracts.

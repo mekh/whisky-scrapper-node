@@ -333,10 +333,23 @@ export const options = {
  * than from the live VU count, so the ramp-down cannot pollute a lower
  * step's numbers.
  *
- * @returns {string} A user count, or `down`.
+ * `exec.scenario` exists only inside a VU and throws anywhere else, so a
+ * request issued from `setup()` — which the stale-token login path makes,
+ * and which only fires when the seed predates the run by a token lifetime —
+ * is labelled `setup`. It belongs to no step: no threshold names that tag,
+ * so it stays out of every step's numbers instead of ending the run.
+ *
+ * @returns {string} A user count, `down`, or `setup`.
  */
 function stageLabel() {
-  const elapsed = Date.now() - exec.scenario.startTime;
+  let elapsed;
+
+  try {
+    elapsed = Date.now() - exec.scenario.startTime;
+  } catch {
+    return 'setup';
+  }
+
   const segment = SCHEDULE.find((s) => elapsed < s.end);
 
   return segment ? segment.label : 'down';

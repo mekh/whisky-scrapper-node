@@ -11,6 +11,7 @@ import {
 import type { SchedulerRegistry } from '@nestjs/schedule';
 import type { CronJobParams } from 'cron';
 import type { SyncConfig } from '~config';
+import type { CronLockService } from '~lib/cron-lock';
 import type { SyncRunReport } from '~types';
 import type { SyncOrchestratorService } from '../../src/domain/store/sync-orchestrator.service';
 
@@ -39,6 +40,11 @@ interface Fakes {
    * The spy over `CronJob.from`, holding the params the job was built with.
    */
   from: jest.SpyInstance;
+
+  /**
+   * The per-tick election every instance goes through before running.
+   */
+  locks: { claim: jest.Mock };
 }
 
 const REPORT: SyncRunReport = {
@@ -96,9 +102,10 @@ const REPORT: SyncRunReport = {
  * real timer is ever created.
  *
  * @param over - Overrides for the sync config defaults.
+ * @param claimed - Whether this instance wins the tick.
  * @returns The service plus the fakes it was built with.
  */
-function makeCron(over: Partial<SyncConfig> = {}): Fakes {
+function makeCron(over: Partial<SyncConfig> = {}, claimed = true): Fakes {
   const orchestrator = {
     runFullSync: jest.fn().mockResolvedValue(REPORT),
   };
@@ -126,13 +133,18 @@ function makeCron(over: Partial<SyncConfig> = {}): Fakes {
     ...over,
   } as SyncConfig;
 
+  const locks = {
+    claim: jest.fn().mockResolvedValue(claimed),
+  };
+
   const cron = new SyncCronService(
     orchestrator as unknown as SyncOrchestratorService,
     scheduler as unknown as SchedulerRegistry,
     config,
+    locks as unknown as CronLockService,
   );
 
-  return { cron, orchestrator, scheduler, job, from };
+  return { cron, orchestrator, scheduler, job, from, locks };
 }
 
 /**
@@ -251,6 +263,35 @@ describe('SyncCronService job body', () => {
     expect(
       log.mock.calls.some((call) => String(call[0]).includes('finished in')),
     ).toBe(true);
+  });
+
+  /**
+   * Every instance arms the same schedule, so every instance fires. What
+   * keeps one daily sync from becoming N is the claim, not the schedule.
+   */
+  it('claims the tick before running anything', async () => {
+    const { cron, orchestrator, from, locks } = makeCron();
+
+    jest.spyOn(Logger.prototype, 'log').mockImplementation();
+
+    cron.onApplicationBootstrap();
+    await tickOf(from)();
+
+    expect(locks.claim).toHaveBeenCalledWith(SYNC_CRON_JOB_NAME);
+    expect(orchestrator.runFullSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs nothing when another instance claimed the tick', async () => {
+    const { cron, orchestrator, from } = makeCron({}, false);
+    const log = jest.spyOn(Logger.prototype, 'log').mockImplementation();
+
+    cron.onApplicationBootstrap();
+    await tickOf(from)();
+
+    expect(orchestrator.runFullSync).not.toHaveBeenCalled();
+    expect(
+      log.mock.calls.some((call) => String(call[0]).includes('starting')),
+    ).toBe(false);
   });
 
   it('never lets a failed full sync escape the job', async () => {

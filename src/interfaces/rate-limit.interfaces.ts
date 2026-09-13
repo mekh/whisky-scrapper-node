@@ -25,29 +25,23 @@ export interface RateLimitRule {
 }
 
 /**
- * A bucket's stored state. Nothing here names the rule the bucket was
- * charged against, so a rule change takes effect on the next request
- * without any migration of live state.
+ * One bucket to charge: which bucket, and the policy to charge it against.
+ *
+ * The rule travels with the charge rather than being stored beside the
+ * bucket, so a changed limit takes effect on the next request with no
+ * migration of live state.
  */
-export interface RateLimitBucket {
+export interface RateLimitCharge {
   /**
-   * Tokens left at {@link updatedAt}, fractional — the refill is computed
-   * from elapsed time on read rather than by a timer per request.
+   * The bucket's identity: the caller and the scope being charged, without
+   * the key root the store prepends.
    */
-  tokens: number;
+  key: string;
 
   /**
-   * When the bucket was last charged, as an epoch millisecond stamp.
+   * The refill policy to apply to it.
    */
-  updatedAt: number;
-
-  /**
-   * When the bucket will hold its full burst again, as an epoch millisecond
-   * stamp. Stored rather than derived so the pruning sweep can drop an idle
-   * bucket without knowing which rule created it — a full bucket is
-   * indistinguishable from one that never existed.
-   */
-  fullAt: number;
+  rule: RateLimitRule;
 }
 
 /**

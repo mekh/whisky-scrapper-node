@@ -9,10 +9,11 @@ import {
   HEADER_RATE_LIMIT_RETRY_MS,
   HEADER_RETRY_AFTER,
   RATE_LIMIT_META_INJECT_TOKEN,
+  RATE_LIMIT_SKIP_META_INJECT_TOKEN,
 } from '~constants';
 import { RateLimitProfile } from '~enums';
 import { TooManyRequestsError } from '~errors';
-import type { RateLimitDecision, Response } from '~types';
+import type { RateLimitCharge, RateLimitDecision, Response } from '~types';
 
 import { ContextManager } from '../context';
 import { RateLimitStore } from './rate-limit.store';
@@ -52,6 +53,32 @@ const REFUSED_MESSAGE = 'Too many requests, retry after the stated delay';
  */
 @Injectable()
 export class UserRateLimitGuard implements CanActivate {
+  /**
+   * Picks the decision the response should describe: a refusal always wins,
+   * and between allowances the one with least headroom is the one a client
+   * needs to pace itself against.
+   *
+   * @param decisions - What each charged bucket answered, in order.
+   * @returns The decision to report, or null when nothing was charged.
+   */
+  private static pick(
+    decisions: RateLimitDecision[],
+  ): RateLimitDecision | null {
+    const refused = decisions.find((decision) => !decision.allowed);
+
+    if (refused) {
+      return refused;
+    }
+
+    return decisions.reduce<RateLimitDecision | null>(
+      (narrowest, decision) =>
+        narrowest && narrowest.remaining < decision.remaining
+          ? narrowest
+          : decision,
+      null,
+    );
+  }
+
   public constructor(
     private readonly config: RateLimitConfig,
     private readonly store: RateLimitStore,
@@ -66,21 +93,25 @@ export class UserRateLimitGuard implements CanActivate {
    * @returns True when the request may proceed.
    * @throws {TooManyRequestsError} When a bucket had no token left.
    */
-  public canActivate(context: ExecutionContext): boolean {
+  public async canActivate(context: ExecutionContext): Promise<boolean> {
     if (!this.config.enabled || context.getType() !== 'http') {
       return true;
     }
 
-    const tracker = this.tracker(context);
+    if (this.exempt(context)) {
+      return true;
+    }
 
-    const global = this.store.consume(
-      `global|${tracker}`,
-      this.config.globalRule,
-    );
+    const decisions = await this.store.consume(this.charges(context));
+    const decision = UserRateLimitGuard.pick(decisions);
 
-    const decision = global.allowed
-      ? this.narrower(global, this.chargeProfile(context, tracker))
-      : global;
+    /**
+     * Nothing was charged, so the store could not answer: fail open and say
+     * nothing about a standing this process does not know.
+     */
+    if (!decision) {
+      return true;
+    }
 
     this.report(context, decision);
 
@@ -94,16 +125,37 @@ export class UserRateLimitGuard implements CanActivate {
   }
 
   /**
-   * Charges the route's own profile bucket, when it declares one.
+   * Whether this route is out of the limiter entirely.
+   *
+   * One route is: the liveness probe. Every replica is probed from the
+   * balancer's single address against buckets shared by the whole fleet, so
+   * a refused probe would drain every replica at once — see
+   * `@NoRateLimit()`.
    *
    * @param context - The execution context of the current request.
-   * @param tracker - The caller's bucket identity.
-   * @returns The profile's decision, or null when the route declares none.
+   * @returns True when the route opted out.
    */
-  private chargeProfile(
-    context: ExecutionContext,
-    tracker: string,
-  ): RateLimitDecision | null {
+  private exempt(context: ExecutionContext): boolean {
+    return this.reflector.getAllAndOverride<boolean | undefined>(
+      RATE_LIMIT_SKIP_META_INJECT_TOKEN,
+      [context.getHandler(), context.getClass()],
+    ) === true;
+  }
+
+  /**
+   * Lists the buckets this request owes, in the order they apply.
+   *
+   * @param context - The execution context of the current request.
+   * @returns The global charge, plus the route profile's when it declares
+   *   one.
+   */
+  private charges(context: ExecutionContext): RateLimitCharge[] {
+    const tracker = this.tracker(context);
+    const global: RateLimitCharge = {
+      key: `global:${tracker}`,
+      rule: this.config.globalRule,
+    };
+
     const profile = this.reflector.getAllAndOverride<
       RateLimitProfile | undefined
     >(RATE_LIMIT_META_INJECT_TOKEN, [
@@ -112,37 +164,16 @@ export class UserRateLimitGuard implements CanActivate {
     ]);
 
     if (!profile) {
-      return null;
+      return [global];
     }
 
-    return this.store.consume(
-      `${profile}|${context.getClass().name}|${tracker}`,
-      this.config.ruleFor(profile),
-    );
-  }
-
-  /**
-   * Picks the decision the response should describe: a refusal always wins,
-   * and between two allowances the one with less headroom left is the one a
-   * client needs to pace itself against.
-   *
-   * @param global - The global bucket's decision.
-   * @param profile - The route profile's decision, when it has one.
-   * @returns The decision to report.
-   */
-  private narrower(
-    global: RateLimitDecision,
-    profile: RateLimitDecision | null,
-  ): RateLimitDecision {
-    if (!profile) {
-      return global;
-    }
-
-    if (!profile.allowed) {
-      return profile;
-    }
-
-    return profile.remaining <= global.remaining ? profile : global;
+    return [
+      global,
+      {
+        key: `${profile}:${context.getClass().name}:${tracker}`,
+        rule: this.config.ruleFor(profile),
+      },
+    ];
   }
 
   /**

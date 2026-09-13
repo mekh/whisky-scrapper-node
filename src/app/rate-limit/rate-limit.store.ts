@@ -1,217 +1,189 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import { RateLimitConfig } from '~config';
-import type { RateLimitBucket, RateLimitDecision, RateLimitRule } from '~types';
+import {
+  RATE_LIMIT_FAILURE_LOG_WINDOW_MS,
+  RATE_LIMIT_KEY_ROOT,
+} from '~constants';
+import { ValkeyScript, ValkeyService } from '~lib/valkey';
+import type { RateLimitCharge, RateLimitDecision } from '~types';
+import { DeadlineUtils, ErrorUtils } from '~utils';
+
+import {
+  RATE_LIMIT_CONSUME_COMMAND,
+  RATE_LIMIT_CONSUME_SCRIPT,
+  RATE_LIMIT_REPLY_FIELDS,
+} from './rate-limit-consume.script';
 
 /**
- * Milliseconds in a second, named because the refill arithmetic reads better
- * with a name than with the literal in four places.
- */
-const MS_PER_SEC = 1000;
-
-/**
- * In-process token buckets, one per caller and scope.
+ * Token buckets held in Valkey, one per caller and scope.
  *
- * In-process is the right scope today: the API runs as a single container
- * (the sync lock's boot sweep already relies on that, and says so), so a
- * shared store would add a network hop and a dependency to a decision that
- * has to be made before anything else on the request path. Should the
- * process ever be scaled out, this class is the one place that changes — the
- * guard above it never touches the map.
+ * Shared rather than in-process because the API now runs as several
+ * instances: a bucket per instance would mean N independent budgets and an
+ * effective limit N times what is configured. One script call charges every
+ * bucket a request owes, so the move costs one round trip rather than one
+ * per bucket.
  *
- * Memory is bounded two ways: a bucket that has refilled to capacity carries
- * no information and is swept, and past {@link RateLimitConfig.maxKeys} the
- * least recently charged bucket is dropped. Both matter because an anonymous
- * caller is keyed by address, and a map keyed by attacker-chosen strings with
- * no ceiling is itself a way to exhaust the process.
+ * Memory is bounded by the buckets' own lifetime — a bucket expires when it
+ * would next hold its full burst, which for the global rule is under four
+ * seconds — so nothing here has to cap or sweep them.
  */
 @Injectable()
 export class RateLimitStore {
-  private readonly logger = new Logger(RateLimitStore.name);
-
   /**
-   * Buckets by key. A `Map` rather than an object because insertion order is
-   * what the eviction below walks, and because the keys embed caller-
-   * controlled strings that must never reach an object's prototype.
-   */
-  private readonly buckets = new Map<string, RateLimitBucket>();
-
-  private lastSweptAt = 0;
-
-  public constructor(private readonly config: RateLimitConfig) {}
-
-  /**
-   * Reports how many buckets are currently tracked, for tests and for
-   * anything that wants to observe the map's size.
+   * Reads a script reply, refusing anything that is not the expected run of
+   * numbers rather than deriving a limit from it.
    *
-   * @returns The number of live buckets.
+   * @param reply - Whatever the driver handed back.
+   * @param expected - How many buckets were charged, at most.
+   * @returns The numbers, or null when the reply was not usable.
    */
-  public get size(): number {
-    return this.buckets.size;
+  private static numbers(reply: unknown, expected: number): number[] | null {
+    if (!Array.isArray(reply)) {
+      return null;
+    }
+
+    const usable = reply.length % RATE_LIMIT_REPLY_FIELDS === 0
+      && reply.length <= expected * RATE_LIMIT_REPLY_FIELDS
+      && reply.every((value) => typeof value === 'number');
+
+    return usable ? reply as number[] : null;
   }
 
   /**
-   * Charges one request against a bucket and reports whether it may proceed.
+   * Turns the script's flat run of numbers into one decision per bucket it
+   * charged.
    *
-   * The bucket is refilled from elapsed time on the way in, so an idle caller
-   * pays nothing to be forgiven and there is no timer per request. A refused
-   * request consumes no token — it only moves the bucket's stamp — so a
-   * caller hammering a closed door does not push their own recovery further
-   * away.
-   *
-   * @param key - Bucket identity: the caller and the scope being charged.
-   * @param rule - The refill policy to apply.
-   * @returns What to answer, and what to put in the response headers.
+   * @param reply - The script's numbers.
+   * @param charges - The buckets, in the order they were sent.
+   * @returns The decisions, shorter than `charges` when one refused.
    */
-  public consume(key: string, rule: RateLimitRule): RateLimitDecision {
-    const now = Date.now();
+  private static decisions(
+    reply: number[],
+    charges: RateLimitCharge[],
+  ): RateLimitDecision[] {
+    const charged = reply.length / RATE_LIMIT_REPLY_FIELDS;
 
-    this.sweep(now);
-
-    const tokens = this.refill(key, rule, now);
-
-    if (tokens < 1) {
-      this.store(key, tokens, rule, now);
+    return charges.slice(0, charged).map((charge, index) => {
+      const at = index * RATE_LIMIT_REPLY_FIELDS;
 
       return {
-        allowed: false,
-        limit: rule.burst,
-        remaining: 0,
-        retryAfterMs: this.waitFor(tokens, rule),
+        allowed: reply[at] === 1,
+        limit: charge.rule.burst,
+        remaining: reply[at + 1] ?? 0,
+        retryAfterMs: reply[at + 2] ?? 0,
       };
-    }
-
-    const left = tokens - 1;
-
-    this.store(key, left, rule, now);
-
-    return {
-      allowed: true,
-      limit: rule.burst,
-      remaining: Math.floor(left),
-      retryAfterMs: this.waitFor(left, rule),
-    };
-  }
-
-  /**
-   * Drops every bucket, so one test cannot leak state into the next.
-   */
-  public reset(): void {
-    this.buckets.clear();
-    this.lastSweptAt = 0;
-  }
-
-  /**
-   * Computes a bucket's token count as of now, treating a caller not seen
-   * before as holding a full bucket.
-   *
-   * @param key - The bucket to read.
-   * @param rule - The refill policy to apply.
-   * @param now - Current epoch milliseconds.
-   * @returns The available tokens, fractional and capped at the burst.
-   */
-  private refill(key: string, rule: RateLimitRule, now: number): number {
-    const bucket = this.buckets.get(key);
-
-    if (!bucket) {
-      return rule.burst;
-    }
-
-    const elapsedMs = Math.max(0, now - bucket.updatedAt);
-    const refilled = elapsedMs * rule.ratePerSec / MS_PER_SEC;
-
-    return Math.min(rule.burst, bucket.tokens + refilled);
-  }
-
-  /**
-   * Writes a bucket back, re-inserting it so the map's iteration order stays
-   * "least recently charged first" for the eviction below.
-   *
-   * @param key - The bucket to write.
-   * @param tokens - Tokens remaining as of `now`.
-   * @param rule - The rule this bucket was charged against, used to work out
-   *   when it will hold its full burst again.
-   * @param now - Current epoch milliseconds.
-   */
-  private store(
-    key: string,
-    tokens: number,
-    rule: RateLimitRule,
-    now: number,
-  ): void {
-    const missing = Math.max(0, rule.burst - tokens);
-    const fullAt = now + Math.ceil(missing * MS_PER_SEC / rule.ratePerSec);
-
-    this.buckets.delete(key);
-    this.buckets.set(key, { tokens, updatedAt: now, fullAt });
-
-    this.evictOldest();
-  }
-
-  /**
-   * Milliseconds until the bucket holds a whole token again.
-   *
-   * Reported even on an allowed request: a caller that has just spent its
-   * last token learns when the next one lands instead of finding out by
-   * being refused.
-   *
-   * @param tokens - Tokens left after the charge.
-   * @param rule - The refill policy in force.
-   * @returns The wait in milliseconds, zero when a token is already there.
-   */
-  private waitFor(tokens: number, rule: RateLimitRule): number {
-    if (tokens >= 1) {
-      return 0;
-    }
-
-    return Math.ceil((1 - tokens) * MS_PER_SEC / rule.ratePerSec);
-  }
-
-  /**
-   * Removes buckets that have refilled to capacity — a full bucket answers
-   * exactly as a missing one does, so keeping it only costs memory.
-   *
-   * Runs at most once per configured interval and only while requests are
-   * arriving, which is the only time the map grows.
-   *
-   * @param now - Current epoch milliseconds.
-   */
-  private sweep(now: number): void {
-    if (now - this.lastSweptAt < this.config.sweepIntervalMs) {
-      return;
-    }
-
-    this.lastSweptAt = now;
-
-    this.buckets.forEach((bucket, key) => {
-      if (bucket.fullAt <= now) {
-        this.buckets.delete(key);
-      }
     });
   }
 
+  private readonly logger = new Logger(RateLimitStore.name);
+
+  private readonly script: ValkeyScript;
+
+  private suppressed = 0;
+
+  private lastFailureLogAt: number | null = null;
+
+  public constructor(
+    private readonly config: RateLimitConfig,
+    valkey: ValkeyService,
+  ) {
+    this.script = new ValkeyScript(
+      valkey.getClient(),
+      RATE_LIMIT_CONSUME_COMMAND,
+      RATE_LIMIT_CONSUME_SCRIPT,
+    );
+  }
+
   /**
-   * Enforces the hard bucket cap by dropping the least recently charged
-   * entry, and says so: reaching this line means either far more callers than
-   * this deployment has or traffic from rotating addresses, and both are
-   * worth seeing in the log.
+   * Charges a request's buckets in order and reports what each answered.
+   *
+   * The chain stops at the first bucket that refuses, so a request turned
+   * away by the global rule spends nothing from the route's own allowance.
+   *
+   * @param charges - The buckets to charge, in the order they apply.
+   * @returns One decision per bucket charged — fewer than were asked for
+   *   when one refused, and none at all when the store could not answer.
    */
-  private evictOldest(): void {
-    if (this.buckets.size <= this.config.maxKeys) {
-      return;
+  public async consume(
+    charges: RateLimitCharge[],
+  ): Promise<RateLimitDecision[]> {
+    if (charges.length === 0) {
+      return [];
     }
 
-    const oldest = this.buckets.keys().next();
+    const reply = await this.run(charges);
+    const numbers = RateLimitStore.numbers(reply, charges.length);
 
-    if (oldest.done) {
-      return;
+    if (!numbers) {
+      return [];
     }
 
-    this.buckets.delete(oldest.value);
+    return RateLimitStore.decisions(numbers, charges);
+  }
+
+  /**
+   * Runs the charge script, bounded and failing open.
+   *
+   * Fail-open is the deliberate choice, and the same one the login ladder
+   * makes: a store that cannot answer must not become an API that refuses
+   * every request, and the edge's own `limit_req` still stands.
+   *
+   * @param charges - The buckets to charge.
+   * @returns The script's reply, or null when it failed or timed out.
+   */
+  private async run(charges: RateLimitCharge[]): Promise<unknown> {
+    const keys = charges.map((charge) =>
+      `${RATE_LIMIT_KEY_ROOT}:${charge.key}`
+    );
+
+    const args = charges.flatMap((charge) => [
+      charge.rule.ratePerSec,
+      charge.rule.burst,
+    ]);
+
+    try {
+      return await DeadlineUtils.bounded(
+        this.script.run(keys, args),
+        this.config.timeoutMs,
+      );
+    } catch (error) {
+      this.recordFailure(ErrorUtils.text(error));
+
+      return null;
+    }
+  }
+
+  /**
+   * Reports a failure, at most once per window and saying how many it stands
+   * for.
+   *
+   * The first failure is logged at once — an outage shorter than the window
+   * would otherwise go unrecorded — and the rest are counted into the next
+   * such line.
+   *
+   * @param reason - What this failure said.
+   */
+  private recordFailure(reason: string): void {
+    const now = Date.now();
+    const loggedAt = this.lastFailureLogAt;
+    const quiet = loggedAt !== null
+      && now - loggedAt < RATE_LIMIT_FAILURE_LOG_WINDOW_MS;
+
+    if (quiet) {
+      this.suppressed += 1;
+
+      return;
+    }
 
     this.logger.warn(
-      'Rate-limit bucket cap of %d reached, evicted the oldest entry',
-      this.config.maxKeys,
+      'Rate limiter failed, allowing the request (%d more since the last'
+        + ' such line): %s',
+      this.suppressed,
+      reason,
     );
+
+    this.suppressed = 0;
+    this.lastFailureLogAt = now;
   }
 }

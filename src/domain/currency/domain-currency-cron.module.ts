@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { ConfigModule } from '~config';
+import { CronLockModule } from '~lib/cron-lock';
 
 import { DomainCurrencyModule } from './domain-currency.module';
 import { CurrencyRateCronService } from './services';
@@ -24,6 +25,7 @@ import { CurrencyRateCronService } from './services';
 @Module({
   imports: [
     ConfigModule,
+    CronLockModule,
     DomainCurrencyModule,
   ],
   providers: [

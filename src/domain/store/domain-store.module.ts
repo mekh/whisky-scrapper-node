@@ -4,6 +4,8 @@ import { ConfigModule } from '~config';
 import { CoreWhiskyModule } from '~core/core-whisky.module';
 import { DomainPushModule } from '~domain/push';
 import { CacheModule } from '~lib/cache';
+import { CronLockModule } from '~lib/cron-lock';
+import { InstanceModule } from '~lib/instance';
 import { SyncFileLogModule } from '~lib/sync-file-log';
 import { ScrapeModule } from '~scrape';
 
@@ -23,7 +25,9 @@ import { SyncOrchestratorService } from './sync-orchestrator.service';
     CacheModule,
     ConfigModule,
     CoreWhiskyModule,
+    CronLockModule,
     DomainPushModule,
+    InstanceModule,
     ScrapeModule,
     SyncFileLogModule,
   ],

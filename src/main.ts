@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import cookie from '@fastify/cookie';
 import helmet from '@fastify/helmet';
-import { VersioningType } from '@nestjs/common';
+import { Logger, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import {
   FastifyAdapter,
@@ -13,7 +13,7 @@ import { initializeTransactionalContext } from 'typeorm-transactional';
 import { AppModule } from '~app/app.module';
 import { registerClientIpHook } from '~app/context';
 import { registerProcessGuards } from '~app/process';
-import { AppConfig } from '~config';
+import { AppConfig, DbConfig } from '~config';
 import { LoggerService } from '~lib/logger';
 
 initializeTransactionalContext();
@@ -53,6 +53,22 @@ const run = async (): Promise<void> => {
    * console. See `registerProcessGuards` for what it is for.
    */
   registerProcessGuards();
+
+  /**
+   * The pool is configured as a total across every instance and divided at
+   * startup, so the number this process actually holds is derived rather than
+   * written down anywhere. Logging it makes the arithmetic checkable instead
+   * of inferred — the failure it guards against is several instances each
+   * opening the whole total and exhausting `max_connections`.
+   */
+  const db = app.get(DbConfig);
+
+  new Logger('Bootstrap').log(
+    'Database pool: %d connection(s) here (%d total / %d instance(s))',
+    db.poolSize,
+    db.poolSizeTotal,
+    db.instances,
+  );
   app.enableVersioning({ type: VersioningType.URI });
 
   /**

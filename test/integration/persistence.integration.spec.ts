@@ -635,7 +635,7 @@ describe('persistence write path (integration)', () => {
 
     expect(blocked).toBeNull();
 
-    const swept = await syncLogs.sweepOrphaned();
+    const swept = await syncLogs.sweepOrphaned([], 0);
 
     expect(swept).toBeGreaterThanOrEqual(1);
 

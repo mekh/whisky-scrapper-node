@@ -30,7 +30,7 @@ import type {
   CacheStats,
   SlowCommandSample,
 } from '~types';
-import { ErrorUtils, TransactionUtils } from '~utils';
+import { DeadlineUtils, ErrorUtils, TransactionUtils } from '~utils';
 
 import { CacheCodec } from './cache-codec.util';
 
@@ -532,7 +532,7 @@ export class VersionedCacheService
     this.logger.verbose('Cache %s: sending', operation);
 
     try {
-      const result = await this.bounded(
+      const result = await DeadlineUtils.bounded(
         run(this.valkey.getClient()),
         deadlineMs,
       );
@@ -626,46 +626,6 @@ export class VersionedCacheService
 
     this.slowSamples.clear();
     this.slowWindowStartedAt = null;
-  }
-
-  /**
-   * Races a command against its own deadline.
-   *
-   * Not redundant with the client's `commandTimeout`: this one is far
-   * shorter, because a cache that answers slower than the query it replaces
-   * has nothing to offer the request, and because it still bounds the wait
-   * if the client's own timeout is ever misconfigured.
-   *
-   * @param command - The command already in flight.
-   * @returns Its reply.
-   * @throws {Error} When the deadline passes first.
-   */
-  private async bounded<T>(
-    command: Promise<T>,
-    deadlineMs: number,
-  ): Promise<T> {
-    let timer: NodeJS.Timeout | undefined;
-
-    const deadline = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        reject(new Error(`timed out after ${deadlineMs} ms`));
-      }, deadlineMs);
-
-      timer.unref();
-    });
-
-    try {
-      return await Promise.race([command, deadline]);
-    } finally {
-      clearTimeout(timer);
-
-      /**
-       * When the deadline won, the command is still in flight and may still
-       * reject; without a handler that would surface as an unhandled
-       * rejection and, depending on the runtime's settings, end the process.
-       */
-      command.catch(() => undefined);
-    }
   }
 
   /**

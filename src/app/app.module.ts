@@ -23,6 +23,7 @@ import {
   DomainCurrencyModule,
 } from '~domain/currency';
 import { DomainDashboardModule } from '~domain/dashboard';
+import { DomainHealthModule } from '~domain/health';
 import { DomainMetaModule } from '~domain/meta';
 import { DomainPreferenceModule } from '~domain/preference';
 import { DomainProductModule } from '~domain/product';
@@ -89,6 +90,7 @@ import { RateLimitModule, UserRateLimitGuard } from './rate-limit';
     DomainCurrencyModule,
     DomainCurrencyCronModule,
     DomainDashboardModule,
+    DomainHealthModule,
     DomainReportModule,
     DomainMetaModule,
     DomainStoreModule,

@@ -4,6 +4,7 @@ export { ClientIpUtils } from './client-ip.util';
 export { ConcurrencyPool } from './concurrency-pool.util';
 export { CurrencyUtils } from './currency.util';
 export { DashboardMetricsUtils } from './dashboard-metrics.util';
+export { DeadlineUtils } from './deadline.util';
 export { DurationUtils } from './duration.util';
 export { ErrorUtils } from './error.util';
 export { Hash } from './hash.util';

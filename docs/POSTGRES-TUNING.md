@@ -122,7 +122,7 @@ with a peak of 51 and seven waiting; at that point Postgres is oversubscribed
 by more than three to one and its commits per second had stopped growing.
 More connections would buy context switching, not throughput. It stays at the
 stock 100, which leaves comfortable headroom over the application's
-`DB_POOL_SIZE` of 50.
+`DB_POOL_SIZE_TOTAL` of 50, shared across every instance.
 
 ## What is set
 

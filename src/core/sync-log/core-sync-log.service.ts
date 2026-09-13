@@ -24,6 +24,7 @@ export class CoreSyncLogService extends CoreBaseService<SyncLogEntity> {
    * @param trigger - What started this run.
    * @param logFile - Name of the run's log file, or null when file logging is
    *   disabled.
+   * @param ownerId - The instance taking the lock.
    * @returns The created row, or null when the group/store is already running.
    */
   public async tryStart(
@@ -31,8 +32,9 @@ export class CoreSyncLogService extends CoreBaseService<SyncLogEntity> {
     group: string | null,
     trigger: SyncTrigger,
     logFile: string | null = null,
+    ownerId: string | null = null,
   ): Promise<SyncLogEntity | null> {
-    return this.repo.tryStart(storeId, group, trigger, logFile);
+    return this.repo.tryStart(storeId, group, trigger, logFile, ownerId);
   }
 
   /**
@@ -58,12 +60,27 @@ export class CoreSyncLogService extends CoreBaseService<SyncLogEntity> {
   }
 
   /**
-   * Closes every still-open run as interrupted (boot cleanup).
+   * Closes the open runs nobody is driving any more (boot cleanup).
    *
+   * @param aliveOwners - Instances known to be up, or null when that could
+   *   not be established.
+   * @param maxAgeMs - Longest a run may go without touching its row.
    * @returns How many orphaned rows were closed.
    */
-  public async sweepOrphaned(): Promise<number> {
-    return this.repo.sweepOrphaned();
+  public async sweepOrphaned(
+    aliveOwners: string[] | null,
+    maxAgeMs: number,
+  ): Promise<number> {
+    return this.repo.sweepOrphaned(aliveOwners, maxAgeMs);
+  }
+
+  /**
+   * The instances that hold an open run.
+   *
+   * @returns One id per distinct owner.
+   */
+  public async openOwners(): Promise<string[]> {
+    return this.repo.openOwners();
   }
 
   /**

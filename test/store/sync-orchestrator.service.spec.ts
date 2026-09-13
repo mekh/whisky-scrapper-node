@@ -8,6 +8,7 @@ import { SyncOrchestratorService } from '../../src/domain/store/sync-orchestrato
 import type { SyncConfig } from '~config';
 import type { CoreStoreService } from '~core/store';
 import type { CoreSyncLogService } from '~core/sync-log';
+import type { InstanceService } from '~lib/instance';
 import type { SyncFileLogService, SyncFileLogWriter } from '~lib/sync-file-log';
 import type { RunningSync, SiteResult, StoreListItem } from '~types';
 import type { PushDigestService } from '../../src/domain/push/push-digest.service';
@@ -64,6 +65,11 @@ interface Fakes {
    * The post-sync push dispatch stub.
    */
   pushDigest: { dispatchAfterSync: jest.Mock };
+
+  /**
+   * This process's identity and the liveness oracle behind the sweep.
+   */
+  instances: { id: string; aliveAmong: jest.Mock };
 
   /**
    * The writer stubs `fileLog.open` handed out, in call order.
@@ -167,7 +173,13 @@ function makeOrchestrator(
     touch: jest.fn().mockResolvedValue(undefined),
     finish: jest.fn().mockResolvedValue(undefined),
     sweepOrphaned: jest.fn().mockResolvedValue(0),
+    openOwners: jest.fn().mockResolvedValue([]),
     findRunning: jest.fn().mockResolvedValue([]),
+  };
+
+  const instances = {
+    id: 'host:1:abcdef',
+    aliveAmong: jest.fn().mockResolvedValue(new Set<string>()),
   };
 
   const scrape = {
@@ -211,6 +223,7 @@ function makeOrchestrator(
     config,
     fileLog as unknown as SyncFileLogService,
     pushDigest as unknown as PushDigestService,
+    instances as unknown as InstanceService,
   );
 
   return {
@@ -220,6 +233,7 @@ function makeOrchestrator(
     scrape,
     fileLog,
     pushDigest,
+    instances,
     writers,
   };
 }
@@ -395,8 +409,14 @@ describe('SyncOrchestratorService.startStoreSync', () => {
     expect(outcome.updated).toBe(5);
   });
 
+  /**
+   * The owner rides in the same insert as the lock, so a running row always
+   * names an instance the sweep can ask about.
+   */
   it('a cron run waits for the collection to finish', async () => {
-    const { orchestrator, syncLogs } = makeOrchestrator(makeStore());
+    const { orchestrator, syncLogs, instances } = makeOrchestrator(
+      makeStore(),
+    );
 
     await orchestrator.startStoreSync('maudau', SyncTrigger.CRON);
 
@@ -406,6 +426,7 @@ describe('SyncOrchestratorService.startStoreSync', () => {
       null,
       SyncTrigger.CRON,
       'stamp_maudau.log',
+      instances.id,
     );
   });
 

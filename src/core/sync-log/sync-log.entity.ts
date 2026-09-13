@@ -11,6 +11,7 @@ import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 import {
   STORE_GROUP_MAX_LENGTH,
   SYNC_LOG_FILE_MAX_LENGTH,
+  SYNC_OWNER_MAX_LENGTH,
   SYNC_TRIGGER_MAX_LENGTH,
 } from '~constants';
 import { GuidV7Column } from '~decorators/columns';
@@ -77,6 +78,12 @@ export class SyncLogEntity extends BaseRichEntity implements EntitySyncLog {
   @MaxLength(SYNC_LOG_FILE_MAX_LENGTH)
   @Column({ length: SYNC_LOG_FILE_MAX_LENGTH, nullable: true })
   public logFile?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(SYNC_OWNER_MAX_LENGTH)
+  @Column({ length: SYNC_OWNER_MAX_LENGTH, nullable: true })
+  public ownerId?: string;
 
   @ManyToOne(
     'StoreEntity',

@@ -808,6 +808,15 @@ export interface EntitySyncLog extends EntityBaseRich {
   group?: string;
   trigger?: string;
   logFile?: string;
+
+  /**
+   * Which instance started the run, for the orphan sweep: closing an open row
+   * releases the store's lock, so a restarting instance has to tell a
+   * sibling's live run from a dead process's leftover. Optional, so the
+   * response type need not carry it — it is internal and is stripped from
+   * every answer.
+   */
+  ownerId?: string;
 }
 
 /**

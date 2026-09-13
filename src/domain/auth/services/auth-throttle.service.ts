@@ -7,12 +7,24 @@ import {
   LOGIN_THROTTLE_RETENTION_SEC,
 } from '~constants';
 import { TooManyRequestsError } from '~errors';
-import { ValkeyClient, ValkeyCluster, ValkeyService } from '~lib/valkey';
-import type { LoginThrottleDecision, LoginThrottleState } from '~types';
+import {
+  ValkeyClient,
+  ValkeyCluster,
+  ValkeyScript,
+  ValkeyService,
+} from '~lib/valkey';
+import type { LoginThrottleDecision } from '~types';
+
+import {
+  AUTH_THROTTLE_ATTEMPT_COMMAND,
+  AUTH_THROTTLE_ATTEMPT_SCRIPT,
+  AUTH_THROTTLE_FAILURE_COMMAND,
+  AUTH_THROTTLE_FAILURE_SCRIPT,
+} from './auth-throttle.script';
 
 /**
- * Milliseconds in a second, for turning the ladder's seconds into stamps and
- * the stamps back into a `Retry-After`.
+ * Milliseconds in a second, for turning the ladder's stamps into a
+ * `Retry-After`.
  */
 const MS_PER_SEC = 1000;
 
@@ -31,23 +43,67 @@ const MS_PER_SEC = 1000;
  *
  * State lives in Valkey, not in this process, for one reason: a penalty
  * meant to last an hour is worth little if a deploy clears it, and deploys
- * here are frequent. The cost is a dependency on the request path, so every
- * failure of it is **fail-open** — a cache outage must not be able to lock
- * every account out of logging in. That is the right way round: the edge
- * still rate-limits these two routes (`limit_req` in `nginx.conf`) and the
- * application's own per-caller limiter still applies, so failing open here
- * loses the ladder, not every defence.
+ * here are frequent. Both writes are **one script call each** rather than a
+ * read followed by a write — see `auth-throttle.script.ts` for the race that
+ * closes. The cost is a dependency on the request path, so every failure of
+ * it is **fail-open**: a cache outage must not be able to lock every account
+ * out of logging in. That is the right way round, since the edge still
+ * rate-limits these two routes (`limit_req` in `nginx.conf`) and the
+ * application's own per-caller limiter still applies.
  */
 @Injectable()
 export class AuthThrottleService {
+  /**
+   * Reads the attempt script's answer.
+   *
+   * @param reply - Whatever the driver handed back.
+   * @returns The decision, or null when the reply was not usable — which is
+   *   read as "allow", like every other failure here.
+   */
+  private static decision(reply: unknown): LoginThrottleDecision | null {
+    if (!Array.isArray(reply) || reply.length !== 2) {
+      return null;
+    }
+
+    const [allowed, retryAfterMs] = reply as unknown[];
+
+    if (typeof allowed !== 'number' || typeof retryAfterMs !== 'number') {
+      return null;
+    }
+
+    return { allowed: allowed === 1, retryAfterMs };
+  }
+
   private readonly logger = new Logger(AuthThrottleService.name);
 
   private readonly storage: ValkeyClient | ValkeyCluster;
 
-  private readonly prefix = 'auth:throttle:login';
+  private readonly attempt: ValkeyScript;
+
+  private readonly failure: ValkeyScript;
+
+  /**
+   * Key root. Deliberately not the `auth:throttle:login` the JSON-record
+   * version used: the state is a hash now, and a leftover string key under
+   * the same name would answer `WRONGTYPE` on every command for as long as
+   * its retention lasted.
+   */
+  private readonly prefix = 'auth:throttle:ladder';
 
   public constructor(valkey: ValkeyService) {
     this.storage = valkey.getClient();
+
+    this.attempt = new ValkeyScript(
+      this.storage,
+      AUTH_THROTTLE_ATTEMPT_COMMAND,
+      AUTH_THROTTLE_ATTEMPT_SCRIPT,
+    );
+
+    this.failure = new ValkeyScript(
+      this.storage,
+      AUTH_THROTTLE_FAILURE_COMMAND,
+      AUTH_THROTTLE_FAILURE_SCRIPT,
+    );
   }
 
   /**
@@ -59,23 +115,27 @@ export class AuthThrottleService {
    *   the wait in seconds and carrying it in milliseconds for the client.
    */
   public async assertAllowed(address: string): Promise<void> {
-    const state = await this.read(address);
-    const now = Date.now();
-    const decision = AuthThrottleService.decide(state, now);
+    const reply = await this.guard(
+      'attempt',
+      () =>
+        this.attempt.run([this.key(address)], [
+          LOGIN_ATTEMPT_MIN_INTERVAL_MS,
+          LOGIN_THROTTLE_RETENTION_SEC,
+        ]),
+    );
 
-    if (!decision.allowed) {
-      const seconds = Math.ceil(decision.retryAfterMs / MS_PER_SEC);
+    const decision = AuthThrottleService.decision(reply);
 
-      throw new TooManyRequestsError(
-        `Too many login attempts, retry in ${seconds} s`,
-        { retryAfterMs: decision.retryAfterMs },
-      );
+    if (!decision || decision.allowed) {
+      return;
     }
 
-    await this.write(address, {
-      ...state ?? AuthThrottleService.fresh(),
-      lastAttemptAt: now,
-    });
+    const seconds = Math.ceil(decision.retryAfterMs / MS_PER_SEC);
+
+    throw new TooManyRequestsError(
+      `Too many login attempts, retry in ${seconds} s`,
+      { retryAfterMs: decision.retryAfterMs },
+    );
   }
 
   /**
@@ -85,24 +145,12 @@ export class AuthThrottleService {
    * @param address - The caller's resolved client address.
    */
   public async registerFailure(address: string): Promise<void> {
-    const state = await this.read(address) ?? AuthThrottleService.fresh();
-    const now = Date.now();
-    const failures = state.failures + 1;
-
-    if (failures < LOGIN_ATTEMPTS_PER_STAGE) {
-      await this.write(address, { ...state, failures, lastAttemptAt: now });
-
-      return;
-    }
-
-    const penaltyMs = AuthThrottleService.penaltyMs(state.stage);
-
-    await this.write(address, {
-      failures: 0,
-      stage: state.stage + 1,
-      blockedUntil: now + penaltyMs,
-      lastAttemptAt: now,
-    });
+    await this.guard('failure', () =>
+      this.failure.run([this.key(address)], [
+        LOGIN_ATTEMPTS_PER_STAGE,
+        LOGIN_THROTTLE_RETENTION_SEC,
+        ...LOGIN_PENALTY_SECONDS,
+      ]));
   }
 
   /**
@@ -113,107 +161,6 @@ export class AuthThrottleService {
    */
   public async reset(address: string): Promise<void> {
     await this.guard('reset', () => this.storage.del(this.key(address)));
-  }
-
-  /**
-   * Decides whether an attempt may proceed, given the stored state.
-   *
-   * Pure and static so the rule can be read — and tested — without a cache:
-   * a live penalty refuses for its remainder, and otherwise two attempts
-   * inside one second refuse for the rest of that second.
-   *
-   * @param state - The caller's stored state, or null when they have none.
-   * @param now - Current epoch milliseconds.
-   * @returns Whether to allow the attempt, and the wait if not.
-   */
-  private static decide(
-    state: LoginThrottleState | null,
-    now: number,
-  ): LoginThrottleDecision {
-    if (!state) {
-      return { allowed: true, retryAfterMs: 0 };
-    }
-
-    if (state.blockedUntil > now) {
-      return { allowed: false, retryAfterMs: state.blockedUntil - now };
-    }
-
-    const sinceLast = now - state.lastAttemptAt;
-
-    if (sinceLast >= 0 && sinceLast < LOGIN_ATTEMPT_MIN_INTERVAL_MS) {
-      return {
-        allowed: false,
-        retryAfterMs: LOGIN_ATTEMPT_MIN_INTERVAL_MS - sinceLast,
-      };
-    }
-
-    return { allowed: true, retryAfterMs: 0 };
-  }
-
-  /**
-   * The wait one exhausted run of attempts costs at a given rung.
-   *
-   * @param stage - How many penalties have already been served.
-   * @returns The penalty in milliseconds; the last rung repeats forever.
-   */
-  private static penaltyMs(stage: number): number {
-    const index = Math.min(stage, LOGIN_PENALTY_SECONDS.length - 1);
-
-    return (LOGIN_PENALTY_SECONDS[index] ?? 0) * MS_PER_SEC;
-  }
-
-  /**
-   * The state a caller starts from.
-   *
-   * @returns A zeroed ladder.
-   */
-  private static fresh(): LoginThrottleState {
-    return { failures: 0, stage: 0, blockedUntil: 0, lastAttemptAt: 0 };
-  }
-
-  /**
-   * Reads a caller's stored state.
-   *
-   * @param address - The caller's resolved client address.
-   * @returns The state, or null when there is none or the cache did not
-   *   answer.
-   */
-  private async read(address: string): Promise<LoginThrottleState | null> {
-    const raw = await this.guard(
-      'read',
-      () => this.storage.get(this.key(address)),
-    );
-
-    if (!raw) {
-      return null;
-    }
-
-    try {
-      return JSON.parse(raw) as LoginThrottleState;
-    } catch {
-      this.logger.warn('Discarding an unreadable login throttle record');
-
-      return null;
-    }
-  }
-
-  /**
-   * Stores a caller's state, refreshing its retention window.
-   *
-   * @param address - The caller's resolved client address.
-   * @param state - The state to store.
-   */
-  private async write(
-    address: string,
-    state: LoginThrottleState,
-  ): Promise<void> {
-    await this.guard('write', () =>
-      this.storage.set(
-        this.key(address),
-        JSON.stringify(state),
-        'EX',
-        LOGIN_THROTTLE_RETENTION_SEC,
-      ));
   }
 
   /**

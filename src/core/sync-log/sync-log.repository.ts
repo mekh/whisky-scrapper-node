@@ -29,6 +29,8 @@ export class SyncLogRepository extends BaseRepository<SyncLogEntity> {
    * @param trigger - What started this run.
    * @param logFile - Name of the run's log file, or null when file logging is
    *   disabled. Recorded in the same insert so a running row never lacks it.
+   * @param ownerId - The instance taking the lock, recorded in the same
+   *   insert so a running row always names something the sweep can ask about.
    * @returns The created row, or null when the group/store is already running.
    */
   public async tryStart(
@@ -36,6 +38,7 @@ export class SyncLogRepository extends BaseRepository<SyncLogEntity> {
     group: string | null,
     trigger: SyncTrigger,
     logFile: string | null = null,
+    ownerId: string | null = null,
   ): Promise<SyncLogEntity | null> {
     try {
       const entity = this.create({
@@ -43,6 +46,7 @@ export class SyncLogRepository extends BaseRepository<SyncLogEntity> {
         group: group ?? undefined,
         trigger,
         logFile: logFile ?? undefined,
+        ownerId: ownerId ?? undefined,
       });
 
       return await this.save(entity);
@@ -98,24 +102,65 @@ export class SyncLogRepository extends BaseRepository<SyncLogEntity> {
   }
 
   /**
-   * Closes every still-open run as interrupted. Called at boot: on a single
-   * instance, any open row must be a leftover from a previous process.
+   * Closes the open runs nobody is still driving, on two independent
+   * grounds: the instance that started one is gone, or the row is older than
+   * any run can be.
    *
+   * Both are needed. The owner test is the exact one and is what keeps a
+   * restart from closing a sibling's live run — closing it would release the
+   * store's lock and let a second sync start on top of the first. It is
+   * unavailable when the liveness store is, and the age test is the floor
+   * that still holds then: every run is bounded by its store timeout, so a
+   * row untouched past that plus a margin cannot be live whoever asks.
+   *
+   * @param aliveOwners - Instances known to be up, or null when that could
+   *   not be established — in which case no row is swept on that ground.
+   * @param maxAgeMs - Longest a run may go without touching its row.
    * @returns How many orphaned rows were closed.
    */
-  public async sweepOrphaned(): Promise<number> {
-    const result = await this.createQueryBuilder()
-      .update(SyncLogEntity)
-      .set({
-        success: false,
-        error: 'Interrupted: process restarted before this run finished',
-        finishedAt: () => 'now()',
-        updatedAt: () => 'now()',
-      })
-      .where('success IS NULL')
-      .execute();
+  public async sweepOrphaned(
+    aliveOwners: string[] | null,
+    maxAgeMs: number,
+  ): Promise<number> {
+    const result = await this.query(
+      `UPDATE sync_log SET
+         success = false,
+         error = CASE
+           WHEN $1::text[] IS NOT NULL
+             AND ("ownerId" IS NULL OR NOT ("ownerId" = ANY($1)))
+           THEN 'Interrupted: the instance that started this run is gone'
+           ELSE 'Interrupted: this run outlived the longest a run may take'
+         END,
+         "finishedAt" = now(),
+         "updatedAt" = now()
+       WHERE success IS NULL
+         AND (
+           (
+             $1::text[] IS NOT NULL
+             AND ("ownerId" IS NULL OR NOT ("ownerId" = ANY($1)))
+           )
+           OR "updatedAt" < now() - make_interval(secs => $2::float / 1000)
+         )
+       RETURNING id`,
+      [aliveOwners, maxAgeMs],
+    ) as [unknown[], number];
 
-    return result.affected ?? 0;
+    return result[1];
+  }
+
+  /**
+   * The instances that hold an open run, for asking which of them are still
+   * up.
+   *
+   * @returns One id per distinct owner, without the rows that name none.
+   */
+  public async openOwners(): Promise<string[]> {
+    const rows = await this.query(
+      `SELECT DISTINCT "ownerId" FROM sync_log
+       WHERE success IS NULL AND "ownerId" IS NOT NULL`,
+    ) as { ownerId: string }[];
+
+    return rows.map((row) => row.ownerId);
   }
 
   /**

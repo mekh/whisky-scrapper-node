@@ -1,11 +1,13 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 
 import { SyncConfig } from '~config';
+import { SYNC_ORPHAN_AGE_MARGIN_MS } from '~constants';
 import { CoreStoreService } from '~core/store';
 import { CoreSyncLogService } from '~core/sync-log';
 import { PushDigestService } from '~domain/push';
 import { SyncEngine, SyncTrigger } from '~enums';
 import { BadRequestError, DuplicateError, NotFoundError } from '~errors';
+import { InstanceService } from '~lib/instance';
 import { SyncFileLogService, SyncFileLogWriter } from '~lib/sync-file-log';
 import { ScrapeService } from '~scrape';
 import type {
@@ -79,22 +81,25 @@ export class SyncOrchestratorService implements OnModuleInit {
     private readonly config: SyncConfig,
     private readonly fileLog: SyncFileLogService,
     private readonly pushDigest: PushDigestService,
+    private readonly instances: InstanceService,
   ) {}
 
   /**
-   * Closes sync runs left open by a previous process. The app runs as a single
-   * instance, so any open row at boot is an orphan whose lock must be freed.
+   * Closes the sync runs nobody is driving any more and frees their locks.
    * Expired log files are swept here too, so the retention window also holds
    * on an instance whose schedule is disabled.
    *
    * @returns Resolves once the sweeps are done.
    */
   public async onModuleInit(): Promise<void> {
-    const closed = await this.syncLogs.sweepOrphaned();
+    const closed = await this.syncLogs.sweepOrphaned(
+      await this.aliveOwners(),
+      this.orphanAgeMs(),
+    );
 
     if (closed > 0) {
       this.logger.warn(
-        'Closed %d orphaned sync run(s) left by a previous process',
+        'Closed %d orphaned sync run(s) no instance is driving',
         closed,
       );
     }
@@ -256,6 +261,7 @@ export class SyncOrchestratorService implements OnModuleInit {
       store.group,
       trigger,
       fileName,
+      this.instances.id,
     );
 
     if (!log) {
@@ -830,6 +836,46 @@ export class SyncOrchestratorService implements OnModuleInit {
    * @param store - The store that could not start.
    * @returns A message describing the blocking run.
    */
+  /**
+   * Which of the instances holding an open run are still up.
+   *
+   * A null answer means the question could not be put — the liveness store
+   * did not answer — and is not the same as "none of them": sweeping on it
+   * would close a sibling's live run and release the lock it holds, so the
+   * sweep falls back to the age floor alone and says so.
+   *
+   * @returns The live owners, or null when liveness is unknown.
+   */
+  private async aliveOwners(): Promise<string[] | null> {
+    const owners = await this.syncLogs.openOwners();
+    const alive = await this.instances.aliveAmong(owners);
+
+    if (!alive) {
+      this.logger.warn(
+        'Could not establish which instances are live; sweeping only runs'
+          + ' older than %s',
+        DurationUtils.format(this.orphanAgeMs()),
+      );
+
+      return null;
+    }
+
+    return [...alive, this.instances.id];
+  }
+
+  /**
+   * How long a run may go untouched before it is orphaned whoever asks: the
+   * longest a run can take, plus a margin.
+   *
+   * @returns The age bound in milliseconds.
+   */
+  private orphanAgeMs(): number {
+    return Math.max(
+      this.config.storeTimeoutMs,
+      this.config.browserStoreTimeoutMs,
+    ) + SYNC_ORPHAN_AGE_MARGIN_MS;
+  }
+
   private async describeBlocker(store: StoreListItem): Promise<string> {
     const running = await this.syncLogs.findRunning();
     const blocker = running.find((run) =>

@@ -1,8 +1,12 @@
 /**
- * One caller's position on the login-attempt ladder, as stored.
+ * One caller's position on the login-attempt ladder, as the Valkey hash
+ * holds it.
  *
- * Deliberately holds no address of its own: the key carries that, so a
- * record read back cannot disagree with the key it was read under.
+ * Written and read only by `auth-throttle.script.ts`; it is stated here
+ * because the field names are the stored contract — an operator reading a
+ * blocked caller's state with `HGETALL` sees exactly these — and because the
+ * integration test seeds them to reach a rung without waiting an hour for
+ * it.
  */
 export interface LoginThrottleState {
   /**

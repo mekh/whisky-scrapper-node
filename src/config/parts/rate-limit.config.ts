@@ -44,18 +44,11 @@ const DEFAULT_AUTH_RATE_PER_SEC = 1;
 const DEFAULT_AUTH_BURST = 5;
 
 /**
- * Most callers tracked at once. Reached only by anonymous traffic, which is
- * keyed by address; past it the least recently charged bucket is dropped, so
- * the map cannot grow without bound on rotating source addresses.
+ * How long one charge may take before the request is let through uncounted.
+ * Far below the client's own command timeout: a limiter slower than the
+ * handler it guards costs more than it saves, and it fails open anyway.
  */
-const DEFAULT_MAX_KEYS = 10000;
-
-/**
- * How often idle buckets are swept. The sweep is lazy — it runs on a charge,
- * never on a timer — so it costs nothing while the process is idle, which is
- * also when nothing is being added to sweep.
- */
-const DEFAULT_SWEEP_INTERVAL_MS = 60000;
+const DEFAULT_TIMEOUT_MS = 250;
 
 /**
  * Per-caller request-rate limits.
@@ -64,6 +57,10 @@ const DEFAULT_SWEEP_INTERVAL_MS = 60000;
  * carries `@RateLimit(profile)` additionally pays that profile's own bucket.
  * The two are separate buckets, so a tightened route neither spends nor is
  * spent by the rest of the API.
+ *
+ * The buckets themselves live in Valkey, shared by every instance, and expire
+ * as soon as they would hold their full burst again — so there is nothing
+ * here to cap or to sweep.
  */
 @Injectable()
 export class RateLimitConfig extends BaseConfig {
@@ -112,13 +109,8 @@ export class RateLimitConfig extends BaseConfig {
 
   @IsInt()
   @IsPositive()
-  public readonly maxKeys = this.asNumber('RATE_LIMIT_MAX_KEYS')
-    ?? DEFAULT_MAX_KEYS;
-
-  @IsInt()
-  @IsPositive()
-  public readonly sweepIntervalMs = this.asNumber('RATE_LIMIT_SWEEP_MS')
-    ?? DEFAULT_SWEEP_INTERVAL_MS;
+  public readonly timeoutMs = this.asNumber('RATE_LIMIT_TIMEOUT_MS')
+    ?? DEFAULT_TIMEOUT_MS;
 
   /**
    * The rule every request is charged against, whatever route it hits.

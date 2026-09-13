@@ -102,6 +102,67 @@ globs to `__dirname` so the one DataSource file works both from the TS
 sources (ts-node, dev) and from `dist/` (compiled, prod image) — keep any new
 globs anchored the same way.
 
+**The API runs as N replicas behind HAProxy** (2026-09-13). `APP_INSTANCES`
+in the host `.env` is the only number: compose reads it as the app service's
+`scale` and the app reads it as the divisor of `DB_POOL_SIZE_TOTAL`, so the
+replica count and the pool share cannot drift apart. The app publishes no
+host port any more — the `lb` service does, on exactly the address the host
+nginx already proxies to, so **nginx needs no change when the count
+changes**. `haproxy.cfg` sits beside the compose file and finds the replicas
+through Docker's own DNS (`server-template` + `resolvers`), so it needs no
+change either; only raising the count past its 16 slots would.
+
+HAProxy rather than Traefik, decided against the dashboard and the ACME
+automation Traefik would have brought: Traefik discovers replicas **only**
+through the Docker socket, which is root on the host granted to the one
+process that terminates public traffic (`:ro` does not restrict the API, and
+the usual mitigation — a socket proxy — is itself HAProxy), and its 2026
+record carries two CVSS 10.0 criticals plus two authentication bypasses
+against HAProxy's zero criticals in thirteen years. The monitoring argument
+turned out to be no argument: the proxy is one exporter of six, and HAProxy
+has a native Prometheus endpoint and a live stats page (`:8404`, compose
+network only). The full comparison is in
+[`docs/MULTI-PROCESS-PLAN.md`](docs/MULTI-PROCESS-PLAN.md); if the host nginx
+is ever retired, Traefik as the front door becomes a real option again and
+swapping it in costs one container.
+
+Three details of `haproxy.cfg` are load-bearing. It **must never gain `option
+forwardfor`** — nginx already sets `X-Real-IP` and `X-Forwarded-For` from the
+real client, and this proxy's own view of "the client" is nginx, so appending
+would put nginx's address at the tail of the header the API reads and collapse
+every caller into one rate-limit bucket and one login ladder. The health check
+is `GET /health` expecting 200 — a liveness probe that names no dependency
+(see "The liveness probe"). And `option redispatch` is what makes a scale-down
+quiet: without it a connection to a replica that is gone is retried against
+that same replica and then answered 503. It covers a refused connection only
+— a response already under way when its replica dies cannot be retried by any
+proxy, which is what the app's graceful shutdown and `stop_grace_period: 60s`
+are for.
+
+### The liveness probe
+
+`GET /health` (`domain/health`) answers `{"status":"ok"}` from the process
+alone and names no dependency. That is the decision, not a simplification: a
+probe that checked Postgres or Valkey would take **every** replica out of
+rotation the moment that one dependency wobbled, turning a degradation into a
+total outage, while answering no question the balancer is actually asking.
+What it does detect is the failure that matters here — a replica whose event
+loop is blocked does not reply at all.
+
+It is **the one route outside the rate limiter** (`@NoRateLimit()`,
+`~decorators/http`), and that exemption is not a nicety. Measured before it
+existed: twelve probes back to back got nine 200s and three 429s. Every
+replica is probed from the balancer's single address, and since 2026-09-13 the
+buckets are shared by the whole fleet — so at enough replicas or a short
+enough interval the limiter starts refusing probes, a refused probe reads as
+an unhealthy replica, and all of them drain at once. The limiter would have
+become the outage. The rule that comes with the decorator: it may only go on a
+route that costs nothing to serve.
+
+It replaced a check on `GET /meta` expecting **401**, which worked only for as
+long as `/meta` stayed authenticated — a status code is a poor thing to pin
+liveness to.
+
 Local infrastructure: `docker-compose.dev.yaml` starts **PostgreSQL 18**
 (host port **5431**, db `db`, user `user`, password `1`) and **Valkey 8**
 (host port **6378**). PG 18 is required — entity PKs default to `uuidv7()`,
@@ -138,7 +199,7 @@ be/
     │   ├── guards/          # AuthJwtGuard, PermissionGuard
     │   ├── interceptors/    # TimeoutInterceptor, LogInterceptor, ValidationInterceptor
     │   ├── middleware/      # RequestDeadlineMiddleware (runs before the guards)
-    │   └── rate-limit/      # UserRateLimitGuard + RateLimitStore (token buckets)
+    │   └── rate-limit/      # UserRateLimitGuard + RateLimitStore (token buckets in Valkey)
     ├── config/              # env-driven config classes
     │   ├── base.config.ts   # BaseConfig: asString/asNumber/asBoolean/asEnum/asArray + self-validation
     │   ├── parts/           # one class per concern: app, db, jwt-access, logger, validation
@@ -1048,6 +1109,11 @@ Bourbon Cask 3/5), 6 merges, 19 ages filled in, 27 offers re-linked (10 by
 split, 17 by merge), 1 bottling created, 7 rows left with no offers; snapshot
 and offer counts unchanged.
 
+Then `sync-log-owner` (2026-09-13), one nullable `varchar(64)` column
+recording which instance holds an open run — see "Sync orchestration". Rows
+predating it name nobody, which the sweep reads as orphaned; that is correct,
+since no live process can claim them. `down()` drops the column.
+
 Then the pair of 2026-09-06: `product-match-alias` creates the retired-key table (`key` PK, `productId` → `product.id`, `ON DELETE CASCADE`), and `product-duplicate-merge` folds the catalogue's duplicates together, once, from what the data says. It works in five steps — the `Casc` misspelling, the curated Arran corrections (addressed by identity and by URL, never by id, each a no-op on a catalogue that lacks the row), the identity groups (rows with one name, volume and age), the barcode groups (rows whose listings state one retail barcode — read out of the Zakaz.ua URL suffix and the codes Rozetka and MauDau print in parentheses — where the volumes agree and one name's significant words are a subset of the other's, which keeps `Clan Denny Islay` apart from `Clan Denny Speyside` and `Hyde №3` from `Hyde №4` where a shop plainly reused a code) and the orphans (a bottling nothing refers to is deleted). The survivor is the row a person named, else the most listed; the vanishing row's facts fold in by the canonical write's trust rules and its key is retired into an alias. Measured on the 2026-09-06 dump: 1 name respelled, 4 Arran corrections, 85 identity groups (95 rows folded, 129 offers moved), 132 barcode groups (135 rows folded, 315 offers moved), 10 orphans deleted; 4 078 bottlings became 3 835 with every offer, snapshot and purchase in place, and 40 barcode groups were refused and logged for a person. It asserts all of that before committing; `down()` is a documented no-op. Applied to production with the 2026-09-06 deploy.
 
 **`flavor-llm-import` ships its data as a CSV beside the migration.** Flavors
@@ -1634,10 +1700,28 @@ wrappers): `scrape/` has its own internal layering.
   track strictly sequentially; a store that cannot start is warned and skipped.
   It returns a `SyncRunReport` (per track, per store: duration, outcome or skip
   reason) purely so the cron can log a summary — nothing persists it.
-- `onModuleInit` sweeps orphaned locks — single instance, so any open row at
-  boot belongs to a dead process. `main.ts` calls `enableShutdownHooks()` and
-  compose gives the container `stop_grace_period: 60s`. It also sweeps expired
-  log files (below), so retention holds even where the cron never fires.
+- `onModuleInit` sweeps orphaned locks, and **asks who is alive before
+  closing anything** (2026-09-13). It used to close every open row, which is
+  right for one process and wrong for several: closing a row releases the
+  store's lock, so a routine restart would have let a second sync start on
+  top of a sibling's live one. A run now records its `sync_log.ownerId` — the
+  instance that took the lock, in the same insert — and each process keeps a
+  Valkey key with a TTL it refreshes (`InstanceService`, `~lib/instance`;
+  `instance:<host>:<pid>:<rand>`, 30 s, beaten every 10). **No lock is needed
+  for the sweep**: "this owner's key is gone" is true whoever evaluates it.
+  Three details are load-bearing. The random suffix makes an instance id
+  unique in time, so a restart that reuses a process id cannot read its
+  predecessor's leftover key and conclude a dead run is alive. A clean
+  shutdown deletes the key, so a redeploy's sweep is immediate rather than
+  waiting out the TTL. And **a null liveness answer is not "nobody is
+  alive"** — when Valkey cannot answer, nothing is swept on that ground and
+  the sweep falls back to the age floor alone: a row untouched for longer
+  than the largest store timeout plus `SYNC_ORPHAN_AGE_MARGIN_MS` cannot
+  belong to a live run, since every run is bounded by that timeout. The two
+  grounds are independent and the closed row's `error` says which fired.
+  `main.ts` calls `enableShutdownHooks()` and compose gives the container
+  `stop_grace_period: 60s`. It also sweeps expired log files (below), so
+  retention holds even where the cron never fires.
 - **Per-sync log files** (`src/lib/sync-file-log/`) restore what the Python
   scraper's `logs.py` gave an operator: a human-readable file per run
   (`HH:MM:SS LEVEL message`, English), holding the pages walked, the LLM passes,
@@ -1710,6 +1794,34 @@ wrappers): `scrape/` has its own internal layering.
     track sets the total run time.
   - `ScheduleModule.forRoot()` is registered in `app.module.ts` (it is a global
     module exporting `SchedulerRegistry`), scheduling being an app-wide concern.
+  - **Every instance arms the schedule, and one tick claims it** (2026-09-13).
+    `CronLockService` (`~lib/cron-lock`) is a single `SET NX EX` under
+    `cron:<job>`, holding the winner's instance id so the log — and
+    `valkey-cli` — can say which container ran last night's sync. No
+    long-lived leader and nothing to renew: the claim expires and the next
+    tick is a fresh race. Two things are load-bearing. **`CRON_LOCK_TTL_SEC`
+    (300) is the duplicate window**, so it must stay far above any clock skew
+    between instances and far below the gap between two ticks — both jobs
+    using it run daily; a job ticking more often would swallow its own ticks.
+    And a claim that cannot be made at all **runs the job anyway**: the lock
+    only keeps the fleet tidy, it is not what makes either job safe to run
+    twice (the sync's own `sync_log` lock is, and the rate sync's writes are
+    upserts), so a Valkey outage must not be able to stop the schedule.
+    `CurrencyRateCronService` goes through the same claim.
+  - **What a failed claim actually costs, stated plainly** (it is more than
+    "a wasted tick"): every instance enters `runFullSync`, and while no store
+    is ever synced twice — `tryStart`'s partial unique index in Postgres is
+    the real guard — the instances that lose a store's lock lose it
+    _instantly_ and race ahead to the next chunk of tracks. So the stores are
+    distributed across the fleet and the host runs up to
+    `instances × SYNC_MAX_PARALLEL_TRACKS` scrapes at once instead of
+    `SYNC_MAX_PARALLEL_TRACKS`, browser tier and LLM passes included. Each
+    shop is still scraped once, at its own politeness delay, so the load
+    lands on this host rather than on them. Accepted deliberately: the
+    alternative is a daily scrape a cache outage can silently cancel, and
+    during such an outage the API is unusable anyway (sessions live in the
+    same Valkey), so the sync is the only thing still working — it merely
+    works harder than intended.
 - Endpoints: `POST /store/:slug/sync` (`202`, `[Resource.STORE, Action.SYNC]`),
   `GET /store/sync-status` (`@CacheControl('no-cache')`, polled by the web
   client) and `GET /store/:slug/sync-log/:id/file` — the run's log file as
@@ -1867,7 +1979,7 @@ has no rate against itself), `CURRENCY_RATE_CRON_ENABLED` (**true**, unlike
 (`30 16 * * *`), `CURRENCY_RATE_TIMEZONE` (`Europe/Kyiv`) and
 `CURRENCY_RATE_SYNC_WINDOW_DAYS` (7) — see "API contract" → "Currency rates".
 An unusable cron expression fails the boot, as the sync one does.
-Rate-limit vars in `RateLimitConfig` — `RATE_LIMIT_ENABLED` (**true**), `RATE_LIMIT_RPS` (3) / `RATE_LIMIT_BURST` (10) for the global per-caller cap, `RATE_LIMIT_HEAVY_RPS` (1) / `RATE_LIMIT_HEAVY_BURST` (60) for the report and dashboard reads, `RATE_LIMIT_STRICT_RPS` (1) / `RATE_LIMIT_STRICT_BURST` (3) for the collection reads, `RATE_LIMIT_AUTH_RPS` (1) / `RATE_LIMIT_AUTH_BURST` (5) for the two public auth routes, plus `RATE_LIMIT_MAX_KEYS` (10000) and `RATE_LIMIT_SWEEP_MS` (60000) bounding the bucket map — see "Rate limiting". They replace `THROTTLE_TTL_MS`/`THROTTLE_LIMIT`, which are gone with `@nestjs/throttler`.
+Rate-limit vars in `RateLimitConfig` — `RATE_LIMIT_ENABLED` (**true**), `RATE_LIMIT_RPS` (3) / `RATE_LIMIT_BURST` (10) for the global per-caller cap, `RATE_LIMIT_HEAVY_RPS` (1) / `RATE_LIMIT_HEAVY_BURST` (60) for the report and dashboard reads, `RATE_LIMIT_STRICT_RPS` (1) / `RATE_LIMIT_STRICT_BURST` (3) for the collection reads, `RATE_LIMIT_AUTH_RPS` (1) / `RATE_LIMIT_AUTH_BURST` (5) for the two public auth routes, plus `RATE_LIMIT_TIMEOUT_MS` (250) bounding the one Valkey call the limiter makes before every handler — see "Rate limiting". They replace `THROTTLE_TTL_MS`/`THROTTLE_LIMIT`, which are gone with `@nestjs/throttler`. `RATE_LIMIT_MAX_KEYS` and `RATE_LIMIT_SWEEP_MS` are gone with the in-process bucket map (2026-09-13) and are ignored if still set.
 `APP_TRUSTED_IP_HEADERS` (`x-real-ip,x-forwarded-for`) and `APP_TRUST_PROXY` (**true**) decide which forwarding headers the client's address may be read from, and whether any may — see "Who the caller is".
 Cache vars in `CacheConfig` — `CACHE_ENABLED` (**true**, the kill switch), `CACHE_TTL_SEC` (86400, garbage collection rather than freshness), `CACHE_READ_TIMEOUT_MS` (250, deliberately far under the client's own command timeout), `CACHE_MAX_ENTRY_BYTES` (8 MiB, measured after compression — the `/meta` blob), `CACHE_MAX_SET_BYTES` (32 MiB, a report set's compressed index plus its uncompressed groups), `CACHE_BOOT_BUMP` (**true**; the scripts turn it off through `suppressBootBump()`), and the connection set `CACHE_VALKEY_HOST` / `CACHE_VALKEY_PORT` / `CACHE_VALKEY_DB` / `CACHE_VALKEY_PASSWORD` / `CACHE_VALKEY_PREFIX` / `CACHE_VALKEY_COMMAND_TIMEOUT_MS` / `CACHE_VALKEY_CONNECT_TIMEOUT_MS` / `CACHE_VALKEY_KEEP_ALIVE_MS` / `CACHE_VALKEY_MAX_RETRIES_PER_REQUEST`, **each falling back to its `VALKEY_*` equivalent**, so sharing the session instance is the zero-configuration default and giving the cache its own is one variable — see "Catalogue cache".
 
@@ -1941,16 +2053,25 @@ barrel.
 - **A numeric field that reaches a `numeric` column needs a `@Max`.** `@IsNumber({ maxDecimalPlaces })` only inspects values with a fractional part, so `1e11` and even `1e21` pass it as integers and then overflow `numeric(12,2)` in Postgres with SQLSTATE `22003`. See `COLLECTION_PRICE_MAX`.
 - **An array field needs an `@ArrayMaxSize`**, and the bound is the request's bound rather than a nicety when the service applies the elements one statement at a time. See `COLLECTION_PURCHASES_MAX_PER_REQUEST`.
 
-## Rate limiting (2026-09-08)
+## Rate limiting (2026-09-08, buckets shared 2026-09-13)
 
-Per-caller request-rate limiting, `src/app/rate-limit/`: `UserRateLimitGuard` registered globally and `RateLimitStore` holding the buckets. It replaces `@nestjs/throttler` and the `UserThrottlerGuard` that sat on two controllers; the dependency is gone.
+Per-caller request-rate limiting, `src/app/rate-limit/`: `UserRateLimitGuard` registered globally and `RateLimitStore` charging the buckets, which live in the session Valkey. It replaces `@nestjs/throttler` and the `UserThrottlerGuard` that sat on two controllers; the dependency is gone.
 
 - **Token buckets, not a fixed window.** A single-page client fans out on load — `/meta`, a report, `/preference`, `/collection/ids`, `/quick-filter` all leave at once — so "N requests per second" rejects half of a legitimate page load. A bucket with a burst allowance lets that spike through and still holds the sustained rate to `RATE_LIMIT_RPS`.
 - **Two levels, two buckets.** Every request pays the global rule, keyed by caller alone so it is a cap across the whole API rather than per route. A controller carrying `@RateLimit(profile)` (`~decorators/http`) additionally pays that profile's bucket, keyed by the controller. The buckets are separate on purpose: a tightened controller must not spend the caller's allowance for the rest of the API, nor have its own spent by it. Two profiles exist — `HEAVY` on `/report` and `/dashboard` (60 spendable at once, 1/s sustained, the old `THROTTLE_*` budget restated) and `STRICT` on `/collection`.
 - **Guard order is load-bearing** and `app.module.ts` says so: `AuthJwtGuard` → `UserRateLimitGuard` → `PermissionGuard`. Running after auth is what makes the bucket the _account_ rather than the address, so a second browser or a new network buys nothing; running before the permission guard means a refused request is refused before any permission work is done for it.
 - **The gap that follows from that order**: a request `AuthJwtGuard` rejects — an expired or forged token — never reaches the limiter and is never counted. Bounding that flood is the reverse proxy's job. What this guard bounds is what an account can make the database do.
 - **An anonymous caller is keyed by the address `ClientIpUtils` resolved** — see "Who the caller is" below, which is the one place that rule lives.
+- **One route is exempt: `GET /health`** (`@NoRateLimit()`). Every replica is probed from the balancer's single address against buckets the whole fleet shares, so a refused probe reads as an unhealthy replica and drains all of them at once — measured before the exemption: twelve probes back to back, nine 200s and three 429s. The decorator may only go on a route that costs nothing to serve.
 - **The two routes that key governs carry two more limits of their own**: the `AUTH` profile above them, and `AuthThrottleService`'s progressive ladder inside the login handler (see "The login ladder"). `nginx.conf` adds a third at the edge, `limit_req zone=whisky_auth` (10r/m, burst 8, keyed on `$binary_remote_addr`) on `= /api/auth/login` and `= /api/auth/refresh`, the only `Resource.PUBLIC` handlers. Everything else 401s in `AuthJwtGuard` before the limiter sees it, so the anonymous bucket becomes load-bearing on its own only if a public route is ever added that falls through to `location /api/`, which carries no `limit_req`.
+- **The buckets are in Valkey, charged by one Lua script** (`rate-limit-consume.script.ts`), because the API now runs as several instances and a bucket per instance would mean N independent budgets — an effective limit N times what is configured. Both of a request's buckets are charged by that **one** call: the script walks them in order, stops at the first refusal, and answers three integers per bucket it charged, so a request the global rule turns away still spends nothing from the route's own allowance. Read-then-write would have been the obvious alternative and is exactly what the ladder's own bug is (see "The login ladder"): two requests read the same state and one charge is lost.
+- **The script reads the clock from Valkey** (`TIME`), not from the calling process. Instances whose clocks disagree would otherwise refill one another's buckets at different rates, and the skew is free to fix here.
+- **Measured before and after**, since this is the one limiter change on the hot path: the in-process map cost **0.48 µs of CPU per request** (two buckets); the Valkey charge costs **~10 µs of event-loop CPU** plus one round trip — 154 µs on the development laptop, where a bare `PING` is 153.6 µs, so the script itself is ~17 µs of that. Against the ~8.5 ms of CPU a cached report page spends, the added CPU is ~0.1%. The store alone sustains ~98k charges/s at 200 in flight.
+- **Memory is bounded by the buckets' own lifetime.** A bucket expires exactly when it would next hold its full burst — 334 ms for the global rule, at most 60 s for `HEAVY` — so the key count is bounded by the arrival rate over a few seconds rather than by a configured ceiling. That is what replaced `RATE_LIMIT_MAX_KEYS` and `RATE_LIMIT_SWEEP_MS`, and it is the tighter bound of the two, which matters because an anonymous caller is keyed by address.
+- **Failure is fail-open, bounded by `RATE_LIMIT_TIMEOUT_MS`** (250 ms, far under the client's own 2 s): a store that cannot answer must not become an API that refuses every request, and the edge's `limit_req` plus the login ladder still stand. The guard reads an empty answer as "not charged", lets the request through and states no standing in the headers rather than one it does not know. The failures are logged at most once a minute, the first one immediately and each line saying how many it stands for.
+- **The keys are readable on purpose**, as the cache's are: `ratelimit:global:user:<id>`, `ratelimit:heavy:ReportController:ip:<addr>` — `valkey-cli --scan --pattern 'ratelimit:*'` shows what is being tracked right now.
+- **They live on the session instance, not the cache one.** It is the coordination instance (the login ladder is already there), it does not evict, so a limit cannot be quietly lifted by memory pressure, and it is not in the path of the multi-megabyte catalogue payloads. The cost is that each charge writes two entries to that instance's AOF — ~40 KB/s at the measured ceiling, which is noise on the disk but is the number to look at if that AOF ever becomes interesting.
+- **The bucket semantics are pinned by `test/integration/rate-limit.integration.spec.ts`**, against a live Valkey, because Lua is only meaningfully testable there. It covers the burst, the refill, that a refusal charges nothing, the chain stopping at the first refusal, the TTL, fail-open — and that 60 charges arriving at once let exactly `burst` through, which is the lost update the move exists to prevent. The guard's own spec stubs the store.
 
 ## Who the caller is (2026-09-08)
 
@@ -1962,7 +2083,7 @@ There used to be three answers, and two of them were wrong. The CLS setup took t
 - **Only the last hop of a header is read**, and that is the load-bearing line. nginx sets `X-Real-IP $remote_addr`, which **replaces** whatever arrived — trustworthy whole. It sets `X-Forwarded-For $proxy_add_x_forwarded_for`, which **appends**: a client sending `X-Forwarded-For: 1.2.3.4` produces `1.2.3.4, <real peer>`, so the head of that chain is an attacker-chosen string and only the tail is the address nginx accepted. Reading the header raw, or its first entry, would let one caller choose its own identity per request — no limit keyed on it would bound anything, and the limiter's bucket map would grow on demand. A replace-style header has a single hop, so the same rule returns it unchanged.
 - **A Fastify hook, not Nest middleware**, and this cost a debugging round: on Fastify, Nest middleware runs through `middie` and is handed the raw `IncomingMessage`, while guards and param decorators are handed the Fastify `Request` wrapping it. Writing `ctx` on the former leaves the latter untouched, so the resolved address silently never arrived and every caller shared the proxy's bucket. Fastify's own `trustProxy` stays off: `req.ip` is then the proxy's address and serves as the last fallback.
 
-## The login ladder (2026-09-08)
+## The login ladder (2026-09-08, made atomic 2026-09-13)
 
 `AuthThrottleService` (`domain/auth/services/`): five failed logins buy a wait, and each wait is longer than the last — 5 s, 10 s, 60 s, 300 s, 900 s, 3600 s, then 3600 s for as long as it takes. After each wait another five attempts are granted. Every attempt is additionally held to one per second.
 
@@ -1971,11 +2092,13 @@ There used to be three answers, and two of them were wrong. The CLS setup took t
 - **A failure is `NotAuthenticatedError` and nothing else**, which is the one coupling the move introduced. On the login path that error has exactly one source, the branch where the password does not verify: a deactivated account answers `NotAuthorizedError` (the password was right, so it is no guess) and `AuthTokenService` raises it only from `verify()`, which login never calls. Adding another `NotAuthenticatedError` throw to this path would silently start counting it — the thing to keep in mind when editing the login flow.
 - **Pipes run after interceptors**, so a request with a malformed body reaches the throttle before validation rejects it: it counts toward the one-per-second spacing and never as a failed guess. Verified against a live server, along with each rung of the ladder.
 - **State is in Valkey**, keyed by the resolved client address, with a two-hour retention that outlasts the longest penalty — a penalty meant to last an hour is worth little if a deploy clears it. Every cache failure is **fail-open**: a cache that cannot answer must not become one that refuses every login. That is the right way round because it is not the only defence — the `AUTH` rate-limit profile and nginx's own `limit_req` both still apply.
+- **Each half is one script call** (`auth-throttle.script.ts`), not a `GET` followed by a `SET`. That read-then-write lost a failure whenever two landed together — both read the same count and wrote the same number back, so one guess was free — and the same window let two attempts arriving in the same moment both read "the last attempt was long ago" and both pass the one-per-second floor. **The race was there on a single process**; several instances only make it routine. Deciding and stamping cannot be split, so the rule itself lives in the Lua: the attempt script decides and stamps, the failure script increments and imposes the rung. The ladder's own numbers stay in `~constants` and travel as arguments, so the rungs are stated once.
+- **A refused attempt writes nothing** — it neither moves the stamp nor refreshes the retention — so hammering a closed door cannot extend the wait.
+- **The state is a hash under `auth:throttle:ladder:<address>`**, four fields (`failures`, `stage`, `blockedUntil`, `lastAttemptAt`) an operator can read with `HGETALL`. The key root changed with the shape: a leftover `auth:throttle:login:` string key from the JSON version would have answered `WRONGTYPE` on every command until its retention ran out, which fails open and would have disabled the ladder for that caller for up to two hours.
+- **The rungs are pinned against a live Valkey** (`test/integration/auth-throttle.integration.spec.ts`), seeded onto each stage rather than climbed in real time — the last rung is an hour, and what is under test is the ladder's arithmetic, not the clock's. Twenty simultaneous failures produce exactly four penalties, and ten simultaneous attempts let exactly one through: those two are the lost updates the move removes. The unit spec keeps what stays in TypeScript — the key, the arguments each script is handed, and what the service does with the answers.
 - **Keyed by address only, deliberately not by account.** A per-account ladder is a way to lock a real user out on purpose; per-address is also what the edge `limit_req` keys on. The cost is that a distributed attack on one account is slowed only by the flat limits.
 - **A refusal states its wait.** `TooManyRequestsError` carries `retryAfterMs`, and `ExceptionFilter` turns that into `Retry-After` plus `X-RateLimit-Retry-After-Ms` — the guard sets those itself, but the ladder refuses from inside a service where there is no reply to write to. The message names the delay in seconds. `../web`'s fetch mutator **does not** auto-retry a login `429` (`NO_RETRY_PATHS`): a silent retry would spend another of the person's attempts on the same wrong password and delay the message telling them to wait.
 - **Every answer states the standing**, not just a refusal: `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` on each response, and on a `429` also `Retry-After` (whole seconds, as RFC 9110 requires) plus `X-RateLimit-Retry-After-Ms`. The millisecond header exists because these limits are sub-second and rounding a 340 ms refill up to a second is most of a page load spent idle. `../web`'s fetch mutator reads it, waits, and retries — see "The client's half" below.
-- **Memory is bounded two ways**, which the library implementation was not: a bucket that has refilled to capacity carries no information and is swept (lazily, on a charge, never on a timer), and past `RATE_LIMIT_MAX_KEYS` the least recently charged bucket is dropped with a warning. Both matter because an anonymous caller is keyed by address, and a map keyed by attacker-chosen strings with no ceiling is itself a way to exhaust the process.
-- **In-process is deliberate**: the API runs as a single container — the sync lock's boot sweep already relies on that — so a shared store would add a network hop to a decision made before anything else on the request path. `RateLimitStore` is the one place that changes if the process is ever scaled out.
 - **The client's half** (`web/src/shared/api/fetcher.ts`): a `429` is waited out and retried, up to three attempts, preferring the millisecond header and falling back to `Retry-After` and then to a 1 s default — never to zero, or a 429 becomes a hot retry loop. The back-off stamp is **shared by every request**, so a burst of parallel 429s becomes one pause instead of a thundering retry, and a little jitter keeps the released requests from arriving together. Retrying is safe for any method: a 429 is refused by the guard before the handler runs, so nothing happened that a retry could duplicate.
 
 ## Catalogue cache (2026-09-11)
@@ -2237,7 +2360,7 @@ Conventions that hold everywhere:
 - Report defaults (`minPrice`, `maxPrice`, `NEW_DAYS`, …) are fixed server
   constants in `~constants/report.constants.ts`; an unset filter simply means
   "no constraint".
-- **Every endpoint is rate-limited per caller, and every response says where the caller stands.** `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` ride on each answer; a `429` carries `Retry-After` (whole seconds) and `X-RateLimit-Retry-After-Ms` (precise, and the one to prefer — the limits are sub-second). A `429` is refused before the handler runs, so nothing happened and any method is safe to retry after the stated delay. Sustained budget: 3 requests per second per account with 10 spendable at once, tightened to 1/s on `/collection` (3 at once) and to a 60-at-once budget on `/report` and `/dashboard`. See "Rate limiting".
+- **Every endpoint is rate-limited per caller, and every response says where the caller stands** — every endpoint but `GET /health`, which is exempt so that the balancer's probes cannot drain the fleet (see "The liveness probe"). `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` ride on each answer; a `429` carries `Retry-After` (whole seconds) and `X-RateLimit-Retry-After-Ms` (precise, and the one to prefer — the limits are sub-second). A `429` is refused before the handler runs, so nothing happened and any method is safe to retry after the stated delay. Sustained budget: 3 requests per second per account with 10 spendable at once, tightened to 1/s on `/collection` (3 at once) and to a 60-at-once budget on `/report` and `/dashboard`. See "Rate limiting".
 
 ### Auth endpoints
 
@@ -2256,6 +2379,7 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 
 | Endpoint                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Auth                                         |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `GET /health` — liveness for the load balancer: `{"status":"ok"}` from the process alone, no dependency checked, never rate-limited (see "The liveness probe")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | public                                       |
 | `GET /meta`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | any logged-in user                           |
 | `GET /report/{kind}` (`kind`: catalog\|drops\|low\|new\|best)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | any logged-in user                           |
 | `GET /report/history?term=` — `term` takes a report row's id (a store offer), a canonical `productId` (resolved to that bottling's in-stock, most recently seen offer), or a name/URL substring. The series is always one store's price history                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | any logged-in user                           |
@@ -2761,7 +2885,9 @@ it and usable by anything.
   the write is an upsert, so any run repairs what earlier ones missed.
 - **The cron ships enabled**, unlike `SYNC_CRON_ENABLED`. A scrape that starts
   on its own is a surprise worth opting into; a rates table that quietly stops
-  updating shows wrong money on every screen that converts.
+  updating shows wrong money on every screen that converts. It goes through
+  the same per-tick claim as the sync cron (see "Sync orchestration"), so
+  several instances make one request a day rather than one each.
 - **`CurrencyConversionService` is what other features inject.**
   `convert(request)` does one amount; **`convertMany(requests)` resolves every
   distinct `(currency, day)` pair in one query** and returns results
@@ -3097,8 +3223,8 @@ overhaul).
 
 ## Current state / known gaps
 
-The project builds, `tsc`/`eslint` are clean, and 1162 unit tests (87 suites)
-plus 206 integration tests (20 suites, live Postgres) pass. Done:
+The project builds, `tsc`/`eslint` are clean, and 1196 unit tests (93 suites)
+plus 254 integration tests (25 suites, live Postgres and Valkey) pass. Done:
 
 - **Auth works end-to-end.** `domain/auth` (login/refresh/logout/me/sessions)
   is fully implemented with Valkey-backed sessions and a self-describing

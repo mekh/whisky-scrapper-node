@@ -9,6 +9,12 @@ export const SYNC_ENGINE_MAX_LENGTH = 16;
 export const SYNC_TRIGGER_MAX_LENGTH = 16;
 export const SYNC_LOG_FILE_MAX_LENGTH = 256;
 
+/**
+ * Longest instance id a `sync_log` row records as its owner: a host name, a
+ * process id and a random suffix.
+ */
+export const SYNC_OWNER_MAX_LENGTH = 64;
+
 export const PRODUCT_SKU_MAX_LENGTH = 128;
 export const PRODUCT_URL_MAX_LENGTH = 1024;
 export const PRODUCT_NAME_MAX_LENGTH = 512;

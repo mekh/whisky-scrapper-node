@@ -19,7 +19,8 @@ services:
     # `max_connections` is deliberately NOT raised and so is not listed: with
     # eight cores the ladder already ran 27 active backends on average and 51
     # at peak, and more of them buys context switching rather than work. The
-    # pool that feeds it (`DB_POOL_SIZE`) is 50.
+    # pool that feeds it (`DB_POOL_SIZE_TOTAL`, shared across every
+    # instance) is 50.
     #
     # `max_parallel_workers_per_gather` is left at its default for the same
     # discipline: no query measured here launches a worker at all.
@@ -171,7 +172,8 @@ services:
     restart: unless-stopped
 
   service:
-    container_name: whisky-be
+    # No `container_name`: compose refuses a fixed name for a service with
+    # more than one replica, and this one is scaled by `APP_INSTANCES` below.
     image: whisky-be
     build:
       context: .
@@ -243,7 +245,11 @@ services:
       - DB_PASS=${DB_PASS:?DB_PASS is required}
       - DB_SLOW_QUERY_MS=2500
       - DB_LOG_PARAMETERS=${DB_LOG_PARAMETERS:-}
-      - DB_POOL_SIZE=${DB_POOL_SIZE:-}
+      # The pool across every instance, divided by APP_INSTANCES at
+      # startup. Sized against the database's max_connections, which is a
+      # property of the server rather than of how many instances run.
+      - DB_POOL_SIZE_TOTAL=${DB_POOL_SIZE_TOTAL:-}
+      - APP_INSTANCES=${APP_INSTANCES:-}
       - DB_RETRY_ATTEMPTS=${DB_RETRY_ATTEMPTS:-}
       - DB_RETRY_DELAY=${DB_RETRY_DELAY:-}
       - DB_ACQUIRE_TIMEOUT_MS=${DB_ACQUIRE_TIMEOUT_MS:-}
@@ -277,8 +283,7 @@ services:
       - RATE_LIMIT_STRICT_BURST=${RATE_LIMIT_STRICT_BURST:-}
       - RATE_LIMIT_AUTH_RPS=${RATE_LIMIT_AUTH_RPS:-}
       - RATE_LIMIT_AUTH_BURST=${RATE_LIMIT_AUTH_BURST:-}
-      - RATE_LIMIT_MAX_KEYS=${RATE_LIMIT_MAX_KEYS:-}
-      - RATE_LIMIT_SWEEP_MS=${RATE_LIMIT_SWEEP_MS:-}
+      - RATE_LIMIT_TIMEOUT_MS=${RATE_LIMIT_TIMEOUT_MS:-}
       - SYNC_CRON_ENABLED=${SYNC_CRON_ENABLED:-false}
       - SYNC_CRON_EXPRESSION=${SYNC_CRON_EXPRESSION:-0 12 * * *}
       - SYNC_TIMEZONE=${SYNC_TIMEZONE:-Europe/Kyiv}
@@ -317,14 +322,17 @@ services:
       - CURRENCY_RATE_CRON_EXPRESSION=${CURRENCY_RATE_CRON_EXPRESSION:-}
       - CURRENCY_RATE_TIMEZONE=${CURRENCY_RATE_TIMEZONE:-}
       - CURRENCY_RATE_SYNC_WINDOW_DAYS=${CURRENCY_RATE_SYNC_WINDOW_DAYS:-}
+    # One number drives both halves and they cannot disagree: the replica
+    # count here, and the share of `DB_POOL_SIZE_TOTAL` each replica takes
+    # (see the environment above). Nothing is published to the host — the
+    # `lb` service below is the one door in, on the address the host nginx
+    # already proxies to.
+    scale: ${APP_INSTANCES:-1}
     volumes:
+      # Shared by every replica. Per-run file names carry the timestamp and
+      # the store slug, and the `sync_log` lock keeps two instances off one
+      # store, so two replicas cannot write the same file.
       - ./log:/app/log
-    ports:
-      # The container side must stay the port the app is told to listen on,
-      # which is why `APP_PORT` appears here and in `environment` from the
-      # same variable: fixing one and parameterising the other would publish
-      # a port nothing is bound to.
-      - '${APP_BIND_IP:-192.168.179.2}:${APP_BIND_PORT:-9977}:${APP_PORT:-4000}'
     networks:
       - whisky-be
       - whisky-db
@@ -336,6 +344,39 @@ services:
         reservations:
           memory: 512M
     stop_grace_period: 60s
+    restart: unless-stopped
+
+  # The one door into the API, publishing exactly the address the host nginx
+  # proxies to — so scaling the app touches nothing outside this file.
+  #
+  # HAProxy rather than Traefik deliberately: Traefik discovers replicas only
+  # through the Docker socket, which is root on the host inside the one
+  # process that terminates public traffic, and its 2026 record includes two
+  # CVSS 10.0 criticals and two authentication bypasses. This one reads
+  # Docker's DNS instead and needs no socket, no labels and no privileges.
+  # See docs/MULTI-PROCESS-PLAN.md for the comparison.
+  lb:
+    container_name: whisky-lb
+    image: haproxy:3.2-alpine
+    depends_on:
+      service:
+        condition: service_started
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      # The same address and port the app used to publish itself on: the host
+      # nginx keeps its `proxy_pass` unchanged. The container side is the
+      # backend port named in haproxy.cfg, which is why `APP_PORT` must stay
+      # the default — the app's own listener is internal now.
+      - '${APP_BIND_IP:-192.168.179.2}:${APP_BIND_PORT:-9977}:4000'
+    networks:
+      - whisky-be
+    healthcheck:
+      test: wget -qO- http://127.0.0.1:8404/metrics > /dev/null || exit 1
+      start_period: 5s
+      interval: 30s
+      timeout: 3s
+      retries: 3
     restart: unless-stopped
 
 networks:

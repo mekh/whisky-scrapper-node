@@ -3,6 +3,7 @@ import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 
 import { CurrencyConfig } from '~config';
+import { CronLockService } from '~lib/cron-lock';
 
 import { CurrencyRateSyncService } from './currency-rate-sync.service';
 
@@ -44,6 +45,7 @@ export class CurrencyRateCronService implements OnApplicationBootstrap {
     private readonly sync: CurrencyRateSyncService,
     private readonly scheduler: SchedulerRegistry,
     private readonly config: CurrencyConfig,
+    private readonly locks: CronLockService,
   ) {}
 
   /**
@@ -84,9 +86,19 @@ export class CurrencyRateCronService implements OnApplicationBootstrap {
    * rejection here would surface as an unhandled scheduler error telling the
    * operator nothing useful.
    *
+   * Every instance arms this schedule, so the tick is claimed first and only
+   * the winner fetches. Losing costs nothing — the write is an upsert — but
+   * one request a day to a government API is worth not multiplying.
+   *
    * @returns Resolves once the sync is done and reported.
    */
   private async run(): Promise<void> {
+    const mine = await this.locks.claim(CURRENCY_RATE_CRON_JOB_NAME);
+
+    if (!mine) {
+      return;
+    }
+
     try {
       const report = await this.sync.sync();
 

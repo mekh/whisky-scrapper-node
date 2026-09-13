@@ -4,7 +4,13 @@
 #
 #   1. build the image           (compose build)
 #   2. apply DB migrations       (compose run --rm migrate)
-#   3. swap the app container    (compose up -d)
+#   3. swap the app containers   (compose up -d)
+#
+# How many app containers there are is `APP_INSTANCES` in the host `.env`,
+# which compose reads as the service's `scale` and the app reads as the
+# divisor of `DB_POOL_SIZE_TOTAL`. The `lb` service publishes the single
+# address the host nginx proxies to, so changing that number needs no change
+# anywhere outside `.env`.
 #
 # Running migrations BEFORE `up` is what keeps the currently-running app
 # untouched when a migration fails: the `depends_on` gate in the compose file
@@ -42,5 +48,8 @@ compose run --rm migrate
 
 echo '==> Starting the app'
 compose up -d
+
+echo '==> Running instances'
+compose ps service --format '{{.Name}}\t{{.State}}'
 
 echo '==> Deploy finished'

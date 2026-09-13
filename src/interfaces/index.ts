@@ -9,6 +9,7 @@ export * from './ctx.interfaces';
 export * from './currency.interfaces';
 export * from './dashboard.interfaces';
 export * from './entity.interfaces';
+export * from './health.interfaces';
 export * from './jwt.interfaces';
 export * from './kb.interfaces';
 export * from './meta.interfaces';

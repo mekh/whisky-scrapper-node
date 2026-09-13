@@ -3,6 +3,7 @@ import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 
 import { SyncConfig } from '~config';
+import { CronLockService } from '~lib/cron-lock';
 import { DurationUtils } from '~utils';
 
 import { SyncOrchestratorService } from './sync-orchestrator.service';
@@ -41,6 +42,7 @@ export class SyncCronService implements OnApplicationBootstrap {
     private readonly orchestrator: SyncOrchestratorService,
     private readonly scheduler: SchedulerRegistry,
     private readonly config: SyncConfig,
+    private readonly locks: CronLockService,
   ) {}
 
   /**
@@ -85,9 +87,19 @@ export class SyncCronService implements OnApplicationBootstrap {
    * rejection here would surface as an unhandled scheduler error and tell the
    * operator nothing useful.
    *
+   * Every instance arms this schedule, so every instance fires; the tick
+   * claim is what makes one of them run it. Losing the claim is not an error
+   * and is why the "starting" line comes after it.
+   *
    * @returns Resolves once the sync is done and reported.
    */
   private async run(): Promise<void> {
+    const mine = await this.locks.claim(SYNC_CRON_JOB_NAME);
+
+    if (!mine) {
+      return;
+    }
+
     this.logger.log('Scheduled full sync starting');
 
     try {

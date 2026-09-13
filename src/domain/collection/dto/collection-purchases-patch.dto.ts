@@ -25,7 +25,7 @@ import { CollectionPurchaseDto } from './collection-purchase.dto';
  * that cap is the request's bound rather than a nicety: the service applies
  * the groups one statement at a time inside one transaction, so an
  * uncapped array turns a single 1 MiB body into hundreds of thousands of
- * statements holding a pooled connection — with `DB_POOL_SIZE` of them
+ * statements holding a pooled connection — with a pool's worth of them
  * enough to stall every other request in the process.
  */
 export class CollectionPurchasesPatchDto

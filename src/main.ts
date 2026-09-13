@@ -12,6 +12,7 @@ import { initializeTransactionalContext } from 'typeorm-transactional';
 
 import { AppModule } from '~app/app.module';
 import { registerClientIpHook } from '~app/context';
+import { registerProcessGuards } from '~app/process';
 import { AppConfig } from '~config';
 import { LoggerService } from '~lib/logger';
 
@@ -45,6 +46,13 @@ const run = async (): Promise<void> => {
   registerClientIpHook(app, config);
 
   app.useLogger(app.get(LoggerService));
+
+  /**
+   * Registered after the application logger is in place, so a failure this
+   * catches is written the way every other line is rather than to a bare
+   * console. See `registerProcessGuards` for what it is for.
+   */
+  registerProcessGuards();
   app.enableVersioning({ type: VersioningType.URI });
 
   /**

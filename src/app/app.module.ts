@@ -34,7 +34,6 @@ import { DomainUserModule } from '~domain/user';
 import { ServerError } from '~errors';
 import { CacheModule } from '~lib/cache';
 import { LoggerModule } from '~lib/logger';
-import { WatchdogModule } from '~lib/watchdog';
 import { ScrapeModule } from '~scrape';
 
 import { ContextModule } from './context';
@@ -106,11 +105,6 @@ import { RateLimitModule, UserRateLimitGuard } from './rate-limit';
      * down — leave nothing behind for a lazier registration to react to.
      */
     CacheModule,
-    /**
-     * Last in the list on purpose: the heartbeat reads the data source and
-     * the cache, so it is armed once everything it observes exists.
-     */
-    WatchdogModule,
   ],
   providers: [
     /**

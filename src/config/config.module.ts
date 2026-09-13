@@ -13,7 +13,6 @@ import { ScrapeConfig } from './parts/scrape.config';
 import { SyncConfig } from './parts/sync.config';
 import { ValidationConfig } from './parts/validation.config';
 import { ValkeyConfig } from './parts/valkey.config';
-import { WatchdogConfig } from './parts/watchdog.config';
 
 const providers = [
   AppConfig,
@@ -29,7 +28,6 @@ const providers = [
   SyncConfig,
   ValidationConfig,
   ValkeyConfig,
-  WatchdogConfig,
 ];
 
 @Module({

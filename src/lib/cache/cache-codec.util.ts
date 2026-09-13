@@ -20,7 +20,7 @@ const GZIP_MAGIC = [0x1f, 0x8b];
  * of that compressed, which is the difference between an entry worth storing
  * and one that is mostly network time. Both directions are asynchronous so
  * that a multi-megabyte payload is deflated on the thread pool instead of
- * blocking the event loop — the loop whose lag the watchdog reports.
+ * blocking the event loop.
  */
 export class CacheCodec {
   /**

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 
 import { AuthConfig } from '~config';
 import { CoreUserService } from '~core/user';
@@ -32,8 +32,6 @@ interface RefreshInput {
 
 @Injectable()
 export class AuthService {
-  private readonly logger = new Logger(AuthService.name);
-
   constructor(
     private readonly tokenService: AuthTokenService,
     private readonly session: AuthSessionService,
@@ -155,30 +153,16 @@ export class AuthService {
    * Resolves the caller behind an access token: verifies the signature, then
    * confirms the session it names is still live.
    *
-   * Traced step by step because it sits on the request path ahead of every
-   * interceptor: when it stalls, these lines are the only record that the
-   * request existed at all.
-   *
    * @param accessJwt - The bearer access token.
    * @returns The authenticated user for the request context.
    * @throws {NotAuthenticatedError} When the token is invalid or its session
    *   is gone.
    */
   public async authenticate(accessJwt: string): Promise<CtxUser> {
-    this.logger.verbose('Authenticate: verifying the access token');
-
     const jwt = await this.tokenService.verifyAccessToken(accessJwt);
     const permissions = this.tokenService.decodeScopes(jwt.scope);
 
-    this.logger.verbose(
-      'Authenticate: token belongs to %s, session %s',
-      jwt.sub,
-      jwt.sid,
-    );
-
     await this.validateSession(jwt.sub, jwt.sid);
-
-    this.logger.verbose('Authenticate: session accepted for %s', jwt.sub);
 
     return {
       id: jwt.sub,
@@ -216,15 +200,6 @@ export class AuthService {
     };
 
     await this.session.register(data.user.id, payload, expiresEpochMs);
-  /**
-   * Drops every session a user holds, signing them out of every device.
-   *
-   * @param userId - Whose sessions to revoke.
-   */
-  public async revokeAllSessions(userId: ID): Promise<void> {
-    await this.session.revokeAll(userId);
-  }
-
 
     return { access, refresh: refresh.token };
   }
@@ -241,6 +216,15 @@ export class AuthService {
     await this.session.revoke(userId, sessionId);
   }
 
+  /**
+   * Drops every session a user holds, signing them out of every device.
+   *
+   * @param userId - Whose sessions to revoke.
+   */
+  public async revokeAllSessions(userId: ID): Promise<void> {
+    await this.session.revokeAll(userId);
+  }
+
   protected async validateSession(
     userId: ID,
     sessionId: string,
@@ -248,12 +232,6 @@ export class AuthService {
     const exist = await this.session.has(userId, sessionId);
 
     if (!exist) {
-      this.logger.verbose(
-        'Session %s is unknown, revoking every session of %s',
-        sessionId,
-        userId,
-      );
-
       await this.session.revokeAll(userId);
 
       throw new NotAuthenticatedError();

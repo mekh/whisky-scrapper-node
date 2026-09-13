@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 
-import { AppConfig, DbConfig, ValkeyConfig, WatchdogConfig } from '~config';
+import { AppConfig, DbConfig, ValkeyConfig } from '~config';
 
 /**
  * `DbConfig` validates itself on construction and requires these three, so
@@ -26,8 +26,6 @@ const VARS = [
   'DB_POOL_SIZE',
   'APP_REQUEST_TIMEOUT_MS',
   'APP_REQUEST_DEADLINE_MS',
-  'WATCHDOG_ENABLED',
-  'WATCHDOG_INTERVAL_MS',
 ];
 
 beforeEach(() => {
@@ -88,17 +86,5 @@ describe('AppConfig request bounds', () => {
 
   it('keeps keep-alive above the proxy default of 60 s', () => {
     expect(new AppConfig().keepAliveTimeoutMs).toBeGreaterThan(60000);
-  });
-});
-
-describe('WatchdogConfig', () => {
-  it('is on by default', () => {
-    expect(new WatchdogConfig().enabled).toBe(true);
-  });
-
-  it('keeps the ping deadline well inside the heartbeat interval', () => {
-    const config = new WatchdogConfig();
-
-    expect(config.pingTimeoutMs).toBeLessThan(config.intervalMs);
   });
 });

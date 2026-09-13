@@ -94,26 +94,31 @@ Keys read as `cache:report:g<generation>:<kind>:<day|->:<hash>`. Entries of an o
 
 ---
 
-## 3. Reading the heartbeat
+## 3. Reading the log
 
-Every `WATCHDOG_INTERVAL_MS` (10 s) the app logs one line ending in the cache's own segment:
+The cache states every condition worth acting on in its own lines. There is no
+periodic heartbeat: the runtime heartbeat that used to carry a cache segment was
+instrumentation for the 2026-08-30 outage and has been removed.
 
+```bash
+docker compose logs service | grep -i 'catalogue cache\|cache .*failed\|cache entry'
 ```
-... valkey 2 ms, cache 120h/8m/0e/0b gen 1789092974 ping 1 ms
-```
 
-- **`120h/8m/0e/0b`** — hits / misses / errors / bypasses, cumulative since boot. Read two consecutive lines and subtract, the way the pool numbers beside them are already read.
-- **`errors` climbing** — the cache is failing commands and every one of them was served from the database instead. The request path is fine and slower.
-- **`ping NO ANSWER`** — the cache instance is unreachable. Requests still answer, from the database. **Sessions are unaffected**, which is most of the point of the split.
-- **`cache off`** — `CACHE_ENABLED` is false.
-- **`cache DIRTY ...`** — see §4. This one deserves attention.
-
----
-
-Two lines the page-addressable set adds, both at `warn`:
-
+- **`Catalogue cache generation -> <n> (<reason>)`** — a bump landed. `<reason>` names the writer (`persist:<storeId>`, `kb:reconcile`, `boot`, `script:<name>`, …).
+- **`Catalogue cache generation could not be bumped after <reason>; bypassing the cache until it can be`** — this is `DIRTY`. See §4; it is the one line here that deserves attention.
+- **`Cache <op> failed after <n> ms, using the database`** — one command failed or timed out and the request was served from the database instead. The request path is correct and slower. A steady stream of these means the instance is unreachable; **sessions are unaffected**, which is most of the point of the split.
+- **`Cache entry <key> is <n> bytes, past the <n>-byte cap; not storing it`** — the entry is recomputed on every request. Raise `CACHE_MAX_ENTRY_BYTES` or accept the miss.
 - **`Cache set <key> is <n> bytes, past the <n>-byte cap; not storing it`** — the same for a report set (index plus groups). Raise `CACHE_MAX_SET_BYTES` or accept the miss.
 - **`Cache set <key> lacks entries its index names; dropping it`** — a hash lost fields its index still lists (eviction or an interrupted write). Both keys are deleted and the next request rebuilds them; a steady stream means the instance is evicting under memory pressure.
+- **`Catalogue cache is disabled (CACHE_ENABLED)`**, at boot — the switch is off.
+
+Hit rate is not logged. Take it from the instance itself, which counts it per key rather than per call:
+
+```bash
+docker exec whisky-cache valkey-cli INFO stats | grep -E 'keyspace_hits|keyspace_misses'
+```
+
+---
 
 ## 4. What `DIRTY` means, and how to clear it
 

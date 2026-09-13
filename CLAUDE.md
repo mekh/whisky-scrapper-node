@@ -170,7 +170,6 @@ be/
     │   ├── db-logger/       # TypeORM logger that keeps query parameters out
     │   ├── logger/          # wraps @toxicoder/nestjs-pino (redaction, msg formatting)
     │   ├── valkey/          # wraps @toxicoder/nestjs-valkey (timeouts live here)
-    │   ├── watchdog/        # runtime heartbeat: loop lag, memory, pool, cache RTT
     │   └── web-push/        # wraps the web-push package (VAPID, outcome mapping)
     └── utils/               # pure stateless helpers (*.util.ts), e.g. Hash (argon2)
 ```
@@ -2066,7 +2065,7 @@ slower than the query it replaces has nothing to offer) and every error
 returns null, so the request falls through to the database. The one failure
 that is _not_ treated as harmless is a failed bump: a write committed that the
 cache was not told about, so the cache is bypassed entirely until a bump
-succeeds. That state is `dirty` on the heartbeat.
+succeeds. `VersionedCacheService.stats()` reports that state as `dirty`.
 
 **The cache has its own Valkey instance**, the `whisky-cache` container both
 compose files define — `--maxmemory 512mb --maxmemory-policy allkeys-lru` and
@@ -2114,12 +2113,12 @@ What redaction **cannot** reach is a value already inside a string. Two conseque
 
 Two paths are worth knowing about individually because they fire at the **production** log level, unlike the `debug`/`verbose` request dumps: `err.parameters`, since a TypeORM `QueryFailedError` carries the failed statement's bound values and the global exception filter logs the error whole, and `err.driverError.detail`, since PostgreSQL echoes the offending values into a constraint violation's detail line (`Key (email)=(...) already exists`). `err.query` and `err.driverError.constraint` stay visible on purpose — they are what debugging such a failure needs, and neither carries data of its own.
 
-## Resilience and observability (2026-08-30)
+## Resilience (2026-08-30)
 
 Added after a 68-minute production outage in which the API accepted
 connections and answered none of them, while writing **nothing at all** to the
-log. Both halves of that sentence are the design brief: bound every wait, and
-make sure a stall says so.
+log. The design brief was to bound every wait, so that a dependency's bad
+minute can no longer become an unbounded outage of everything.
 
 ### What the outage taught
 
@@ -2131,13 +2130,18 @@ The only surviving evidence was outside the application — nginx's `while
 reading response header from upstream`, and Valkey's own save timestamps,
 which bracketed the window to the second.
 
-Two rules follow, and new code is expected to keep them:
+One rule follows, and new code is expected to keep it: **every wait on
+anything external is bounded.** A default of "wait forever" is not a neutral
+default; it converts any dependency's bad minute into an unbounded outage of
+everything.
 
-- **Every wait on anything external is bounded.** A default of "wait forever"
-  is not a neutral default; it converts any dependency's bad minute into an
-  unbounded outage of everything.
-- **Anything on the request path ahead of `LogInterceptor` logs its own
-  steps.** Nothing else will.
+The blind spot the outage exposed — a guard runs ahead of every interceptor,
+so a request stalled in one is logged nowhere — is closed by
+`RequestDeadlineMiddleware` rather than by tracing: the request is failed at
+its deadline and the failure is logged, instead of hanging silently. The
+step-by-step `verbose` tracing and the `lib/watchdog` heartbeat that were
+added alongside it in 2026-08-30 have since been removed; they were
+instrumentation for a diagnosis that is finished.
 
 ### Timeouts
 
@@ -2163,43 +2167,6 @@ those is what turns a proxy's pooled connection into a spurious `502`).
 
 `DbConfig.extra` is a **field, not a getter**: the config object is spread into
 the TypeORM options and a spread copies own properties only.
-
-### The heartbeat (`lib/watchdog`)
-
-One line every `WATCHDOG_INTERVAL_MS` (10 s, on by default):
-
-```
-heartbeat: loop lag 0.9/1.6 ms (mean/max), rss 216 MB, heap 97 MB,
-handles 4, db pool 1 open/1 idle/0 waiting, valkey 2 ms,
-cache 120h/8m/0e/0b gen 1789092974 ping 1 ms
-```
-
-The cache segment is cumulative since boot (hits/misses/errors/bypasses),
-reads `off` when `CACHE_ENABLED` is false, and leads with `DIRTY` when a bump
-is outstanding. Its ping is separate from the session store's because the two
-are different instances in production — see "Catalogue cache".
-
-Logged at `debug`, promoted to `warn` when the loop lags past
-`WATCHDOG_LAG_WARN_MS`, when anyone is queued for a connection, when the
-Valkey ping does not answer within `WATCHDOG_PING_TIMEOUT_MS`, or when the
-cache is dirty or its own instance is silent. **A heartbeat
-that stops is itself a diagnosis** — it means the event loop is gone.
-
-Two details that are load-bearing:
-
-- The ping is raced against its own deadline. The watchdog never trusts the
-  client it is watching to come back.
-- `monitorEventLoopDelay` records the whole sampling interval, so an idle loop
-  reads back as the resolution; the resolution is subtracted before reporting.
-  Without that every heartbeat would claim ~20 ms of lag that is not there.
-
-### Tracing the auth path
-
-`AuthSessionService.track()` logs **before** each cache command, not only
-after. A command that never returns produces no completion line and no error,
-so the line proving it was ever sent has to be written first — that is exactly
-what was missing on 2026-08-30. `AuthJwtGuard` and `AuthService.authenticate`
-trace each step with elapsed times at `verbose`.
 
 ## Code style essentials
 
@@ -3099,8 +3066,8 @@ overhaul).
 
 ## Current state / known gaps
 
-The project builds, `tsc`/`eslint` are clean, and 1086 unit tests (82 suites)
-plus 187 integration tests (18 suites, live Postgres) pass. Done:
+The project builds, `tsc`/`eslint` are clean, and 1162 unit tests (87 suites)
+plus 206 integration tests (20 suites, live Postgres) pass. Done:
 
 - **Auth works end-to-end.** `domain/auth` (login/refresh/logout/me/sessions)
   is fully implemented with Valkey-backed sessions and a self-describing

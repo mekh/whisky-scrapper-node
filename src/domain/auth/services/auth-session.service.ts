@@ -1,19 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 
 import { ValkeyClient, ValkeyCluster, ValkeyService } from '~lib/valkey';
 import { ID, TypePaginated, TypeSession } from '~types';
 
-/**
- * Above this, a command against a cache on the same host has stopped being a
- * cache lookup and become a problem worth a line at warning level, whatever
- * the configured log level is.
- */
-const SLOW_COMMAND_MS = 250;
-
 @Injectable()
 export class AuthSessionService {
-  private readonly logger = new Logger(AuthSessionService.name);
-
   private readonly storage: ValkeyClient | ValkeyCluster;
 
   private readonly prefix = 'auth:session';
@@ -46,10 +37,7 @@ export class AuthSessionService {
       tx.set(key, payload);
     }
 
-    await this.track(
-      'register',
-      () => tx.zadd(this.registryKey(userId), expiresEpochMs ?? -1, key).exec(),
-    );
+    await tx.zadd(this.registryKey(userId), expiresEpochMs ?? -1, key).exec();
   }
 
   /**
@@ -66,7 +54,7 @@ export class AuthSessionService {
    */
   public async has(userId: ID, sessionId: string): Promise<boolean> {
     const key = this.sessionKey(userId, sessionId);
-    const isExists = await this.track('has', () => this.storage.exists(key));
+    const isExists = await this.storage.exists(key);
 
     return !!isExists;
   }
@@ -83,7 +71,7 @@ export class AuthSessionService {
     sessionId: string,
   ): Promise<TypeSession | null> {
     const key = this.sessionKey(userId, sessionId);
-    const res = await this.track('get', () => this.storage.get(key));
+    const res = await this.storage.get(key);
 
     return res
       ? JSON.parse(res) as TypeSession
@@ -100,11 +88,10 @@ export class AuthSessionService {
   public async revoke(userId: ID, sessionId: string): Promise<void> {
     const sessionKey = this.sessionKey(userId, sessionId);
 
-    await this.track('revoke', () =>
-      this.storage.multi()
-        .del(sessionKey)
-        .zrem(this.registryKey(userId), sessionKey)
-        .exec());
+    await this.storage.multi()
+      .del(sessionKey)
+      .zrem(this.registryKey(userId), sessionKey)
+      .exec();
   }
 
   /**
@@ -124,17 +111,12 @@ export class AuthSessionService {
 
     const offset = (page - 1) * limit;
     const registryKey = this.registryKey(userId);
-    const total = await this.track(
-      'registry:count',
-      () => this.storage.zcard(registryKey),
-    );
-
-    const keys = await this.track('registry:page', () =>
-      this.storage
-        .zrangebyscore(registryKey, -1, '+inf', 'LIMIT', offset, limit));
+    const total = await this.storage.zcard(registryKey);
+    const keys = await this.storage
+      .zrangebyscore(registryKey, -1, '+inf', 'LIMIT', offset, limit);
 
     const raw = keys.length
-      ? await this.track('registry:read', () => this.storage.mget(keys))
+      ? await this.storage.mget(keys)
       : [];
 
     const data = raw.map((item: string | null) =>
@@ -162,48 +144,6 @@ export class AuthSessionService {
     await Promise.all(
       nodes.map((node) => this.revokeNodeKeys(node, pattern)),
     );
-  }
-
-  /**
-   * Runs one cache command, logging both sides of it.
-   *
-   * The line **before** the command is the point of this wrapper. A command
-   * that never returns leaves no "finished" line and no error — that is what
-   * an outage looks like from in here — so the only evidence it was ever sent
-   * has to be written before it is awaited. Without those lines, the
-   * 2026-08-30 stall left the request path completely unlogged.
-   *
-   * @param operation - Name of the operation, for the log.
-   * @param run - The command to run.
-   * @returns Whatever the command returned.
-   * @throws Rethrows the command's own failure, after logging it.
-   */
-  private async track<T>(operation: string, run: () => Promise<T>): Promise<T> {
-    const startedAt = Date.now();
-
-    this.logger.verbose('Valkey %s: sending', operation);
-
-    try {
-      const result = await run();
-      const elapsed = Date.now() - startedAt;
-
-      if (elapsed >= SLOW_COMMAND_MS) {
-        this.logger.warn('Valkey %s: slow, %d ms', operation, elapsed);
-      } else {
-        this.logger.verbose('Valkey %s: done in %d ms', operation, elapsed);
-      }
-
-      return result;
-    } catch (error) {
-      this.logger.error(
-        'Valkey %s: failed after %d ms: %o',
-        operation,
-        Date.now() - startedAt,
-        error,
-      );
-
-      throw error;
-    }
   }
 
   /**
@@ -255,19 +195,14 @@ export class AuthSessionService {
    */
   private async cleanupObsoleteSessions(userId: ID): Promise<void> {
     const registryKey = this.registryKey(userId);
-    const sessionKeys = await this.track(
-      'cleanup:list',
-      () => this.storage.zrangebyscore(registryKey, 0, Date.now()),
-    );
+    const sessionKeys = await this.storage
+      .zrangebyscore(registryKey, 0, Date.now());
 
     if (!sessionKeys.length) {
       return;
     }
 
-    await this.track(
-      'cleanup:drop',
-      () => this.storage.zrem(registryKey, sessionKeys),
-    );
+    await this.storage.zrem(registryKey, sessionKeys);
   }
 
   /**

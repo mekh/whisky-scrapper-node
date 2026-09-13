@@ -1,9 +1,4 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  Logger,
-} from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 
 import { Action, Resource } from '~enums';
 import { AuthPermission, CanDo, CtxUser } from '~types';
@@ -12,8 +7,6 @@ import { ContextManager } from '../context';
 
 @Injectable()
 export class PermissionGuard implements CanActivate {
-  private readonly logger = new Logger(PermissionGuard.name);
-
   /**
    * Authorizes the current request against the handler's permission
    * metadata, combining the declared permissions with their `AND`/`OR`
@@ -35,17 +28,9 @@ export class PermissionGuard implements CanActivate {
 
     const { check } = ctx.getMetaOrThrow();
 
-    const allowed = check((permission: AuthPermission): boolean =>
+    return check((permission: AuthPermission): boolean =>
       this.checkPermission(ctx, permission)
     );
-
-    this.logger.verbose(
-      'Permission guard: %s for %s',
-      allowed ? 'allowed' : 'denied',
-      ctx.user?.id ?? 'anonymous',
-    );
-
-    return allowed;
   }
 
   /**

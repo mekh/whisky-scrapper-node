@@ -408,21 +408,6 @@ export class VersionedCacheService
   }
 
   /**
-   * Round-trips a `PING` to the cache's own instance.
-   *
-   * It is proxied rather than the client being handed out because the
-   * client is not reachable from outside this module by design — and the
-   * watchdog does have to reach it: when the cache has an instance of its
-   * own, that instance is a second thing that can stall, and the session
-   * ping says nothing about it.
-   *
-   * @returns The server's reply.
-   */
-  public async ping(): Promise<string> {
-    return this.valkey.ping();
-  }
-
-  /**
    * Resolves the generation to address entries under, or null when the cache
    * must not be used for this read.
    *
@@ -517,7 +502,6 @@ export class VersionedCacheService
    * Runs one cache command, bounded and logged on both sides.
    *
    * The line *before* the command is the point of the wrapper, and it is
-    deadlineMs = this.config.readTimeoutMs,
    * there for a reason this application has already paid for: a command that
    * never returns leaves no completion line and no error, so the only
    * evidence it was ever sent has to be written first.
@@ -533,6 +517,7 @@ export class VersionedCacheService
   private async command<T>(
     operation: string,
     run: (client: CacheClient) => Promise<T>,
+    deadlineMs = this.config.readTimeoutMs,
   ): Promise<T | null> {
     const startedAt = Date.now();
 
@@ -633,6 +618,21 @@ export class VersionedCacheService
    * @returns Its key.
    */
   private generationKey(generation: string): string {
+    return `${CACHE_KEY_ROOT}:gen:${generation}`;
+  }
+
+  /**
+   * The key one entry lives under, for one generation.
+   *
+   * @param ref - What is being cached.
+   * @param version - The generation it belongs to.
+   * @returns The entry's key.
+   */
+  private entryKey(ref: CacheEntryRef, version: number): string {
+    const base = `${CACHE_KEY_ROOT}:${ref.scope}:g${version}`;
+
+    return ref.suffix ? `${base}:${ref.suffix}` : base;
+  }
 
   /**
    * The two keys of a page-addressable set under one entry key.
@@ -799,20 +799,5 @@ export class VersionedCacheService
       },
       this.config.readTimeoutMs * CACHE_SET_WRITE_DEADLINE_FACTOR,
     );
-  }
-    return `${CACHE_KEY_ROOT}:gen:${generation}`;
-  }
-
-  /**
-   * The key one entry lives under, for one generation.
-   *
-   * @param ref - What is being cached.
-   * @param version - The generation it belongs to.
-   * @returns The entry's key.
-   */
-  private entryKey(ref: CacheEntryRef, version: number): string {
-    const base = `${CACHE_KEY_ROOT}:${ref.scope}:g${version}`;
-
-    return ref.suffix ? `${base}:${ref.suffix}` : base;
   }
 }

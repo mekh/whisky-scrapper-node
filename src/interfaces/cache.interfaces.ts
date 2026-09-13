@@ -153,9 +153,7 @@ export interface CacheEntryRef {
 /**
  * A running count of what the cache has done since the process started.
  *
- * Cumulative rather than windowed: an operator reads two consecutive
- * heartbeat lines and subtracts, which is how the connection-pool numbers on
- * the same line are already read.
+ * Cumulative rather than windowed: a reader takes two samples and subtracts.
  */
 export interface CacheStats {
   /**

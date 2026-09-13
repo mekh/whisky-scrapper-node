@@ -29,4 +29,3 @@ export * from './type.interfaces';
 export * from './user.interfaces';
 export * from './validation.interfaces';
 export * from './valkey.interfaces';
-export * from './watchdog.interfaces';

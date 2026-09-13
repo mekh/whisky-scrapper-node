@@ -215,11 +215,11 @@ services:
       - LOG_CALLSITES=false
       - LOG_COLOR=true
       - LOG_DB=${LOG_DB:-}
-      # The block above is pinned rather than passed through, and stays that
-      # way: these are this deployment's settled answers, and `SWAGGER_ENABLED`
-      # in particular is load-bearing — `../web` generates its API client by
-      # fetching /docs-json at deploy time, so turning it off breaks that build
-      # rather than merely hiding a page.
+      # The four LOG_* lines above are pinned rather than passed through, and
+      # stay that way: these are this deployment's settled answers, and
+      # `SWAGGER_ENABLED` in particular is load-bearing — `../web` generates
+      # its API client by fetching /docs-json at deploy time, so turning it
+      # off breaks that build rather than merely hiding a page.
       - SWAGGER_ENABLED=true
       - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-}
       - RATE_LIMIT_RPS=${RATE_LIMIT_RPS:-}
@@ -232,10 +232,6 @@ services:
       - RATE_LIMIT_AUTH_BURST=${RATE_LIMIT_AUTH_BURST:-}
       - RATE_LIMIT_MAX_KEYS=${RATE_LIMIT_MAX_KEYS:-}
       - RATE_LIMIT_SWEEP_MS=${RATE_LIMIT_SWEEP_MS:-}
-      - WATCHDOG_ENABLED=${WATCHDOG_ENABLED:-}
-      - WATCHDOG_INTERVAL_MS=${WATCHDOG_INTERVAL_MS:-}
-      - WATCHDOG_LAG_WARN_MS=${WATCHDOG_LAG_WARN_MS:-}
-      - WATCHDOG_PING_TIMEOUT_MS=${WATCHDOG_PING_TIMEOUT_MS:-}
       - SYNC_CRON_ENABLED=${SYNC_CRON_ENABLED:-false}
       - SYNC_CRON_EXPRESSION=${SYNC_CRON_EXPRESSION:-0 12 * * *}
       - SYNC_TIMEZONE=${SYNC_TIMEZONE:-Europe/Kyiv}

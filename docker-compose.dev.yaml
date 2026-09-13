@@ -4,6 +4,15 @@ services:
   pg:
     image: postgres:18
     container_name: whisky-db
+    # Only `jit` is mirrored from production (see docs/POSTGRES-TUNING.md),
+    # and only because local profiling is what decisions get made on: with JIT
+    # on here and off there, a local `--cpu-prof` run would be measuring a
+    # query plan production does not execute. The memory settings are
+    # deliberately NOT mirrored — they are sized for a 16 GB server.
+    command:
+      - postgres
+      - -c
+      - jit=off
     environment:
       - POSTGRES_USER=${DB_USER}
       - POSTGRES_PASSWORD=${DB_PASS}

@@ -2,6 +2,53 @@ services:
   db:
     container_name: whisky-db
     image: postgres:18
+    # Tuning, measured on 2026-09-13 rather than taken from a calculator; the
+    # evidence is in `docs/POSTGRES-TUNING.md`. The short version is that this
+    # database is ~150 MB and fully resident — the load test read 99.997 % of
+    # its blocks from cache and zero from disk — so the usual I/O knobs buy
+    # nothing here and only one of these values was worth anything.
+    #
+    # `jit=off` is that one: PostgreSQL compiled 83 functions on every run of
+    # the catalogue query, which costs more than it saves on a query that
+    # finishes in a fifth of a second with no I/O at all (312 -> 213 ms,
+    # three runs each way). It does NOT raise the API's ceiling, because at
+    # the load where the response-time limits break the database is idle and
+    # the queue is in the Node process; it makes each uncached query cheaper,
+    # which is worth having anyway.
+    #
+    # `max_connections` is deliberately NOT raised and so is not listed: with
+    # eight cores the ladder already ran 27 active backends on average and 51
+    # at peak, and more of them buys context switching rather than work. The
+    # pool that feeds it (`DB_POOL_SIZE`) is 50.
+    #
+    # `max_parallel_workers_per_gather` is left at its default for the same
+    # discipline: no query measured here launches a worker at all.
+    command:
+      - postgres
+      - -c
+      - jit=off
+      # Six times the whole database. Not the conventional 25 % of RAM (4 GB),
+      # which would take memory from the API container and the cache for a
+      # database that does not need it.
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-1GB}
+      # A planner hint about what the OS will have cached, not an allocation.
+      - -c
+      - effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-8GB}
+      # Per sort/hash NODE, not per query, so it multiplies by the pool. 16 MB
+      # clears the small spills; the dashboard's 60 MB percentile sort still
+      # goes to disk on purpose, because the global value that would hold it
+      # risks gigabytes across 50 connections for no measured latency gain.
+      - -c
+      - work_mem=${PG_WORK_MEM:-16MB}
+      # VACUUM, index builds and migrations only — never the serving path.
+      - -c
+      - maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-512MB}
+      # Correct for SSD, where the default of 4 describes a spinning disk.
+      # Honest caveat: it changed no plan measured here, because every table
+      # this query touches is small enough to be scanned outright.
+      - -c
+      - random_page_cost=1.1
     environment:
       - POSTGRES_DB=${DB_NAME:?DB_NAME is required}
       - POSTGRES_USER=${DB_USER:?DB_USER is required}

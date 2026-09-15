@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 
 import { PERMISSION_META_INJECT_TOKEN } from '~constants';
-import { Resource } from '~enums';
+import { Action, Resource } from '~enums';
 
 import { DashboardController } from '../../src/domain/dashboard/dashboard.controller';
 
@@ -19,7 +19,7 @@ const HANDLERS = [
 
 describe('DashboardController permissions', () => {
   it.each([...HANDLERS])(
-    '%s carries the authenticated-read metadata',
+    '%s carries the dashboard-read metadata',
     (handler) => {
       /**
        * A handler shipped without `@Plain` would pass every unit test and
@@ -35,7 +35,9 @@ describe('DashboardController permissions', () => {
         method,
       ) as AuthPermissionMeta | undefined;
 
-      expect(meta?.permissions).toEqual([[Resource.AUTHENTICATED]]);
+      expect(meta?.permissions).toEqual([
+        [Resource.DASHBOARD, Action.READ],
+      ]);
       expect(meta?.isPublic).toBe(false);
     },
   );

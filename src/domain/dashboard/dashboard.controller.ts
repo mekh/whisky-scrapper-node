@@ -3,7 +3,7 @@ import { Controller, Get, Query } from '@nestjs/common';
 import { READ_CACHE_MAX_AGE_SECONDS } from '~constants';
 import { CacheControl, RateLimit } from '~decorators/http';
 import { Plain } from '~decorators/types';
-import { RateLimitProfile, Resource } from '~enums';
+import { Action, RateLimitProfile, Resource } from '~enums';
 import type {
   DashboardBreakdown,
   DashboardMeta,
@@ -36,14 +36,14 @@ export class DashboardController {
 
   @Get('meta')
   @CacheControl(READ_CACHE_MAX_AGE_SECONDS)
-  @Plain(DashboardMetaType, Resource.AUTHENTICATED)
+  @Plain(DashboardMetaType, Resource.DASHBOARD, Action.READ)
   public meta(): Promise<DashboardMeta> {
     return this.dashboardService.meta();
   }
 
   @Get('summary')
   @CacheControl(READ_CACHE_MAX_AGE_SECONDS)
-  @Plain(DashboardSummaryType, Resource.AUTHENTICATED)
+  @Plain(DashboardSummaryType, Resource.DASHBOARD, Action.READ)
   public summary(
     @Query() query: DashboardRangeQueryDto,
   ): Promise<DashboardSummary> {
@@ -52,7 +52,7 @@ export class DashboardController {
 
   @Get('series')
   @CacheControl(READ_CACHE_MAX_AGE_SECONDS)
-  @Plain(DashboardSeriesType, Resource.AUTHENTICATED)
+  @Plain(DashboardSeriesType, Resource.DASHBOARD, Action.READ)
   public series(
     @Query() query: DashboardSeriesQueryDto,
   ): Promise<DashboardSeries> {
@@ -61,7 +61,7 @@ export class DashboardController {
 
   @Get('breakdown')
   @CacheControl(READ_CACHE_MAX_AGE_SECONDS)
-  @Plain(DashboardBreakdownType, Resource.AUTHENTICATED)
+  @Plain(DashboardBreakdownType, Resource.DASHBOARD, Action.READ)
   public breakdown(
     @Query() query: DashboardBreakdownQueryDto,
   ): Promise<DashboardBreakdown> {
@@ -70,7 +70,7 @@ export class DashboardController {
 
   @Get('movers')
   @CacheControl(READ_CACHE_MAX_AGE_SECONDS)
-  @Plain(DashboardMoversType, Resource.AUTHENTICATED)
+  @Plain(DashboardMoversType, Resource.DASHBOARD, Action.READ)
   public movers(
     @Query() query: DashboardMoversQueryDto,
   ): Promise<DashboardMovers> {
@@ -79,7 +79,7 @@ export class DashboardController {
 
   @Get('sync-activity')
   @CacheControl(READ_CACHE_MAX_AGE_SECONDS)
-  @Plain(DashboardSyncActivityType, Resource.AUTHENTICATED)
+  @Plain(DashboardSyncActivityType, Resource.DASHBOARD, Action.READ)
   public syncActivity(
     @Query() query: DashboardRangeQueryDto,
   ): Promise<DashboardSyncActivity> {

@@ -1,5 +1,6 @@
 export enum Resource {
   AUTHENTICATED = 'authenticated',
+  DASHBOARD = 'dashboard',
   PERMISSION = 'permission',
   PREFERENCE = 'preference',
   PRODUCER = 'producer',

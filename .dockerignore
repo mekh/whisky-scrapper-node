@@ -7,6 +7,9 @@ dist
 *.dump
 *.db
 *.log
-# Deployment config the image never runs: mounted into the `lb` container
-# from the host. Excluded so editing it does not invalidate the build cache.
-haproxy.cfg
+# Deployment config the image never runs: the HAProxy and nginx configs are
+# mounted from the host, and the monitoring stack is a separate compose
+# project. Excluded so editing any of it does not invalidate the build cache
+# — which `COPY . .` in the build stage would otherwise do on every Grafana
+# dashboard edit.
+infra

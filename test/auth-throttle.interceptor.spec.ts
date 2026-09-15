@@ -11,6 +11,7 @@ import {
   ServerError,
   TooManyRequestsError,
 } from '~errors';
+import type { PlatformMetricsService } from '~lib/metrics';
 import type { LoginThrottleStanding } from '~types';
 
 const ADDRESS = '203.0.113.7';
@@ -147,10 +148,19 @@ function run(
   );
 }
 
+/**
+ * A recorder that swallows everything: these specs assert the interceptor's
+ * own behaviour, and the login counters have their own coverage.
+ */
+const METRICS = {
+  login: (): void => undefined,
+  loginPenalty: (): void => undefined,
+} as unknown as PlatformMetricsService;
+
 describe('AuthThrottleInterceptor — the outcome it records', () => {
   it('clears the ladder when the handler answers', async () => {
     const { throttle, calls } = makeThrottle();
-    const interceptor = new AuthThrottleInterceptor(throttle);
+    const interceptor = new AuthThrottleInterceptor(throttle, METRICS);
 
     await expect(run(interceptor, { access: 'token' })).resolves.toEqual({
       access: 'token',
@@ -169,7 +179,7 @@ describe('AuthThrottleInterceptor — the outcome it records', () => {
    */
   it('records a failure on a wrong password', async () => {
     const { throttle, calls } = makeThrottle();
-    const interceptor = new AuthThrottleInterceptor(throttle);
+    const interceptor = new AuthThrottleInterceptor(throttle, METRICS);
 
     await expect(run(interceptor, new NotAuthenticatedError('nope')))
       .rejects.toBeInstanceOf(NotAuthenticatedError);
@@ -184,7 +194,7 @@ describe('AuthThrottleInterceptor — the outcome it records', () => {
    */
   it('records nothing for a deactivated account', async () => {
     const { throttle, calls } = makeThrottle();
-    const interceptor = new AuthThrottleInterceptor(throttle);
+    const interceptor = new AuthThrottleInterceptor(throttle, METRICS);
 
     await expect(run(interceptor, new NotAuthorizedError()))
       .rejects.toBeInstanceOf(NotAuthorizedError);
@@ -195,7 +205,7 @@ describe('AuthThrottleInterceptor — the outcome it records', () => {
 
   it('records nothing when the failure is the server’s own', async () => {
     const { throttle, calls } = makeThrottle();
-    const interceptor = new AuthThrottleInterceptor(throttle);
+    const interceptor = new AuthThrottleInterceptor(throttle, METRICS);
 
     await expect(run(interceptor, new ServerError('database is down')))
       .rejects.toBeInstanceOf(ServerError);
@@ -207,7 +217,7 @@ describe('AuthThrottleInterceptor — the outcome it records', () => {
 describe('AuthThrottleInterceptor — the refusal', () => {
   it('never reaches the handler', async () => {
     const { throttle } = makeThrottle(5000);
-    const interceptor = new AuthThrottleInterceptor(throttle);
+    const interceptor = new AuthThrottleInterceptor(throttle, METRICS);
     const handle = jest.fn();
 
     await expect(
@@ -226,7 +236,7 @@ describe('AuthThrottleInterceptor — the refusal', () => {
    */
   it('is not counted as a failed attempt', async () => {
     const { throttle, calls } = makeThrottle(5000);
-    const interceptor = new AuthThrottleInterceptor(throttle);
+    const interceptor = new AuthThrottleInterceptor(throttle, METRICS);
 
     await expect(run(interceptor, { access: 'token' })).rejects
       .toBeInstanceOf(TooManyRequestsError);
@@ -244,7 +254,7 @@ describe('AuthThrottleInterceptor — the refusal', () => {
 describe('AuthThrottleInterceptor — the standing it states', () => {
   it('states the run and what is left of it on a wrong password', async () => {
     const { throttle } = makeThrottle();
-    const interceptor = new AuthThrottleInterceptor(throttle);
+    const interceptor = new AuthThrottleInterceptor(throttle, METRICS);
     const written: Written = {};
 
     await expect(run(interceptor, new NotAuthenticatedError('nope'), written))
@@ -266,7 +276,7 @@ describe('AuthThrottleInterceptor — the standing it states', () => {
       remaining: 5,
       blockedForMs: 5000,
     });
-    const interceptor = new AuthThrottleInterceptor(throttle);
+    const interceptor = new AuthThrottleInterceptor(throttle, METRICS);
     const written: Written = {};
 
     await expect(run(interceptor, new NotAuthenticatedError('nope'), written))
@@ -277,7 +287,7 @@ describe('AuthThrottleInterceptor — the standing it states', () => {
 
   it('states the wait on its own refusal', async () => {
     const { throttle } = makeThrottle(5000);
-    const interceptor = new AuthThrottleInterceptor(throttle);
+    const interceptor = new AuthThrottleInterceptor(throttle, METRICS);
     const written: Written = {};
 
     await expect(run(interceptor, { access: 'token' }, written))
@@ -297,7 +307,7 @@ describe('AuthThrottleInterceptor — the standing it states', () => {
    */
   it('states nothing when the ladder could not say', async () => {
     const { throttle } = makeThrottle(undefined, null);
-    const interceptor = new AuthThrottleInterceptor(throttle);
+    const interceptor = new AuthThrottleInterceptor(throttle, METRICS);
     const written: Written = {};
 
     await expect(run(interceptor, new NotAuthenticatedError('nope'), written))
@@ -308,7 +318,7 @@ describe('AuthThrottleInterceptor — the standing it states', () => {
 
   it('says nothing about the ladder on a success', async () => {
     const { throttle } = makeThrottle();
-    const interceptor = new AuthThrottleInterceptor(throttle);
+    const interceptor = new AuthThrottleInterceptor(throttle, METRICS);
     const written: Written = {};
 
     await expect(run(interceptor, { access: 'token' }, written)).resolves

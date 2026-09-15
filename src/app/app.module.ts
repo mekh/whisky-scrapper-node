@@ -25,6 +25,7 @@ import {
 import { DomainDashboardModule } from '~domain/dashboard';
 import { DomainHealthModule } from '~domain/health';
 import { DomainMetaModule } from '~domain/meta';
+import { DomainMetricsModule } from '~domain/metrics';
 import { DomainPreferenceModule } from '~domain/preference';
 import { DomainProductModule } from '~domain/product';
 import { DomainPushModule } from '~domain/push';
@@ -35,6 +36,7 @@ import { DomainUserModule } from '~domain/user';
 import { ServerError } from '~errors';
 import { CacheModule } from '~lib/cache';
 import { LoggerModule } from '~lib/logger';
+import { MetricsModule } from '~lib/metrics';
 import { ScrapeModule } from '~scrape';
 
 import { ContextModule } from './context';
@@ -53,6 +55,11 @@ import { RateLimitModule, UserRateLimitGuard } from './rate-limit';
     ContextModule,
     ConfigModule,
     LoggerModule,
+    /**
+     * Global, and registered early: recorders sit in every layer, and the
+     * registry has to exist before anything tries to record into it.
+     */
+    MetricsModule,
     /**
      * Registered here (it is a global module exporting `SchedulerRegistry`)
      * because scheduling is an application-wide concern; `SyncCronService` in
@@ -93,6 +100,7 @@ import { RateLimitModule, UserRateLimitGuard } from './rate-limit';
     DomainHealthModule,
     DomainReportModule,
     DomainMetaModule,
+    DomainMetricsModule,
     DomainStoreModule,
     DomainProductModule,
     DomainPreferenceModule,

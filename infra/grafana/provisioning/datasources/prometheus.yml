@@ -1,0 +1,20 @@
+# The one datasource. Provisioned from a file so it is never clicked into
+# existence and never differs between a rebuild and what is in git.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    # Reached over the compose network, so Prometheus needs no published port
+    # for Grafana's sake — the one it has is for a person with a browser.
+    url: http://whisky-prom:9090
+    isDefault: true
+    uid: whisky-prometheus
+    jsonData:
+      # Matches the scrape interval: a shorter step asks Prometheus for
+      # points it does not have and draws gaps.
+      timeInterval: 15s
+      httpMethod: POST
+    editable: false

@@ -1,0 +1,106 @@
+# Where alerts go. **This file is the reference, not the deployed one.**
+#
+# It ships delivering nowhere, on purpose: the default route is the null
+# receiver, so the stack starts and alerts fire and are visible in Prometheus
+# and in Alertmanager's own UI on the private interface — a working state, not
+# a broken one. Turning on Telegram is three steps and no rebuild:
+#
+#   1. Write the bot token to `infra/alertmanager/telegram-token` (one line,
+#      no newline needed; the file is git-ignored). Get it from @BotFather.
+#   2. **Copy this file** to `alertmanager.local.yml` and edit the copy:
+#      uncomment the `telegram` receiver at the bottom, put the real chat id
+#      in it, and change `receiver:` on the `route` from `null` to `telegram`.
+#      Read the id from https://api.telegram.org/bot<TOKEN>/getUpdates after
+#      messaging the bot.
+#   3. Point the stack at the copy — `ALERTMANAGER_CONFIG` in `infra/.env` —
+#      and `up -d alertmanager` (not `restart`: the mount is fixed when the
+#      container is created).
+#
+# The copy exists because the chat id has to be written into the config file
+# itself and a deployment's edit to a tracked file is a `git pull` waiting to
+# conflict. `*.local.yml` is git-ignored. **`receivers:` cannot be moved into
+# a file of its own**: Alertmanager has no include directive — `templates:` is
+# for message bodies, not config — and expands no environment variables, which
+# is also why the token is read from a file and the chat id is not.
+#
+# The cost of a copy is that it is a whole copy: a routing or inhibit rule
+# added here does not reach a deployment until someone carries it across.
+# `diff` the two after a pull.
+#
+# The Telegram receiver is commented rather than stubbed because Alertmanager
+# validates every receiver whatever the routing says, and rejects a zero chat
+# id — a placeholder would stop the container from starting.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  # Grouped by what broke rather than by where: three replicas failing the
+  # same check is one problem, and three separate messages about it is how a
+  # channel gets muted.
+  group_by:
+    - alertname
+    - severity
+  group_wait: 30s
+  group_interval: 5m
+  # A firing alert is repeated every four hours. Long enough not to nag,
+  # short enough that something broken overnight is still on the screen in
+  # the morning.
+  repeat_interval: 4h
+  # Change to `telegram` once the two steps above are done.
+  receiver: 'null'
+
+  routes:
+    # Critical alerts skip most of the grouping delay and repeat far more
+    # often: an API answering nothing is not something to learn about in four
+    # hours. Inherits the parent's receiver, so this needs no second edit.
+    - matchers:
+        - severity = "critical"
+      group_wait: 10s
+      repeat_interval: 30m
+
+inhibit_rules:
+  # When every replica is down, the per-replica alerts are noise describing
+  # the same outage.
+  - source_matchers:
+      - alertname = "WhiskyAllReplicasDown"
+    target_matchers:
+      - alertname =~ "WhiskyReplicaDown|WhiskyApiScrapeFailing"
+    equal:
+      - environment
+
+  # A dependency being down explains the slowness and the errors that follow
+  # from it.
+  - source_matchers:
+      - alertname = "WhiskyDependencyDown"
+    target_matchers:
+      - alertname =~ "WhiskyReportsSlow|WhiskyHighErrorRate|WhiskyCacheDirty"
+    equal:
+      - environment
+
+receivers:
+  # The default: alerts are grouped, inhibited and shown in the UI, and go no
+  # further.
+  - name: 'null'
+  # The Telegram receiver is commented out rather than shipped with a
+  # placeholder, because Alertmanager validates **every** receiver whatever
+  # the routing says and rejects `chat_id: 0` as missing — a stub here would
+  # stop the container from starting at all. Uncomment the block, put the
+  # real chat id in, and change `receiver:` above to `telegram`.
+  #
+  # - name: telegram
+  #   telegram_configs:
+  #     - bot_token_file: /etc/alertmanager/telegram-token
+  #       # A negative number is a group chat.
+  #       chat_id: 123456789
+  #       api_url: https://api.telegram.org
+  #       parse_mode: HTML
+  #       # One message per group, listing what fired. `summary` is written to
+  #       # be readable on a phone without opening anything else.
+  #       message: |-
+  #         <b>{{ .Status | toUpper }}</b> — {{ .CommonLabels.alertname }}
+  #         {{ range .Alerts }}
+  #         {{ .Annotations.summary }}
+  #         {{ if .Annotations.description }}{{ .Annotations.description }}{{ end }}
+  #         {{ end }}
+  #       send_resolved: true

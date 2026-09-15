@@ -212,6 +212,7 @@ export class LlmFlavorService {
       {
         model: this.config.llmFlavorModel,
         reasoning: this.config.llmFlavorReasoning,
+        pass: 'flavors',
       },
     );
 

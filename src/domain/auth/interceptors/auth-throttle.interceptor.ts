@@ -11,11 +11,18 @@ import {
   HEADER_LOGIN_ATTEMPTS,
   HEADER_LOGIN_ATTEMPTS_REMAINING,
   HEADER_LOGIN_RETRY_MS,
+  LOGIN_PENALTY_SECONDS,
 } from '~constants';
 import { NotAuthenticatedError, TooManyRequestsError } from '~errors';
+import { PlatformMetricsService } from '~lib/metrics';
 import type { LoginThrottleStanding, Response } from '~types';
 
 import { AuthThrottleService } from '../services/auth-throttle.service';
+
+/**
+ * Milliseconds in a second, for reading a rung out of the wait it imposes.
+ */
+const MS_PER_SEC = 1000;
 
 /**
  * Drives the progressive login throttle around the login handler: refuses
@@ -68,13 +75,16 @@ export class AuthThrottleInterceptor implements NestInterceptor {
       return null;
     }
 
-    const { standing } = error.data as
-      { standing?: LoginThrottleStanding } ?? {};
+    const { standing } = error.data as { standing?: LoginThrottleStanding } ??
+      {};
 
     return standing ?? null;
   }
 
-  public constructor(private readonly throttle: AuthThrottleService) {}
+  public constructor(
+    private readonly throttle: AuthThrottleService,
+    private readonly metrics: PlatformMetricsService,
+  ) {}
 
   /**
    * Wraps the handler in the throttle's check and its bookkeeping.
@@ -106,6 +116,8 @@ export class AuthThrottleInterceptor implements NestInterceptor {
    * @returns The same answer, once the reset is written.
    */
   private onSuccess(address: string, answer: unknown): Observable<unknown> {
+    this.metrics.login('success');
+
     return from(this.throttle.reset(address)).pipe(map(() => answer));
   }
 
@@ -130,6 +142,7 @@ export class AuthThrottleInterceptor implements NestInterceptor {
     const refusal = AuthThrottleInterceptor.standingOf(error);
 
     if (refusal) {
+      this.metrics.login('throttled');
       this.describe(reply, refusal);
 
       return throwError(() => error);
@@ -139,12 +152,38 @@ export class AuthThrottleInterceptor implements NestInterceptor {
       return throwError(() => error);
     }
 
+    this.metrics.login('failed');
+
     return from(this.throttle.registerFailure(address)).pipe(
       mergeMap((standing: LoginThrottleStanding | null) => {
+        this.countPenalty(standing);
         this.describe(reply, standing);
 
         return throwError(() => error);
       }),
+    );
+  }
+
+  /**
+   * Counts a penalty the failure just bought, and only then.
+   *
+   * The rung is read from the wait the ladder came back with rather than
+   * tracked separately, so the counter cannot disagree with the delay the
+   * caller was actually told to observe.
+   *
+   * @param standing - Where the caller now stands, or null when unknown.
+   */
+  private countPenalty(standing: LoginThrottleStanding | null): void {
+    if (!standing || standing.blockedForMs <= 0) {
+      return;
+    }
+
+    const stage = LOGIN_PENALTY_SECONDS.findIndex(
+      (seconds) => seconds * MS_PER_SEC >= standing.blockedForMs,
+    );
+
+    this.metrics.loginPenalty(
+      stage === -1 ? LOGIN_PENALTY_SECONDS.length - 1 : stage,
     );
   }
 

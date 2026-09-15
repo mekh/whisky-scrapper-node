@@ -1,0 +1,108 @@
+# Alerts about the API itself: is it up, is it fast, is it queueing.
+#
+# Thresholds come from this repository's own recorded numbers wherever one
+# exists, rather than from a template.
+
+groups:
+  - name: whisky-api
+    rules:
+      - alert: WhiskyReplicaDown
+        # HAProxy is the authority on which replicas are in rotation: its
+        # server slots are stable names that survive a redeploy, unlike a
+        # container address. `2` is UP in its encoding.
+        expr: haproxy_server_status{proxy="app"} != 2 and haproxy_server_check_status{proxy="app"} != 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Replica {{ $labels.server }} is out of rotation'
+          description: >-
+            HAProxy has taken {{ $labels.server }} out of the backend. The
+            other replicas are absorbing its share; check its logs before the
+            next one follows.
+
+      - alert: WhiskyAllReplicasDown
+        expr: count(haproxy_server_status{proxy="app"} == 2) == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Every API replica is out of rotation'
+          description: >-
+            The site is down. HAProxy has no healthy backend, so every request
+            is being answered 503.
+
+      - alert: WhiskyApiScrapeFailing
+        # Distinct from the balancer's view: a replica can be serving traffic
+        # and still have stopped publishing metrics, which is how monitoring
+        # goes blind without anybody noticing.
+        expr: up{job="whisky-api"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'A replica has stopped answering /metrics'
+          description: >-
+            {{ $labels.instance }} is not being scraped. It may still be
+            serving; what is certain is that nothing here knows what it is
+            doing.
+
+      - alert: WhiskyHighErrorRate
+        expr: |
+          sum(rate(whisky_http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(whisky_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'More than 5% of requests are failing'
+          description: >-
+            {{ $value | humanizePercentage }} of responses are 5xx. The
+            per-route breakdown is on the API dashboard.
+
+      - alert: WhiskyReportsSlow
+        # The owner's own limit, from docs/LOAD-TEST-2026-09.md: the report
+        # reads must stay under 2 s at p95.
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(whisky_http_request_duration_seconds_bucket{route=~"/report.*"}[10m])
+            )
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Report pages are past the 2 s p95 limit'
+          description: >-
+            p95 is {{ $value | humanizeDuration }}. Check the cache hit ratio
+            first — a cold cache is the usual cause — then the event loop.
+
+      - alert: WhiskyEventLoopLagging
+        # The number this API's own ceiling was diagnosed by: the constraint
+        # was one JavaScript thread, and lag is what that looks like.
+        expr: nodejs_eventloop_lag_p99_seconds{job="whisky-api"} > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Replica {{ $labels.replica }} is queueing, not working'
+          description: >-
+            p99 event-loop lag is {{ $value | humanizeDuration }}. Requests
+            are waiting for the thread rather than for a dependency.
+
+      - alert: WhiskyRateLimitingHeavily
+        # Not an attack alert — the limiter is doing its job. It fires when a
+        # client is looping, which is what sustained refusals actually mean
+        # on a private catalogue with a handful of accounts.
+        expr: |
+          sum(rate(whisky_rate_limit_decisions_total{outcome="refused"}[10m])) > 1
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: 'Requests are being refused steadily'
+          description: >-
+            {{ $value | printf "%.1f" }} refusals per second sustained. A
+            client is probably retrying in a loop.

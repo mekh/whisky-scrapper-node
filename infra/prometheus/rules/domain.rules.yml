@@ -1,0 +1,148 @@
+# Alerts about whether the product is working, as opposed to whether the
+# processes are up.
+#
+# These are the ones worth having: each watches a state the application
+# already models and that nothing outside the process could previously see.
+
+groups:
+  - name: whisky-domain
+    rules:
+      - alert: WhiskyCacheDirty
+        # The highest-value single bit here. It means a committed write the
+        # cache was never told about, and while it stands every read bypasses
+        # the cache entirely — so the site is quietly serving everything from
+        # the database.
+        expr: whisky_cache_dirty == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Replica {{ $labels.replica }} is bypassing the cache'
+          description: >-
+            A generation bump failed, so this replica cannot trust any cached
+            entry and is serving every report from the database. It clears
+            itself once a bump succeeds; if it does not, the cache instance is
+            the thing to look at.
+
+      - alert: WhiskyStoreSyncStale
+        # "Nothing has successfully synced rozetka in two days" is currently
+        # discoverable only by opening the store page and reading a date.
+        # Active stores only: one that is switched off is expected to go
+        # stale, which is why the catalogue gauge exists.
+        expr: |
+          (time() - whisky_sync_last_success_timestamp_seconds > 172800)
+            and on (store) (whisky_catalogue_store_active == 1)
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.store }} has not synced successfully in two days'
+          description: >-
+            Last success was {{ $value | humanizeDuration }} ago. Its prices
+            are stale on every report that quotes it.
+
+      - alert: WhiskyStoreSyncFailing
+        expr: |
+          increase(whisky_sync_runs_total{outcome="failed"}[6h]) >= 3
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.store }} has failed three syncs in six hours'
+          description: >-
+            Its per-run log files under ./log name what went wrong; the
+            adapter is the usual suspect after a shop changes its markup.
+
+      - alert: WhiskyListingIncomplete
+        # A walk that could not prove it reached the end of the listing skips
+        # the out-of-stock sweep, so the store's availability freezes. It is
+        # correct behaviour and completely invisible without this.
+        expr: increase(whisky_scrape_listing_incomplete_total[24h]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.store }} could not finish its listing walk'
+          description: >-
+            Stopped on `{{ $labels.stop }}`, so the sweep was skipped and that
+            store's in-stock flags are frozen until a complete run.
+
+      - alert: WhiskyScrapeDeadlineSkips
+        # A run that silently gave up on filling fields and said so only
+        # inside a file on disk.
+        expr: increase(whisky_scrape_deadline_skips_total[24h]) > 100
+        labels:
+          severity: info
+        annotations:
+          summary: '{{ $labels.store }} ran out of budget on its {{ $labels.pass }} pass'
+          description: >-
+            {{ $value | printf "%.0f" }} item(s) skipped in a day. Their
+            fields stay empty until `pnpm backfill --store {{ $labels.store }}`
+            is run.
+
+      - alert: WhiskyRateLimiterFailingOpen
+        # An API with no effective rate limit looks exactly like one whose
+        # limits are working, which is the entire reason this counter exists.
+        expr: increase(whisky_rate_limit_store_failures_total[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: 'The rate limiter is letting requests through uncounted'
+          description: >-
+            {{ $value | printf "%.0f" }} request(s) passed without being
+            charged, because the limiter's store could not answer. The edge
+            limit and the login ladder still stand, but the per-account cap
+            does not.
+
+      - alert: WhiskyLoginBruteForce
+        expr: |
+          sum(increase(whisky_auth_throttle_penalties_total[1h])) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: 'The login ladder is imposing penalties repeatedly'
+          description: >-
+            {{ $value | printf "%.0f" }} penalties in an hour. Either somebody
+            is guessing passwords, or a client is retrying a wrong one in a
+            loop.
+
+      - alert: WhiskyCurrencyRatesStale
+        # The source publishes every calendar day — a weekend repeats the
+        # preceding business day rather than being skipped — so three days
+        # cannot be explained by the calendar.
+        expr: |
+          time() - whisky_currency_rate_last_effective_timestamp_seconds > 259200
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.code }} rates are more than three days old'
+          description: >-
+            Every screen that converts money is showing stale figures. The
+            sync is idempotent, so `POST /currency/rate/sync` is safe to run.
+
+      - alert: WhiskyLlmCallsFailing
+        expr: |
+          sum by (pass) (rate(whisky_llm_requests_total{outcome="error"}[30m]))
+            / sum by (pass) (rate(whisky_llm_requests_total[30m])) > 0.25
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: 'The {{ $labels.pass }} model pass is failing a quarter of its calls'
+          description: >-
+            Usually the provider, not the prompt. The passes degrade to the
+            deterministic fallback, so nothing breaks — fields simply stay
+            empty.
+
+      - alert: WhiskyPushFailing
+        expr: |
+          sum(rate(whisky_push_notifications_total{outcome="failed"}[1h]))
+            / sum(rate(whisky_push_notifications_total[1h])) > 0.5
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: 'More than half of push notifications are failing'
+          description: >-
+            Dead endpoints are pruned automatically and counted as `gone`
+            rather than `failed`, so this is something else — a rejected VAPID
+            key is the usual cause.

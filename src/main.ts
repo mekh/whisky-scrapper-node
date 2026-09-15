@@ -12,9 +12,11 @@ import { initializeTransactionalContext } from 'typeorm-transactional';
 
 import { AppModule } from '~app/app.module';
 import { registerClientIpHook } from '~app/context';
+import { registerHttpMetricsHooks } from '~app/metrics';
 import { registerProcessGuards } from '~app/process';
 import { AppConfig, DbConfig } from '~config';
 import { LoggerService } from '~lib/logger';
+import { HttpMetricsService } from '~lib/metrics';
 
 initializeTransactionalContext();
 
@@ -44,6 +46,13 @@ const run = async (): Promise<void> => {
    * Nest middleware.
    */
   registerClientIpHook(app, config);
+
+  /**
+   * Hooks rather than an interceptor, so every response is counted — a 404
+   * from the router and a request refused in a guard included. See
+   * `registerHttpMetricsHooks`.
+   */
+  registerHttpMetricsHooks(app, app.get(HttpMetricsService));
 
   app.useLogger(app.get(LoggerService));
 

@@ -1,0 +1,165 @@
+# Alerts about what the API runs on: the database, both Valkeys, the host.
+
+groups:
+  - name: whisky-dependencies
+    rules:
+      - alert: WhiskyDependencyDown
+        expr: whisky_dependency_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{ $labels.dependency }} is not answering'
+          description: >-
+            Replica {{ $labels.replica }} cannot reach
+            {{ $labels.dependency }}. Postgres and the session store are hard
+            dependencies — the API answers nothing without them; the cache
+            fails open and only makes it slower.
+
+      - alert: WhiskyDbPoolExhausted
+        # `waiting` above zero is DB_ACQUIRE_TIMEOUT_MS about to start
+        # failing requests. It is per replica, which the exporter's
+        # server-side view cannot show.
+        expr: whisky_db_pool_connections{state="waiting"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Requests are queueing for a database connection'
+          description: >-
+            {{ $value }} caller(s) waiting on replica {{ $labels.replica }}.
+            Raising the pool is usually the wrong answer here — see
+            docs/LOAD-TEST-2026-09.md, where cutting it made the database
+            faster.
+
+  - name: whisky-postgres
+    rules:
+      - alert: WhiskyPostgresConnectionsHigh
+        expr: |
+          sum(pg_stat_activity_count) / max(pg_settings_max_connections) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Postgres is near its connection ceiling'
+          description: >-
+            {{ $value | humanizePercentage }} of max_connections in use.
+
+      - alert: WhiskyPostgresLongTransaction
+        # A long transaction holds back vacuum across the whole database. The
+        # application bounds it with DB_IDLE_IN_TRANSACTION_TIMEOUT_MS; this
+        # is how that bound is observed working.
+        expr: whisky_activity_oldest_transaction_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'A transaction has been open for over five minutes'
+          description: >-
+            Oldest open transaction is {{ $value | humanizeDuration }}.
+
+      - alert: WhiskyPostgresDeadlocks
+        expr: increase(pg_stat_database_deadlocks[30m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Postgres reported a deadlock'
+          description: >-
+            {{ $value }} deadlock(s) in the last half hour on
+            {{ $labels.datname }}.
+
+  - name: whisky-valkey
+    rules:
+      - alert: WhiskySessionStoreEvicting
+        # This instance must NEVER evict: a lost session key reads as a
+        # revoked session and signs that user out of every device. It is
+        # deliberately given no eviction policy, so a single eviction means
+        # something is wrong with its configuration.
+        expr: increase(redis_evicted_keys_total{role="session"}[15m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: 'The session store evicted a key'
+          description: >-
+            {{ $value }} key(s) evicted. Sessions are being destroyed, and
+            every affected user is being signed out of every device. Check
+            that this instance still has no maxmemory-policy.
+
+      - alert: WhiskyCacheMemoryHigh
+        # 3 GiB was chosen after a ladder peaked at 1.16 GiB and evicted
+        # 4 038 live entries, each of which is a database query later.
+        expr: |
+          redis_memory_used_bytes{role="cache"}
+            / redis_memory_max_bytes{role="cache"} > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'The catalogue cache is nearly full'
+          description: >-
+            {{ $value | humanizePercentage }} of maxmemory used. Eviction here
+            is normal, but each evicted entry is a database query later — and
+            CACHE_MEMORY_LIMIT must stay above maxmemory or the container is
+            OOM-killed instead of shedding entries.
+
+      - alert: WhiskyValkeyDown
+        expr: redis_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'A Valkey instance is not answering its exporter'
+          description: 'The {{ $labels.role }} instance is unreachable.'
+
+  - name: whisky-host
+    rules:
+      - alert: WhiskyDiskFilling
+        # pg_data, the session store's AOF and the bind-mounted ./log all
+        # share this disk, and SYNC_LOG_RETENTION_DAYS is the only thing
+        # bounding the last of them.
+        expr: |
+          (
+            1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"}
+              / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}
+          ) > 0.85
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Disk {{ $labels.mountpoint }} is {{ $value | humanizePercentage }} full'
+          description: >-
+            The database, the session store's append-only file and the sync
+            log directory share this disk.
+
+      - alert: WhiskyHostSaturated
+        # Eight cores shared by three replicas, Postgres, two Valkeys and
+        # HAProxy. Load above the core count means they are queueing for it.
+        expr: |
+          node_load15 > count(count by (cpu) (node_cpu_seconds_total{mode="idle"}))
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'The host has been over its core count for fifteen minutes'
+          description: >-
+            Fifteen-minute load is {{ $value | printf "%.1f" }}. cAdvisor's
+            per-container panel says which container is spending it.
+
+      - alert: WhiskyHostMemoryLow
+        expr: |
+          node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Less than 10% of host memory is available'
+
+      - alert: WhiskyContainerRestarting
+        expr: increase(container_start_time_seconds{name=~"whisky-.*"}[30m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Container {{ $labels.name }} restarted'
+          description: >-
+            An unexpected restart is usually an OOM kill; check the container
+            memory panel against its limit.

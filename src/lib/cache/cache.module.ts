@@ -5,6 +5,7 @@ import {
 } from '@toxicoder/nestjs-valkey';
 
 import { CacheConfig, ConfigModule } from '~config';
+import { MetricsModule } from '~lib/metrics';
 
 import { VersionedCacheService } from './versioned-cache.service';
 
@@ -85,6 +86,12 @@ const cacheValkey = ValkeyBaseModule.forRootAsync({
      * what lets the service itself be given its `CacheConfig`.
      */
     ConfigModule,
+    /**
+     * Imported explicitly although it is global: the standalone scripts
+     * build their own module graph around `CacheModule`, and a global
+     * module still has to be reachable from somewhere in it.
+     */
+    MetricsModule,
     cacheValkey,
   ],
   providers: [

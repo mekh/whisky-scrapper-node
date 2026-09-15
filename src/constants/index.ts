@@ -11,6 +11,7 @@ export * from './health.constants';
 export * from './inject-tokens.constants';
 export * from './instance.constants';
 export * from './logging.constants';
+export * from './metrics.constants';
 export * from './password.constants';
 export * from './push.constants';
 export * from './quick-filter.constants';

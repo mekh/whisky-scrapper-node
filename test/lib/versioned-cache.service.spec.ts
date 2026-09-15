@@ -5,6 +5,7 @@ import { Logger } from '@nestjs/common';
 import { CacheConfig } from '~config';
 import { CACHE_GENERATION_CATALOGUE } from '~constants';
 import { VersionedCacheService } from '~lib/cache';
+import type { CacheMetricsService } from '~lib/metrics';
 import { ValkeyService } from '~lib/valkey';
 
 const GENERATION = CACHE_GENERATION_CATALOGUE;
@@ -185,7 +186,21 @@ function makeCache(options: {
     disconnect: jest.fn(),
   } as unknown as ValkeyService;
 
-  return { cache: new VersionedCacheService(config, valkey), client };
+  /**
+   * A recorder that swallows everything: these specs assert the cache's own
+   * behaviour, and its Prometheus counters have their own spec.
+   */
+  const metrics = {
+    operation: (): void => undefined,
+    command: (): void => undefined,
+    bumped: (): void => undefined,
+    setDirty: (): void => undefined,
+  } as unknown as CacheMetricsService;
+
+  return {
+    cache: new VersionedCacheService(config, valkey, metrics),
+    client,
+  };
 }
 
 describe('VersionedCacheService', () => {

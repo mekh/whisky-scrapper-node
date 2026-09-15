@@ -20,3 +20,18 @@
 /loadtest/users.json
 /loadtest/out
 /.env.loadtest
+
+# The Alertmanager bot token, written by the operator. The stack starts
+# without it — the Telegram receiver ships commented out — so a missing file
+# is the normal state, not a broken one.
+infra/alertmanager/telegram-token
+
+# A deployment's own Alertmanager config. `receivers:` cannot be split out of
+# that file — Alertmanager has no include directive — so a deployment that
+# routes anywhere copies the tracked one and edits the copy. The copy is
+# ignored here so that editing it never makes `git pull` a merge.
+infra/alertmanager/*.local.yml
+
+# The monitoring project's own environment, which carries the Grafana admin
+# password and the database credentials its exporter uses.
+infra/.env

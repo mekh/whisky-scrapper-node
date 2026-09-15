@@ -12,3 +12,12 @@ export interface HealthStatus {
    */
   status: string;
 }
+
+/**
+ * A dependency the deep health check probes, named as the metric labels it
+ * and the health-check result key it.
+ */
+export type HealthDependency =
+  | 'postgres'
+  | 'valkey_session'
+  | 'valkey_cache';

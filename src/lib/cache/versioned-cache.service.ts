@@ -16,6 +16,7 @@ import {
   CACHE_SLOW_COMMAND_MS,
   CACHE_SLOW_LOG_WINDOW_MS,
 } from '~constants';
+import { CacheMetricsService } from '~lib/metrics';
 import {
   ValkeyService,
   type ValkeyClient,
@@ -65,6 +66,17 @@ interface CacheSetKeys {
  * them, or a command that failed.
  */
 type EntriesRead<E> = { entries: E[] } | { partial: true } | null;
+
+/**
+ * How each in-process counter is named on the wire. Singular, which is the
+ * convention for a label value describing one event.
+ */
+const COUNTER_LABELS = {
+  hits: 'hit',
+  misses: 'miss',
+  errors: 'error',
+  bypasses: 'bypass',
+} as const;
 
 /**
  * A version-keyed cache: entries are never deleted, they are addressed by a
@@ -164,6 +176,7 @@ export class VersionedCacheService
   public constructor(
     private readonly config: CacheConfig,
     private readonly valkey: ValkeyService,
+    private readonly metrics: CacheMetricsService,
   ) {}
 
   /**
@@ -234,7 +247,7 @@ export class VersionedCacheService
     const version = await this.usableGeneration(generation);
 
     if (version === null) {
-      this.counters.bypasses += 1;
+      this.count('bypasses');
 
       return loader();
     }
@@ -243,14 +256,14 @@ export class VersionedCacheService
     const cached = await this.read<T>(key);
 
     if (cached) {
-      this.counters.hits += 1;
+      this.count('hits');
 
       return cached.value;
     }
 
     const value = await loader();
 
-    this.counters.misses += 1;
+    this.count('misses');
     await this.write(key, value);
 
     return value;
@@ -279,7 +292,7 @@ export class VersionedCacheService
     const version = await this.usableGeneration(generation);
 
     if (version === null) {
-      this.counters.bypasses += 1;
+      this.count('bypasses');
 
       return VersionedCacheService.pickInMemory(await loader(), pick, 'bypass');
     }
@@ -288,14 +301,14 @@ export class VersionedCacheService
     const hit = await this.readPage<I, E>(keys, pick);
 
     if (hit) {
-      this.counters.hits += 1;
+      this.count('hits');
 
       return hit;
     }
 
     const set = await loader();
 
-    this.counters.misses += 1;
+    this.count('misses');
     await this.writeSet(keys, set);
 
     return VersionedCacheService.pickInMemory(set, pick, 'miss');
@@ -332,6 +345,7 @@ export class VersionedCacheService
 
     if (!replies) {
       this.pending = { generation, reason };
+      this.metrics.setDirty(true);
 
       this.logger.warn(
         'Catalogue cache generation could not be bumped after %s;'
@@ -345,6 +359,9 @@ export class VersionedCacheService
     this.pending = null;
     this.lastBumpAt = Date.now();
     this.generation = Number(replies[1]?.[1] ?? this.generation);
+
+    this.metrics.setDirty(false);
+    this.metrics.bumped(reason, this.generation);
 
     this.logger.log(
       'Catalogue cache generation -> %s (%s)',
@@ -416,6 +433,35 @@ export class VersionedCacheService
   }
 
   /**
+   * Asks the cache instance whether it is answering, for the health check and
+   * the dependency gauge.
+   *
+   * It goes through the same bounded command path every read uses, so a
+   * hung instance fails here at `CACHE_READ_TIMEOUT_MS` exactly as it would
+   * on the serving path rather than at some probe-specific deadline.
+   *
+   * @returns True when it replied inside that timeout.
+   */
+  public async ping(): Promise<boolean> {
+    const reply = await this.command('ping', (client) => client.ping());
+
+    return reply !== null;
+  }
+
+  /**
+   * Counts one lookup outcome, in the process and in Prometheus alike.
+   *
+   * One helper rather than eleven call sites writing both, so the two views
+   * of the same number cannot drift.
+   *
+   * @param result - Which counter the lookup fell into.
+   */
+  private count(result: 'hits' | 'misses' | 'errors' | 'bypasses'): void {
+    this.counters[result] += 1;
+    this.metrics.operation(COUNTER_LABELS[result]);
+  }
+
+  /**
    * Resolves the generation to address entries under, or null when the cache
    * must not be used for this read.
    *
@@ -463,7 +509,7 @@ export class VersionedCacheService
     try {
       return { value: await CacheCodec.decode<T>(payload) };
     } catch (error) {
-      this.counters.errors += 1;
+      this.count('errors');
 
       this.logger.warn(
         'Cache entry %s could not be decoded, dropping it: %s',
@@ -488,7 +534,7 @@ export class VersionedCacheService
     const payload = await CacheCodec.encode(value);
 
     if (payload.byteLength > this.config.maxEntryBytes) {
-      this.counters.bypasses += 1;
+      this.count('bypasses');
 
       this.logger.warn(
         'Cache entry %s is %d bytes, past the %d-byte cap; not storing it',
@@ -538,6 +584,8 @@ export class VersionedCacheService
       );
       const elapsed = Date.now() - startedAt;
 
+      this.metrics.command(operation, elapsed);
+
       if (elapsed >= CACHE_SLOW_COMMAND_MS) {
         this.recordSlow(operation, elapsed);
       } else {
@@ -546,7 +594,7 @@ export class VersionedCacheService
 
       return result;
     } catch (error) {
-      this.counters.errors += 1;
+      this.count('errors');
 
       this.logger.warn(
         'Cache %s failed after %d ms, using the database: %s',
@@ -762,7 +810,7 @@ export class VersionedCacheService
     try {
       return { entries: raw.map((value) => JSON.parse(value as string) as E) };
     } catch (error) {
-      this.counters.errors += 1;
+      this.count('errors');
       this.logger.warn(
         'Cache set %s holds an entry that could not be decoded: %s',
         key,
@@ -794,7 +842,7 @@ export class VersionedCacheService
     );
 
     if (bytes > this.config.maxSetBytes) {
-      this.counters.bypasses += 1;
+      this.count('bypasses');
       this.logger.warn(
         'Cache set %s is %d bytes, past the %d-byte cap; not storing it',
         keys.index,

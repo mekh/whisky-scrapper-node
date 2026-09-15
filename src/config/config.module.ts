@@ -7,6 +7,7 @@ import { CurrencyConfig } from './parts/currency.config';
 import { DbConfig } from './parts/db.config';
 import { JwtAccessConfig } from './parts/jwt-access.config';
 import { LoggerConfig } from './parts/logger.config';
+import { MetricsConfig } from './parts/metrics.config';
 import { PushConfig } from './parts/push.config';
 import { RateLimitConfig } from './parts/rate-limit.config';
 import { ScrapeConfig } from './parts/scrape.config';
@@ -22,6 +23,7 @@ const providers = [
   DbConfig,
   JwtAccessConfig,
   LoggerConfig,
+  MetricsConfig,
   PushConfig,
   RateLimitConfig,
   ScrapeConfig,

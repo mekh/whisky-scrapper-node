@@ -3,6 +3,7 @@ import 'reflect-metadata';
 import { LlmClientService } from '../../src/scrape/llm/llm-client.service';
 
 import type { ScrapeConfig } from '~config';
+import type { LlmMetricsService } from '~lib/metrics';
 
 /**
  * The OpenAI-compatible client is replaced with a mock whose
@@ -31,6 +32,15 @@ function reply(content: string): unknown {
   return { choices: [{ message: { content }, finish_reason: 'stop' }] };
 }
 
+/**
+ * A recorder that swallows everything: these specs assert the transport's own
+ * behaviour, and the spend counters have their own coverage.
+ */
+const METRICS = {
+  call: (): void => undefined,
+  spent: (): void => undefined,
+} as unknown as LlmMetricsService;
+
 function makeClient(
   over: Partial<ScrapeConfig> = {},
 ): LlmClientService {
@@ -43,7 +53,7 @@ function makeClient(
     llmTimeoutMs: 120000,
     llmMaxRetries: 2,
     ...over,
-  } as unknown as ScrapeConfig);
+  } as unknown as ScrapeConfig, METRICS);
 }
 
 describe('LlmClientService', () => {

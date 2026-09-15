@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { CurrencyConfig } from '~config';
 import { CoreCurrencyService } from '~core/currency';
 import { BadRequestError, ServiceUnavailableError } from '~errors';
+import { PlatformMetricsService } from '~lib/metrics';
 import {
   CurrencyRateInput,
   CurrencyRateSyncOptions,
@@ -35,6 +36,7 @@ export class CurrencyRateSyncService {
     private readonly currencies: CoreCurrencyService,
     private readonly nbu: NbuRateService,
     private readonly config: CurrencyConfig,
+    private readonly metrics: PlatformMetricsService,
   ) {}
 
   /**
@@ -60,13 +62,22 @@ export class CurrencyRateSyncService {
       throw new BadRequestError(`Inverted range: ${from}..${to}`);
     }
 
-    const report = await this.run(codes, from, to, options);
+    const report = await this.run(codes, from, to, options)
+      .catch((error: unknown) => {
+        this.metrics.currencySync('failed');
+
+        throw error;
+      });
 
     if (!report.fetched) {
+      this.metrics.currencySync('failed');
+
       throw new ServiceUnavailableError(
         `NBU returned no rates at all for ${codes.join(', ')} ${from}..${to}`,
       );
     }
+
+    this.metrics.currencySync('success');
 
     return report;
   }

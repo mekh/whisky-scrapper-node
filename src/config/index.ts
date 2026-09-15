@@ -5,6 +5,7 @@ export { CurrencyConfig } from './parts/currency.config';
 export { DbConfig } from './parts/db.config';
 export { JwtAccessConfig } from './parts/jwt-access.config';
 export { LoggerConfig } from './parts/logger.config';
+export { MetricsConfig } from './parts/metrics.config';
 export { PushConfig } from './parts/push.config';
 export { RateLimitConfig } from './parts/rate-limit.config';
 export { ScrapeConfig } from './parts/scrape.config';

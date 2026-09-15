@@ -4,6 +4,7 @@ import { PushConfig } from '~config';
 import { PUSH_MAX_PREVIOUS_GAP_DAYS } from '~constants';
 import { CorePriceSnapshotService } from '~core/price-snapshot';
 import { CorePushService } from '~core/push';
+import { PlatformMetricsService } from '~lib/metrics';
 import { WebPushService } from '~lib/web-push';
 import {
   ID,
@@ -80,6 +81,7 @@ export class PushDigestService {
     private readonly snapshots: CorePriceSnapshotService,
     private readonly webPush: WebPushService,
     private readonly config: PushConfig,
+    private readonly metrics: PlatformMetricsService,
   ) {}
 
   /**
@@ -162,8 +164,11 @@ export class PushDigestService {
    */
   public async dispatchAfterSync(): Promise<void> {
     try {
-      await this.dispatch();
+      const report = await this.dispatch();
+
+      this.metrics.pushDigest(report.users > 0 ? 'sent' : 'empty');
     } catch (error) {
+      this.metrics.pushDigest('failed');
       this.logger.error('Post-sync push dispatch failed: %o', error);
     }
   }

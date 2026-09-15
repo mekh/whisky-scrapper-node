@@ -1,6 +1,7 @@
 import type { PushConfig } from '~config';
 import type { CorePriceSnapshotService } from '~core/price-snapshot';
 import type { CorePushService } from '~core/push';
+import type { PlatformMetricsService } from '~lib/metrics';
 import type { WebPushService } from '~lib/web-push';
 import type { ID, PushDropRow, WebPushOutcome } from '~types';
 
@@ -46,6 +47,7 @@ function makeService(options?: {
   service: PushDigestService;
   core: Record<string, jest.Mock>;
   webPush: { enabled: boolean; send: jest.Mock };
+  metrics: Record<string, jest.Mock>;
 } {
   const outcomes = [...options?.outcomes ?? []];
 
@@ -84,14 +86,24 @@ function makeService(options?: {
 
   const config = { concurrency: 2, logRetentionDays: 30 };
 
+  /**
+   * A recorder that swallows everything: the digest counters have their own
+   * coverage and these specs assert what was sent.
+   */
+  const metrics = {
+    pushDigest: jest.fn(),
+    pushSent: jest.fn(),
+  };
+
   const service = new PushDigestService(
     core as unknown as CorePushService,
     snapshots as unknown as CorePriceSnapshotService,
     webPush as unknown as WebPushService,
     config as PushConfig,
+    metrics as unknown as PlatformMetricsService,
   );
 
-  return { service, core, webPush };
+  return { service, core, webPush, metrics };
 }
 
 describe('PushDigestService.dispatch', () => {

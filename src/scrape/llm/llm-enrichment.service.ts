@@ -123,6 +123,7 @@ export class LlmEnrichmentService {
     const parsed = await this.client.askJsonArray(
       PROMPT.replace('{items}', listing),
       MAX_TOKENS,
+      { pass: 'fields' },
     );
 
     snaps.forEach((snap, index) => this.merge(snap, parsed[index]));

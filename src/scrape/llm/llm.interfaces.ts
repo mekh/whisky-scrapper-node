@@ -15,6 +15,13 @@ export interface LlmCallOverrides {
    * Whether the model may spend tokens on reasoning for this call.
    */
   reasoning?: boolean;
+
+  /**
+   * Which pass is asking — `fields`, `names`, `flavors` or `research`. It
+   * labels the spend counters, and it is here rather than derived because
+   * this transport is shared and cannot tell who called it.
+   */
+  pass?: string;
 }
 
 /**

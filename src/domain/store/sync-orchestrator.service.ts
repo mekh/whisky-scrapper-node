@@ -8,6 +8,7 @@ import { PushDigestService } from '~domain/push';
 import { SyncEngine, SyncTrigger } from '~enums';
 import { BadRequestError, DuplicateError, NotFoundError } from '~errors';
 import { InstanceService } from '~lib/instance';
+import { SyncMetricsService } from '~lib/metrics';
 import { SyncFileLogService, SyncFileLogWriter } from '~lib/sync-file-log';
 import { ScrapeService } from '~scrape';
 import type {
@@ -82,6 +83,7 @@ export class SyncOrchestratorService implements OnModuleInit {
     private readonly fileLog: SyncFileLogService,
     private readonly pushDigest: PushDigestService,
     private readonly instances: InstanceService,
+    private readonly metrics: SyncMetricsService,
   ) {}
 
   /**
@@ -299,6 +301,8 @@ export class SyncOrchestratorService implements OnModuleInit {
     const startedAt = Date.now();
     let outcome = UNKNOWN_FAILURE;
 
+    this.metrics.runStarted();
+
     writer.header(
       `Sync started for ${store.slug} (${store.name}, tier ${store.tier}, `
         + `${trigger}) ${store.baseUrl}`,
@@ -334,6 +338,19 @@ export class SyncOrchestratorService implements OnModuleInit {
         'ERROR',
       );
     } finally {
+      /**
+       * Recorded here rather than in either branch above, so a run that
+       * throws on its way out is still counted — and so the freshness gauge
+       * this feeds is stamped exactly when the lock is released.
+       */
+      this.metrics.runFinished(
+        store.slug,
+        trigger,
+        outcome.success ? 'success' : 'failed',
+        Date.now() - startedAt,
+      );
+      this.recordCounters(store.slug, outcome);
+
       try {
         await this.syncLogs.finish(logId, outcome);
       } finally {
@@ -452,7 +469,7 @@ export class SyncOrchestratorService implements OnModuleInit {
 
     return Promise.race([
       this.scrape.collectStore(store.slug, {
-        reporter: this.buildReporter(logId, writer),
+        reporter: this.buildReporter(store.slug, logId, writer),
         deadline,
       }),
       expired,
@@ -461,19 +478,38 @@ export class SyncOrchestratorService implements OnModuleInit {
 
   /**
    * Builds the progress sink that mirrors scrape progress into the run's log
-   * file and the open `sync_log` row. Both are best-effort: neither a dropped
-   * line nor a failed touch may fail the run.
+   * file, its metrics and the open `sync_log` row. All three are best-effort:
+   * none of them may fail the run.
    *
+   * @param slug - The store being synced, for the metric labels.
    * @param logId - The open sync-log row id.
    * @param writer - The run's log file writer.
    * @returns The progress reporter.
    */
   private buildReporter(
+    slug: string,
     logId: ID,
     writer: SyncFileLogWriter,
   ): ScrapeProgressReporter {
+    /**
+     * The enrichment event reports a running total, so the counter is fed
+     * its difference. Kept in this closure because it belongs to one run.
+     */
+    let detailsDone = 0;
+
     return (event: ScrapeProgressEvent): void => {
       this.writeProgress(writer, event);
+
+      if (event.kind === 'enrich') {
+        this.metrics.detailFetched(
+          slug,
+          'fetched',
+          Math.max(0, event.done - detailsDone),
+        );
+        detailsDone = event.done;
+      }
+
+      this.recordProgress(slug, event);
 
       const total = this.progressTotal(event);
 
@@ -485,6 +521,57 @@ export class SyncOrchestratorService implements OnModuleInit {
         this.logger.warn('Progress touch failed: %o', error);
       });
     };
+  }
+
+  /**
+   * Mirrors a progress event into the run's counters.
+   *
+   * Only the events that name something an operator would act on: a page
+   * walked, a detail page that failed, a pass that ran out of budget, a walk
+   * that could not prove it finished. The rest are progress, not outcomes.
+   *
+   * @param slug - The store being synced.
+   * @param event - The progress event.
+   */
+  private recordProgress(slug: string, event: ScrapeProgressEvent): void {
+    switch (event.kind) {
+      case 'page':
+        this.metrics.pageWalked(slug);
+        break;
+      case 'detail-failed':
+        this.metrics.detailFetched(slug, 'failed');
+        break;
+      case 'detail-deadline':
+        this.metrics.deadlineSkipped(slug, 'detail', event.pending);
+        break;
+      case 'llm-deadline':
+        this.metrics.deadlineSkipped(slug, event.pass, event.pending);
+        break;
+      case 'listing-incomplete':
+        this.metrics.listingIncompleted(slug, event.stop);
+        break;
+      case 'stock-drop':
+        this.metrics.stockDropped(slug);
+        break;
+      default:
+        break;
+    }
+  }
+
+  /**
+   * Records what a finished run wrote.
+   *
+   * Taken from the outcome rather than from the `persisted` event, which
+   * carries the same numbers: counting both would double every offer.
+   *
+   * @param slug - The store that was synced.
+   * @param outcome - The run's closing counters.
+   */
+  private recordCounters(slug: string, outcome: SyncOutcome): void {
+    this.metrics.itemsWritten(slug, 'added', outcome.added);
+    this.metrics.itemsWritten(slug, 'updated', outcome.updated);
+    this.metrics.itemsWritten(slug, 'removed', outcome.removed);
+    this.metrics.itemsWritten(slug, 'seen', outcome.total);
   }
 
   /**

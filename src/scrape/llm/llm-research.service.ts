@@ -211,7 +211,11 @@ export class LlmResearchService {
     const parsed = await this.client.askJsonArray(
       PROMPT.replace('{items}', listing),
       MAX_TOKENS,
-      { model: this.config.llmResearchModel, reasoning: false },
+      {
+        model: this.config.llmResearchModel,
+        reasoning: false,
+        pass: 'research',
+      },
     );
 
     batch.forEach((item, index) => this.merge(item, parsed[index]));

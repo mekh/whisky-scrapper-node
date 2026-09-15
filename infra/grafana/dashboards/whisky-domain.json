@@ -1,0 +1,1447 @@
+{
+  "uid": "whisky-domain",
+  "title": "Whisky — Domain",
+  "description": "Is the product working: the catalogue cache, the scrapers, what the model passes cost, notifications, rates and access.",
+  "tags": [
+    "whisky"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "30s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "type": "row",
+      "title": "Catalogue cache",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Hit ratio",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum(rate(whisky_cache_operations_total{result=\"hit\"}[30m])) / sum(rate(whisky_cache_operations_total[30m]))",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.8
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "id": 2
+    },
+    {
+      "type": "stat",
+      "title": "Bypassing the cache",
+      "description": "1 means a committed write the cache was never told about. While it stands every read goes to the database.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "max(whisky_cache_dirty)",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "id": 3
+    },
+    {
+      "type": "stat",
+      "title": "Generation",
+      "description": "Bumped after every catalogue write. All replicas should agree.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "max(whisky_cache_generation)",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "id": 4
+    },
+    {
+      "type": "stat",
+      "title": "Stores switched on",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum(whisky_catalogue_store_active)",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "id": 5
+    },
+    {
+      "type": "timeseries",
+      "title": "Cache operations / s",
+      "description": "`bypass` is the cache being skipped on purpose — disabled, a payload over the size cap, or a bump outstanding.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (result) (rate(whisky_cache_operations_total[5m]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{result}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 40,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "id": 6
+    },
+    {
+      "type": "timeseries",
+      "title": "Cache command latency p95",
+      "description": "Bounded by CACHE_READ_TIMEOUT_MS (250 ms); anything at the ceiling is a timeout, which reads as a miss.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(whisky_cache_command_duration_seconds_bucket[10m])))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{operation}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "id": 7
+    },
+    {
+      "type": "row",
+      "title": "Scraping",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      }
+    },
+    {
+      "type": "table",
+      "title": "Store freshness",
+      "description": "How long since each store last synced successfully. The alert fires at two days, for switched-on stores only.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "time() - whisky_sync_last_success_timestamp_seconds",
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "age"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 86400
+                    },
+                    {
+                      "color": "red",
+                      "value": 172800
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "job": true,
+              "instance": true,
+              "replica": true
+            },
+            "renameByName": {
+              "Value": "age",
+              "store": "store"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "age",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "id": 9
+    },
+    {
+      "type": "stat",
+      "title": "Syncs running now",
+      "description": "Across the fleet. More than SYNC_MAX_PARALLEL_TRACKS means several instances entered runFullSync — the cron claim was lost, which is tolerated but works the host harder.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum(whisky_sync_runs_in_flight)",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 14
+      },
+      "id": 10
+    },
+    {
+      "type": "timeseries",
+      "title": "Sync duration p95",
+      "description": "Against the budgets: 20 min for an HTTP store, 45 for the browser tier. A run that reaches its budget is abandoned having written nothing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, store) (rate(whisky_sync_run_duration_seconds_bucket[24h])))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{store}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 0,
+        "y": 22
+      },
+      "id": 11
+    },
+    {
+      "type": "timeseries",
+      "title": "Sync runs / hour",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (store, outcome) (increase(whisky_sync_runs_total[1h]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{store}} {{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 30
+      },
+      "id": 12
+    },
+    {
+      "type": "timeseries",
+      "title": "Offers written / s",
+      "description": "`seen` is everything the listing walk found, including the out-of-stock items persist skips — so it is not added+updated.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (kind) (rate(whisky_sync_items_total[30m]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{kind}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 30
+      },
+      "id": 13
+    },
+    {
+      "type": "timeseries",
+      "title": "Pages walked / s",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (store) (rate(whisky_scrape_pages_total[30m]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{store}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 38
+      },
+      "id": 14
+    },
+    {
+      "type": "timeseries",
+      "title": "Detail pages / s",
+      "description": "Each one costs a politeness delay, so this is the scrape's real budget.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (store, outcome) (rate(whisky_scrape_detail_pages_total[30m]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{store}} {{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 38
+      },
+      "id": 15
+    },
+    {
+      "type": "timeseries",
+      "title": "Stock-drop warnings",
+      "description": "A run whose in-stock count fell far enough to be worth a look. It no longer blocks the sweep — that froze a store's availability for days once — so this is the alert the ratio survives as.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (store) (increase(whisky_scrape_stock_drop_total[24h]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{store}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 46
+      },
+      "id": 16
+    },
+    {
+      "type": "timeseries",
+      "title": "Gave up for want of budget",
+      "description": "Items an optional pass skipped. Their fields stay empty until `pnpm backfill --store <slug>` is run. This was previously visible only inside a file on disk.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (store, pass) (increase(whisky_scrape_deadline_skips_total[6h]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{store}} {{pass}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 46
+      },
+      "id": 17
+    },
+    {
+      "type": "row",
+      "title": "Model passes and notifications",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens / s by pass",
+      "description": "Direct spend. A `reasoning` series that is not near zero means a provider is ignoring the reasoning switch — which has eaten a whole completion budget here before.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (pass, kind) (rate(whisky_llm_tokens_total[30m]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{pass}} {{kind}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 55
+      },
+      "id": 19
+    },
+    {
+      "type": "timeseries",
+      "title": "Model calls / s",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (pass, outcome) (rate(whisky_llm_requests_total[30m]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{pass}} {{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 55
+      },
+      "id": 20
+    },
+    {
+      "type": "timeseries",
+      "title": "Model call latency p95",
+      "description": "Per-batch latency, not per-item cost, is what once made the passes unaffordable.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, pass) (rate(whisky_llm_request_duration_seconds_bucket[30m])))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{pass}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 63
+      },
+      "id": 21
+    },
+    {
+      "type": "timeseries",
+      "title": "Push sends / hour",
+      "description": "`gone` is a dead endpoint being pruned, which is routine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (outcome) (increase(whisky_push_notifications_total[1h]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 63
+      },
+      "id": 22
+    },
+    {
+      "type": "row",
+      "title": "Money and access",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 71
+      }
+    },
+    {
+      "type": "table",
+      "title": "Exchange-rate freshness",
+      "description": "The source publishes every calendar day, so a gap of more than a couple of days cannot be a weekend.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "time() - whisky_currency_rate_last_effective_timestamp_seconds",
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "age"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "job": true,
+              "instance": true,
+              "replica": true
+            },
+            "renameByName": {
+              "Value": "age"
+            }
+          }
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 72
+      },
+      "id": 24
+    },
+    {
+      "type": "timeseries",
+      "title": "Login attempts / hour",
+      "description": "`throttled` is the ladder refusing before the password was even checked. Penalties climbing is somebody guessing, or a client retrying a wrong password in a loop.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (outcome) (increase(whisky_auth_login_attempts_total[1h]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{outcome}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum(increase(whisky_auth_throttle_penalties_total[1h]))",
+          "refId": "B",
+          "format": "time_series",
+          "legendFormat": "penalties"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 72
+      },
+      "id": 25
+    },
+    {
+      "type": "timeseries",
+      "title": "Cache bumps / hour",
+      "description": "Every catalogue write announces itself here. `boot` fires once per replica start and is what makes a deploy safe.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (reason) (increase(whisky_cache_bumps_total[1h]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 80
+      },
+      "id": 26
+    },
+    {
+      "type": "timeseries",
+      "title": "Rate sync and digests / day",
+      "description": "Both run on a schedule, so a flat zero is itself the finding.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (outcome) (increase(whisky_currency_rate_sync_total[24h]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "rates {{outcome}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (outcome) (increase(whisky_push_digests_total[24h]))",
+          "refId": "B",
+          "format": "time_series",
+          "legendFormat": "digests {{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 80
+      },
+      "id": 27
+    },
+    {
+      "type": "timeseries",
+      "title": "Limiter fail-open / hour",
+      "description": "Requests let through without being charged, because the limiter's store could not answer. Without this counter an API with no effective rate limit looks exactly like one whose limits work.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum(increase(whisky_rate_limit_store_failures_total[1h]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "uncounted requests"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 88
+      },
+      "id": 28
+    }
+  ]
+}

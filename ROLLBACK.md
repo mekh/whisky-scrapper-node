@@ -75,6 +75,51 @@ whisky_db whisky_valkey` once nothing is attached.
 **Rolling this back** is stopping the new stack and starting the old
 infrastructure project again; both read the same volumes, so no data moves.
 
+## 0.2 One-time: the monitoring deploy (2026-09-15)
+
+The monitoring stack is a **separate compose project** and is purely
+additive — rolling it back is `docker compose -f
+infra/docker-compose.monitoring.yaml down`, which touches nothing the
+application uses. It holds no application data; its volumes are Prometheus's
+own samples and Grafana's own database.
+
+**One thing in that deploy is not additive, and it is the only rollback trap
+here: the HAProxy probe URI moved from `/health` to `/health/live`.**
+
+- `infra/haproxy/haproxy.cfg` now probes `/health/live`, a route that exists
+  only from this version of the API onwards.
+- **Rolling the application back past this commit while that config is
+  mounted drains the entire backend**: every replica 404s the probe, HAProxy
+  takes them all out of rotation, and the site answers 503 with three healthy
+  replicas running.
+- So a rollback of the app **must** restore the probe URI in the same step:
+
+  ```bash
+  sed -i 's|uri /health/live|uri /health|' infra/haproxy/haproxy.cfg
+  docker compose up -d lb          # HAProxy re-reads its config on restart
+  docker compose ps be             # then verify the replicas come back up
+  ```
+
+  Confirm with HAProxy's own view rather than by assumption:
+
+  ```bash
+  docker exec whisky-lb wget -qO- http://127.0.0.1:8404/metrics \
+    | grep '^haproxy_server_status{proxy="app"'
+  ```
+
+  `2` is UP. Anything else on every slot is this trap.
+
+Two smaller notes for the same deploy:
+
+- `haproxy.cfg` **moved** to `infra/haproxy/`, so a checkout rolled back past
+  this commit expects it at the repository root again. `docker-compose.yaml`
+  carries the matching path, so rolling both back together is consistent;
+  rolling back only one is not.
+- The host nginx template now returns 404 for `/api/health` and
+  `/api/metrics`. Nothing applies it automatically, so a rollback of this
+  repository does not undo it — if the block was copied to the host, put the
+  previous server block back by hand.
+
 ## 1. Pre-flight (mandatory, BEFORE the upgrade)
 
 Everything below is cheap; do all of it. It is what makes the rollback paths

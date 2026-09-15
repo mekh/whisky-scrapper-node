@@ -200,7 +200,7 @@ describe('LlmFlavorService.classify', () => {
       expect(askJsonArray).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(Number),
-        { model: 'vendor/flavor-model', reasoning: false },
+        { model: 'vendor/flavor-model', reasoning: false, pass: 'flavors' },
       );
     },
   );

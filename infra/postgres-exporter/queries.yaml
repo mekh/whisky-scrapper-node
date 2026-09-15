@@ -1,0 +1,77 @@
+# Extra queries for postgres-exporter, beyond the ones it ships with.
+#
+# The rule every entry here obeys: it must be cheap enough to run on every
+# scrape. Nothing counts rows — `n_live_tup` is the planner's own estimate and
+# is free, where a `COUNT(*)` over `price_snapshot` would read a third of a
+# million rows every thirty seconds to answer a question nobody asks that
+# often.
+#
+# `pg_stat_statements` is collected by the exporter's own
+# `--collector.stat_statements` flag rather than from here, which is what
+# keeps the query TEXT out of the labels: a few thousand distinct statement
+# texts as label values is how a Prometheus falls over.
+
+# Size on disk per table, which is what says whether the history is growing
+# the way it is expected to and how much of the disk it has taken.
+whisky_table:
+  query: |
+    SELECT
+      relname AS table_name,
+      pg_total_relation_size(relid) AS total_bytes,
+      pg_relation_size(relid) AS heap_bytes,
+      pg_indexes_size(relid) AS index_bytes,
+      n_live_tup AS estimated_rows,
+      n_dead_tup AS dead_rows
+    FROM pg_stat_user_tables
+    WHERE schemaname = 'public'
+  metrics:
+    - table_name:
+        usage: LABEL
+        description: The table.
+    - total_bytes:
+        usage: GAUGE
+        description: Size on disk including indexes and TOAST.
+    - heap_bytes:
+        usage: GAUGE
+        description: Size of the table's own heap.
+    - index_bytes:
+        usage: GAUGE
+        description: Size of the table's indexes.
+    - estimated_rows:
+        usage: GAUGE
+        description: Live rows, as the planner estimates them.
+    - dead_rows:
+        usage: GAUGE
+        description: Dead rows awaiting vacuum; a rising figure means vacuum
+          is not keeping up.
+
+# The oldest transaction still open. A long one holds back vacuum across the
+# whole database, and the application bounds it with
+# `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS` — this is how that bound is observed
+# working rather than assumed.
+whisky_activity:
+  query: |
+    SELECT
+      COALESCE(
+        EXTRACT(EPOCH FROM (now() - MIN(xact_start))),
+        0
+      ) AS oldest_transaction_seconds,
+      COUNT(*) FILTER (WHERE state = 'active') AS active_backends,
+      COUNT(*) FILTER (WHERE state = 'idle in transaction')
+        AS idle_in_transaction_backends,
+      COUNT(*) FILTER (WHERE wait_event_type = 'Lock') AS waiting_on_lock
+    FROM pg_stat_activity
+    WHERE backend_type = 'client backend'
+  metrics:
+    - oldest_transaction_seconds:
+        usage: GAUGE
+        description: Age of the oldest open transaction, in seconds.
+    - active_backends:
+        usage: GAUGE
+        description: Backends currently executing a statement.
+    - idle_in_transaction_backends:
+        usage: GAUGE
+        description: Backends holding a transaction open while doing nothing.
+    - waiting_on_lock:
+        usage: GAUGE
+        description: Backends blocked waiting for a lock.

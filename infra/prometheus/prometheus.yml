@@ -1,0 +1,104 @@
+# What Prometheus scrapes on this host.
+#
+# The replicas are discovered the same way HAProxy discovers them — Docker's
+# embedded DNS answers the compose service name `be` with one A record per
+# replica — so scaling `APP_INSTANCES` needs no change here either.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    # Stamped on every series leaving this server, so a second environment's
+    # data could never be mistaken for this one's.
+    environment: production
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - whisky-alerts:9093
+
+rule_files:
+  - /etc/prometheus/rules/*.rules.yml
+
+scrape_configs:
+  # The API replicas. `dns_sd_configs` with type A is exactly what HAProxy's
+  # `server-template` consumes, so the two always agree about how many
+  # replicas there are.
+  #
+  # The `instance` label is a container IP and churns on every redeploy;
+  # every series the application emits therefore carries its own `replica`
+  # label, and the dashboards group by that so a deploy does not cut a graph
+  # in half.
+  - job_name: whisky-api
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names:
+          - be
+        type: A
+        port: 4000
+        refresh_interval: 15s
+    # Uncomment together with METRICS_TOKEN in the host `.env` to close the
+    # endpoint on the private network as well.
+    # authorization:
+    #   type: Bearer
+    #   credentials: <METRICS_TOKEN>
+
+  # The load balancer's own native exporter — no side-car needed. This is the
+  # authoritative answer to "which replicas are up": its server slots
+  # (`be1`…`be16`) are stable names that survive a redeploy, unlike a
+  # container address.
+  - job_name: haproxy
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - whisky-lb:8404
+
+  - job_name: postgres
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - whisky-exporter-pg:9187
+
+  # Two Valkey instances with opposite jobs, so they are scraped as two
+  # targets rather than one: the session store must never evict and the
+  # cache is supposed to.
+  - job_name: valkey
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - whisky-exporter-session:9121
+        labels:
+          role: session
+      - targets:
+          - whisky-exporter-cache:9121
+        labels:
+          role: cache
+
+  # The host itself. node-exporter runs in the host's network namespace, so
+  # it has no container name to resolve and is reached through the bridge
+  # gateway instead — `host.docker.internal` is mapped to it by the
+  # `extra_hosts` entry on the prometheus service.
+  #
+  # It used to be the literal private-interface address, which coupled this
+  # file to `MON_BIND_IP` in `infra/.env`: changing that variable silently
+  # left this target pointing at an address nothing listened on any more, and
+  # Prometheus expands no environment variables here to keep the two in step.
+  - job_name: node
+    static_configs:
+      - targets:
+          - host.docker.internal:9100
+
+  - job_name: cadvisor
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - whisky-cadvisor:8080
+
+  # Prometheus watching itself, which is what says whether a rule evaluation
+  # or the storage is falling behind.
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - 127.0.0.1:9090

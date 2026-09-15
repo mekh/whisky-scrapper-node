@@ -13,6 +13,7 @@ export * from './health.interfaces';
 export * from './jwt.interfaces';
 export * from './kb.interfaces';
 export * from './meta.interfaces';
+export * from './metrics.interfaces';
 export * from './permission.interfaces';
 export * from './preference.interfaces';
 export * from './product.interfaces';

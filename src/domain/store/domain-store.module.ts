@@ -40,6 +40,7 @@ import { SyncOrchestratorService } from './sync-orchestrator.service';
     SyncCronService,
   ],
   exports: [
+    StoreService,
     SyncOrchestratorService,
   ],
 })

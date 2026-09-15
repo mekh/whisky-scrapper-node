@@ -143,37 +143,73 @@ forwardfor`** — nginx already sets `X-Real-IP` and `X-Forwarded-For` from the
 real client, and this proxy's own view of "the client" is nginx, so appending
 would put nginx's address at the tail of the header the API reads and collapse
 every caller into one rate-limit bucket and one login ladder. The health check
-is `GET /health` expecting 200 — a liveness probe that names no dependency
-(see "The liveness probe"). And `option redispatch` is what makes a scale-down
+is `GET /health/live` expecting 200 — a liveness probe that names no
+dependency, and must never be pointed at a route that does (see "The health
+routes"). And `option redispatch` is what makes a scale-down
 quiet: without it a connection to a replica that is gone is retried against
 that same replica and then answered 503. It covers a refused connection only
 — a response already under way when its replica dies cannot be retried by any
 proxy, which is what the app's graceful shutdown and `stop_grace_period: 60s`
 are for.
 
-### The liveness probe
+### The health routes (2026-09-15)
 
-`GET /health` (`domain/health`) answers `{"status":"ok"}` from the process
-alone and names no dependency. That is the decision, not a simplification: a
-probe that checked Postgres or Valkey would take **every** replica out of
-rotation the moment that one dependency wobbled, turning a degradation into a
-total outage, while answering no question the balancer is actually asking.
-What it does detect is the failure that matters here — a replica whose event
-loop is blocked does not reply at all.
+Three routes answering three different questions, and keeping them apart is
+the design rather than a convenience. They are built on **`@nestjs/terminus`**
+(`domain/health`).
 
-It is **the one route outside the rate limiter** (`@NoRateLimit()`,
-`~decorators/http`), and that exemption is not a nicety. Measured before it
-existed: twelve probes back to back got nine 200s and three 429s. Every
-replica is probed from the balancer's single address, and since 2026-09-13 the
-buckets are shared by the whole fleet — so at enough replicas or a short
-enough interval the limiter starts refusing probes, a refused probe reads as
-an unhealthy replica, and all of them drain at once. The limiter would have
-become the outage. The rule that comes with the decorator: it may only go on a
-route that costs nothing to serve.
+| Route           | Checks                                            | Status                        | Read by               | Exposure                  |
+| --------------- | ------------------------------------------------- | ----------------------------- | --------------------- | ------------------------- |
+| `/health/live`  | nothing — the process answering **is** the answer | always `200`                  | **HAProxy**           | public; discloses nothing |
+| `/health`       | Postgres, session Valkey, cache Valkey            | `503` when a hard one is down | a person, Grafana     | **404 at the host nginx** |
+| `/health/ready` | the same probes, terser body                      | `503` when not ready          | a future orchestrator | 404 at the host nginx     |
 
-It replaced a check on `GET /meta` expecting **401**, which worked only for as
-long as `/meta` stayed authenticated — a status code is a poor thing to pin
-liveness to.
+**`/health/live` is what the balancer probes, and it must stay a constant.**
+`haproxy.cfg` says so too. Every replica is probed on the same route at the
+same instant, so a check that can fail on a wobbling Postgres or Valkey fails
+on **all** of them at once and drains the entire backend — one dependency's
+bad minute becomes the API unreachable. Blocking `/health` at nginx does not
+help: HAProxy probes from inside the compose network. What the probe does
+detect is the failure that matters there — a replica whose event loop is
+blocked does not reply at all.
+
+This **reverses** the earlier decision that the probe names no dependency, at
+the owner's call; the split is what keeps the reversal safe. The probe URI
+moved from `/health` to `/health/live` in the same change that created the
+route, because pointing it at a route that does not exist yet would fail
+every replica's check.
+
+**`/health/live` is one of two routes outside the rate limiter**
+(`@NoRateLimit()`, `~decorators/http`; `GET /metrics` is the other), and that
+exemption is not a nicety. Measured before it existed: twelve probes back to
+back got nine 200s and three 429s. Every replica is probed from the
+balancer's single address, and the buckets are shared by the whole fleet — so
+at enough replicas the limiter starts refusing probes, a refused probe reads
+as an unhealthy replica, and all of them drain at once. The limiter would
+have become the outage. The rule that comes with the decorator: it may only
+go on a route that costs nothing to serve, which is why `/health` and
+`/health/ready` stay inside it.
+
+**The cache is reported `up` even when it is unreachable**, carrying
+`degraded: true` and a reason instead. Every cache failure already degrades to
+a miss and the request is served from the database, so a cache that is gone
+makes the API slower and never wrong — answering 503 for it would refuse
+traffic the application is handling correctly. The `whisky_dependency_up`
+gauge reads the indicator's own `reachable` field rather than its status, so
+an unreachable cache still alerts.
+
+`terminus` is pinned to **11.1.1, not 12**: 12 ships ESM only and this project
+compiles to CommonJS, so while Node 22's `require(esm)` makes it work at
+runtime, Jest cannot load it without transform configuration that did not come
+good. The only thing lost is the `degraded` **status**, whose semantics the
+cache indicator reproduces as data. Its `TypeOrmHealthIndicator` issues the
+database's `SELECT 1` outside a repository — a deliberate exception to the
+layering rule, since it is a third-party probe with its own timeout rather
+than application code reaching into the database.
+
+The probe replaced a check on `GET /meta` expecting **401**, which worked only
+for as long as `/meta` stayed authenticated — a status code is a poor thing to
+pin liveness to.
 
 Local infrastructure: `docker-compose.dev.yaml` starts **PostgreSQL 18**
 (host port **5431**, db `db`, user `user`, password `1`) and **Valkey 8**
@@ -202,6 +238,8 @@ relative imports (`./`, `../`).
 ```
 be/
 ├── typeorm.config.ts        # DataSource for TypeORM CLI (migrations)
+├── infra/                   # the edge (HAProxy, the host nginx block) and the
+│                            # monitoring stack — see infra/README.md
 ├── migrations/              # generated TypeORM migrations
 └── src/
     ├── app/                 # application layer: global cross-cutting concerns
@@ -242,6 +280,7 @@ be/
     │   ├── cache/           # versioned catalogue cache (own Valkey instance)
     │   ├── db-logger/       # TypeORM logger that keeps query parameters out
     │   ├── logger/          # wraps @toxicoder/nestjs-pino (redaction, msg formatting)
+    │   ├── metrics/         # the Prometheus registry + one recorder per area
     │   ├── valkey/          # wraps @toxicoder/nestjs-valkey (timeouts live here)
     │   └── web-push/        # wraps the web-push package (VAPID, outcome mapping)
     └── utils/               # pure stateless helpers (*.util.ts), e.g. Hash (argon2)
@@ -2002,11 +2041,13 @@ Rate-limit vars in `RateLimitConfig` — `RATE_LIMIT_ENABLED` (**true**), `RATE_
 `APP_TRUSTED_IP_HEADERS` (`x-real-ip,x-forwarded-for`) and `APP_TRUST_PROXY` (**true**) decide which forwarding headers the client's address may be read from, and whether any may — see "Who the caller is".
 Cache vars in `CacheConfig` — `CACHE_ENABLED` (**true**, the kill switch), `CACHE_TTL_SEC` (86400, garbage collection rather than freshness), `CACHE_READ_TIMEOUT_MS` (250, deliberately far under the client's own command timeout), `CACHE_MAX_ENTRY_BYTES` (8 MiB, measured after compression — the `/meta` blob), `CACHE_MAX_SET_BYTES` (32 MiB, a report set's compressed index plus its uncompressed groups), `CACHE_BOOT_BUMP` (**true**; the scripts turn it off through `suppressBootBump()`), and the connection set `CACHE_VALKEY_HOST` / `CACHE_VALKEY_PORT` / `CACHE_VALKEY_DB` / `CACHE_VALKEY_PASSWORD` / `CACHE_VALKEY_PREFIX` / `CACHE_VALKEY_COMMAND_TIMEOUT_MS` / `CACHE_VALKEY_CONNECT_TIMEOUT_MS` / `CACHE_VALKEY_KEEP_ALIVE_MS` / `CACHE_VALKEY_MAX_RETRIES_PER_REQUEST`, **each falling back to its `VALKEY_*` equivalent**, so sharing the session instance is the zero-configuration default and giving the cache its own is one variable — see "Catalogue cache".
 
+Metrics vars in `MetricsConfig` — `METRICS_ENABLED` (**true**, the kill switch), `METRICS_DEFAULT_METRICS` (**true**, the Node runtime defaults), `METRICS_TOKEN` (unset — a bearer check on `/metrics` for a deployment that wants the endpoint closed on its private network too) and `METRICS_COLLECT_INTERVAL_MS` (60000 — how often the periodic collector refreshes its gauges; **never on scrape**). See "Metrics".
+
 `DB_LOG_PARAMETERS` (default false) decides whether a logged statement carries its bound values; see "Logging".
 
 [`.env.example`](.env.example) lists every variable the application reads with the value it falls back to when unset, grouped and annotated `REQUIRED`/`OPTIONAL`. It is the inventory to update alongside any new setting.
 
-In production every `SYNC_*`/`PUSH_*`/`CURRENCY_*`/`NBU_*`/`RATE_LIMIT_*` var is forwarded from the host `.env` by
+In production every `SYNC_*`/`PUSH_*`/`CURRENCY_*`/`NBU_*`/`RATE_LIMIT_*`/`METRICS_*` var is forwarded from the host `.env` by
 the `environment` block of `docker-compose.yaml` — compose reads `.env` only to
 interpolate `${...}` in that file, and the image carries no `.env` of its own
 (`.dockerignore` excludes it), so a var that is not listed there never reaches
@@ -2098,7 +2139,7 @@ One request, one answer: `registerClientIpHook` (`app/context/`) resolves the cl
 
 There used to be three answers, and two of them were wrong. The CLS setup took the first of four headers **raw** — and two of those, `x-client-ip` and `cf-connecting-ip`, are set by nothing in this stack and stripped by nothing either, so a caller could put any address it liked into its own session record. `HttpContextManager.ip` ignored the headers altogether and answered the proxy's address. The rate limiter had its own copy again.
 
-- **The header order is a trust order, and it is configuration, not code.** `APP_TRUSTED_IP_HEADERS` defaults to `x-real-ip,x-forwarded-for` — exactly what `web/scripts/nginx.conf` sets — and takes `cf-connecting-ip` at its head for a deployment that really is behind Cloudflare. Which is a deployment fact this repository cannot know, so it does not guess. `APP_TRUST_PROXY=false` disables header resolution entirely, for a process reachable without a proxy, where every one of those headers is plain client input; it is a separate flag rather than an empty list because compose forwards an omitted host var as an empty string, so an empty value cannot be told from an unset one.
+- **The header order is a trust order, and it is configuration, not code.** `APP_TRUSTED_IP_HEADERS` defaults to `x-real-ip,x-forwarded-for` — exactly what `infra/nginx/nginx.conf` sets — and takes `cf-connecting-ip` at its head for a deployment that really is behind Cloudflare. Which is a deployment fact this repository cannot know, so it does not guess. `APP_TRUST_PROXY=false` disables header resolution entirely, for a process reachable without a proxy, where every one of those headers is plain client input; it is a separate flag rather than an empty list because compose forwards an omitted host var as an empty string, so an empty value cannot be told from an unset one.
 - **Only the last hop of a header is read**, and that is the load-bearing line. nginx sets `X-Real-IP $remote_addr`, which **replaces** whatever arrived — trustworthy whole. It sets `X-Forwarded-For $proxy_add_x_forwarded_for`, which **appends**: a client sending `X-Forwarded-For: 1.2.3.4` produces `1.2.3.4, <real peer>`, so the head of that chain is an attacker-chosen string and only the tail is the address nginx accepted. Reading the header raw, or its first entry, would let one caller choose its own identity per request — no limit keyed on it would bound anything, and the limiter's bucket map would grow on demand. A replace-style header has a single hop, so the same rule returns it unchanged.
 - **A Fastify hook, not Nest middleware**, and this cost a debugging round: on Fastify, Nest middleware runs through `middie` and is handed the raw `IncomingMessage`, while guards and param decorators are handed the Fastify `Request` wrapping it. Writing `ctx` on the former leaves the latter untouched, so the resolved address silently never arrived and every caller shared the proxy's bucket. Fastify's own `trustProxy` stays off: `req.ip` is then the proxy's address and serves as the last fallback.
 
@@ -2274,6 +2315,96 @@ Not cached, deliberately: `GET /report/history` and the two search endpoints
 (free-text keys, little to gain), and everything under `/dashboard`,
 `/collection`, `/preference` and `/quick-filter`.
 
+## Metrics (2026-09-15)
+
+Prometheus scrapes the replicas, Grafana draws them, and everything that runs
+the stack is watched by an exporter. The configuration lives in
+[`infra/`](infra/README.md); this section is the decisions.
+
+`GET /metrics` (`domain/metrics`) renders the process's registry as Prometheus
+text. It is `Resource.PUBLIC`, `@NoRateLimit()` and outside the outgoing DTO
+pipeline — a scraper holds no token, and the payload is not a DTO. It is
+reached **on the compose network only**: Prometheus resolves the replicas
+through Docker's DNS exactly as HAProxy does, and the host nginx answers 404
+for `/api/metrics`. `METRICS_TOKEN` adds a bearer check for a deployment that
+wants it closed on the private network too; unset is the right default.
+
+**The library is `@prometheus-io/client`, not `prom-client`** — npm marks the
+latter deprecated in favour of it, and it is the Prometheus organisation's own
+continuation with an identical API. The whole dependency is confined to
+`MetricsService` (`~lib/metrics`), so reverting is one file.
+
+**HTTP timing is a Fastify `onResponse` hook, not a Nest interceptor**
+(`app/metrics/http-metrics.hook.ts`). An interceptor sees only requests that
+reach a handler, so a 404 from the router, a request refused in `AuthJwtGuard`
+and a body rejected by the pipe would all be invisible — and those are exactly
+the ones worth counting. Verified live: `/meta` refused by the auth guard is
+counted as `status="401"`, and an unrouted path as `route="__unmatched__"`.
+
+**The route label is the registered pattern** (`request.routeOptions.url`),
+never `request.url`. Labelling by the raw path would mint one time series per
+product and put the cardinality in a caller's hands. Every label value in this
+application is drawn from a closed set — a route pattern, an enum member, a
+store slug — and **none from request data**. The one place that rule is easy
+to break is a new label; check it before adding one.
+
+**Recording happens where the thing already happens.** No new pass over
+anything: the cache's own counters (one helper, so the in-process and
+Prometheus views cannot drift), the rate limiter's charge sites, the login
+ladder's interceptor, the `pg` pool's own numbers, the scrape progress event
+funnel, the LLM transport, the push outcome enum, the currency sync's shared
+entry point.
+
+**A metric nothing feeds is worse than one that does not exist.** Three LLM
+batch counters were designed and then removed for that reason — `LlmBatchRunner`
+is a static generic with no injection to reach, and a failed call is already
+one `whisky_llm_requests_total{outcome="error"}`. The per-store offer gauge
+went the same way: `StoreService.list()` does not carry it, and inventing a
+query for a 60-second timer was not worth it when `/dashboard/*` answers it
+better.
+
+**The collector runs on a timer and never on scrape**
+(`METRICS_COLLECT_INTERVAL_MS`, 60 s). That is what keeps the endpoint safe: a
+handler that ran SQL would let a misconfigured Prometheus — or two of them —
+put the database under load nobody asked for, on a route that is deliberately
+outside the rate limiter. Its cost is one query the API already serves on
+`GET /store`, plus a read of the currency lookup; the pool and cache figures
+are in memory.
+
+**Five metrics carry most of the value**, and each makes visible a state the
+application already models and nothing outside the process could see:
+
+- `whisky_cache_dirty` — a committed write the cache was never told about.
+  While it stands, every read bypasses the cache.
+- `whisky_rate_limit_store_failures_total` — fail-open. Without it, an API
+  with no effective rate limit looks exactly like one whose limits work.
+- `whisky_sync_last_success_timestamp_seconds{store}` — "nothing has synced
+  rozetka in two days" was discoverable only by opening a page and reading a
+  date.
+- `whisky_scrape_deadline_skips_total{store,pass}` — a run that silently gave
+  up on filling fields and said so only inside a file on disk.
+- `whisky_llm_tokens_total{pass,model,kind}` — `completion.usage` was read
+  only to compose an error message. This is direct spend, and the `reasoning`
+  kind catches the provider failure this project has already paid for once.
+
+**Every name is declared in `~constants/metrics.constants.ts`** and every
+PromQL expression in the dashboards and alert rules is checked against that
+list, so a typo cannot ship as a silently empty panel. Nothing the application
+publishes is unwatched — that is a property worth preserving when adding a
+metric.
+
+**`whisky_dependency_up` comes from the same `HealthCheckService` run that
+answers `GET /health`**, so the gauge and the endpoint can never disagree
+about whether Postgres is up; two independent probes eventually would. It
+reads the indicator's `reachable` field rather than its status, because the
+cache's status is always `up` by design (see "The health routes").
+
+Configuration: `METRICS_ENABLED` (true — the kill switch),
+`METRICS_DEFAULT_METRICS` (true — the Node runtime defaults, of which
+`nodejs_eventloop_lag_p99_seconds` is the number this API's own ceiling was
+diagnosed by), `METRICS_TOKEN` (unset) and `METRICS_COLLECT_INTERVAL_MS`
+(60000). All four are forwarded by `docker-compose.yaml`.
+
 ## Logging
 
 Use Nest's `Logger` with a class-name context:
@@ -2389,17 +2520,17 @@ Conventions that hold everywhere:
 - Report defaults (`minPrice`, `maxPrice`, `NEW_DAYS`, …) are fixed server
   constants in `~constants/report.constants.ts`; an unset filter simply means
   "no constraint".
-- **Every endpoint is rate-limited per caller, and every response says where the caller stands** — every endpoint but `GET /health`, which is exempt so that the balancer's probes cannot drain the fleet (see "The liveness probe"). `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` ride on each answer; a `429` carries `Retry-After` (whole seconds) and `X-RateLimit-Retry-After-Ms` (precise, and the one to prefer — the limits are sub-second). A `429` is refused before the handler runs, so nothing happened and any method is safe to retry after the stated delay. Sustained budget: 3 requests per second per account with 10 spendable at once, tightened to 1/s on `/collection` (3 at once) and to a 60-at-once budget on `/report` and `/dashboard`. See "Rate limiting".
+- **Every endpoint is rate-limited per caller, and every response says where the caller stands** — every endpoint but `GET /health/live` and `GET /metrics`, which are exempt so that the balancer's probes and Prometheus's scrapes cannot drain the fleet (see "The health routes" and "Metrics"). `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` ride on each answer; a `429` carries `Retry-After` (whole seconds) and `X-RateLimit-Retry-After-Ms` (precise, and the one to prefer — the limits are sub-second). A `429` is refused before the handler runs, so nothing happened and any method is safe to retry after the stated delay. Sustained budget: 3 requests per second per account with 10 spendable at once, tightened to 1/s on `/collection` (3 at once) and to a 60-at-once budget on `/report` and `/dashboard`. See "Rate limiting".
 
 ### Auth endpoints
 
-| Endpoint                                                           | Notes                                                                                                                                                                                                                                                                                                                                                                                             |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Endpoint                                                           | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POST /auth/login` `{login,password}` → `{access}` + cookie        | Response key is `access`. Cookie is `refresh`, HttpOnly, `sameSite=strict`, `path=/`. Imported (pbkdf2) users log in with old passwords; the hash is upgraded to Argon2 on first login. **`429` after five failed attempts**, then again after each of 5/10/60/300/900/3600 s — plus one attempt per second throughout. `Retry-After` names the wait; a success clears it. A `401` and a `429` both state the ladder's standing in `X-Login-Attempts` / `X-Login-Attempts-Remaining`, plus `X-Login-Retry-After-Ms` while a penalty runs. See "The login ladder" |
-| `POST /auth/refresh` (refresh cookie) → `{access}`                 | Rotates the refresh cookie.                                                                                                                                                                                                                                                                                                                                                                       |
-| `POST /auth/logout`                                                | Revokes the session. `204`.                                                                                                                                                                                                                                                                                                                                                                       |
-| `GET /auth/me` → `{id, sid, admin}`                                | Current user from the token.                                                                                                                                                                                                                                                                                                                                                                      |
-| `GET /auth/session[/:userId]`, `DELETE /auth/session/:userId/:sid` | Session listing / revocation.                                                                                                                                                                                                                                                                                                                                                                     |
+| `POST /auth/refresh` (refresh cookie) → `{access}`                 | Rotates the refresh cookie.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `POST /auth/logout`                                                | Revokes the session. `204`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `GET /auth/me` → `{id, sid, admin}`                                | Current user from the token.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `GET /auth/session[/:userId]`, `DELETE /auth/session/:userId/:sid` | Session listing / revocation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 (space-separated `resource:action`). Admins bypass scope checks.
@@ -2408,7 +2539,10 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 
 | Endpoint                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Auth                                         |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| `GET /health` — liveness for the load balancer: `{"status":"ok"}` from the process alone, no dependency checked, never rate-limited (see "The liveness probe")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | public                                       |
+| `GET /health/live` — liveness for the load balancer: `{"status":"ok"}` from the process alone, no dependency checked, never rate-limited (see "The health routes")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | public                                       |
+| `GET /health` — the deep check: Postgres and both Valkeys, `503` when a hard one is down. The cache reports `up` with `degraded: true` when unreachable, because it fails open. Blocked at the host nginx                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | public, blocked at the edge                  |
+| `GET /health/ready` — the same probes for an orchestrator                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | public, blocked at the edge                  |
+| `GET /metrics` — the Prometheus exposition of this replica, `text/plain`. Never rate-limited, never validated as a DTO, blocked at the host nginx; `METRICS_TOKEN` adds a bearer check when set (see "Metrics")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | public                                       |
 | `GET /meta`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | any logged-in user                           |
 | `GET /report/{kind}` (`kind`: catalog\|drops\|low\|new\|best)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | any logged-in user                           |
 | `GET /report/history?term=` — `term` takes a report row's id (a store offer), a canonical `productId` (resolved to that bottling's in-stock, most recently seen offer), or a name/URL substring. The series is always one store's price history                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | any logged-in user                           |
@@ -2419,12 +2553,12 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 | `POST /product/update` `{id, name?, countryCode?, typeName?, age?, abv?, volumeMl?, flavors?}` → `{id, productId, name, nameOrig, merged, created}` — edit product overrides (undefined fields untouched). `id` accepts a report row's id (a store offer) or a canonical `productId`; either way the edit writes the **bottling**, so it applies to every store listing it. **After the write the bottling is folded into any other row with the same name, volume and age**; `merged` says so and `productId` names the survivor, so a client must re-read by offer id rather than trust the id it sent                                                                                                                                                                         | `product:edit`                               |
 | `POST /product/relink` `{id, productId?, name?, countryCode?, typeName?, age?, abv?, volumeMl?, flavors?}` → same shape — move **one store offer** (`id` must be an offer) onto another bottling, leaving the rest of its group alone. With `productId` the target is that bottling; without it the fields describe the target, which is looked up by identity (name, volume, age) and **created only when nothing matches** (`created: true`, every fact `manual`, no key). A found bottling's own facts stand — the fields are the target's address, not an edit of it. The bottling the offer left is deleted when no offer, favorite, blacklist entry or collection row refers to it any more                                                                                | `product:edit`                               |
 | `GET/POST /user`, `GET/PATCH/DELETE /user/:id`, `POST /user/password[/:userId]`, `GET/PUT /user/:userId/permissions`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | admin                                        |
-| `GET /dashboard/meta` — capture bounds + per-store snapshot coverage (data floor, per-store first/last day, listing counts)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `dashboard:read`                              |
-| `GET /dashboard/summary?from&to&stores=` — KPI metrics as `{latest, baseline, delta, deltaPct}` pairs over the range's first/last data day                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `dashboard:read`                              |
-| `GET /dashboard/series?from&to&stores=&byStore=&byCountry=&granularity=` — per-day metric series (total + optional per-store / per-country partitions)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `dashboard:read`                              |
-| `GET /dashboard/breakdown?by=type\|country\|priceBucket\|flavor\|store&date=&stores=` — one day's in-stock assortment sliced by a dimension                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `dashboard:read`                              |
-| `GET /dashboard/movers?from&to&stores=&limit=&minPrice=` — biggest price drops and rises over the range (first vs last snapshot per listing)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `dashboard:read`                              |
-| `GET /dashboard/sync-activity?from&to&stores=` — sync runs, outcomes and persist counters per day                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `dashboard:read`                              |
+| `GET /dashboard/meta` — capture bounds + per-store snapshot coverage (data floor, per-store first/last day, listing counts)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `dashboard:read`                             |
+| `GET /dashboard/summary?from&to&stores=` — KPI metrics as `{latest, baseline, delta, deltaPct}` pairs over the range's first/last data day                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `dashboard:read`                             |
+| `GET /dashboard/series?from&to&stores=&byStore=&byCountry=&granularity=` — per-day metric series (total + optional per-store / per-country partitions)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `dashboard:read`                             |
+| `GET /dashboard/breakdown?by=type\|country\|priceBucket\|flavor\|store&date=&stores=` — one day's in-stock assortment sliced by a dimension                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `dashboard:read`                             |
+| `GET /dashboard/movers?from&to&stores=&limit=&minPrice=` — biggest price drops and rises over the range (first vs last snapshot per listing)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `dashboard:read`                             |
+| `GET /dashboard/sync-activity?from&to&stores=` — sync runs, outcomes and persist counters per day                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `dashboard:read`                             |
 | `GET /preference` — the caller's own favorites and blacklist                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | any logged-in user                           |
 | `GET /preference/{userId}` — another user's preferences                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `preference:read` or self (admin bypasses)   |
 | `POST /preference/favorites` `{productIds}` — add favorites (idempotent), `200` + the fresh preference                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | any logged-in user                           |

@@ -201,7 +201,7 @@ services:
     # more than one replica, and this one is scaled by `APP_INSTANCES` below.
     # The replicas are therefore named after the project and this service —
     # `whisky-be-1..N` — which is also the DNS name HAProxy resolves them by,
-    # so renaming this service means editing `haproxy.cfg` in the same breath.
+    # so renaming this service means editing `infra/haproxy/haproxy.cfg` in the same breath.
     image: whisky-be
     build:
       context: .
@@ -302,6 +302,10 @@ services:
       # its API client by fetching /docs-json at deploy time, so turning it
       # off breaks that build rather than merely hiding a page.
       - SWAGGER_ENABLED=true
+      - METRICS_ENABLED=${METRICS_ENABLED:-}
+      - METRICS_DEFAULT_METRICS=${METRICS_DEFAULT_METRICS:-}
+      - METRICS_TOKEN=${METRICS_TOKEN:-}
+      - METRICS_COLLECT_INTERVAL_MS=${METRICS_COLLECT_INTERVAL_MS:-}
       - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-}
       - RATE_LIMIT_RPS=${RATE_LIMIT_RPS:-}
       - RATE_LIMIT_BURST=${RATE_LIMIT_BURST:-}
@@ -390,11 +394,11 @@ services:
       be:
         condition: service_started
     volumes:
-      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./infra/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     ports:
       # The same address and port the app used to publish itself on: the host
       # nginx keeps its `proxy_pass` unchanged. The container side is the
-      # backend port named in haproxy.cfg, which is why `APP_PORT` must stay
+      # backend port named in infra/haproxy/haproxy.cfg, which is why `APP_PORT` must stay
       # the default — the app's own listener is internal now.
       - '${APP_BIND_IP:-192.168.179.2}:${APP_BIND_PORT:-9977}:4000'
     networks:

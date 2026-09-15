@@ -155,6 +155,7 @@ export class LlmNameExtractionService {
     const names = await this.client.askJsonArray(
       PROMPT.replace('{items}', listing),
       MAX_TOKENS,
+      { pass: 'names' },
     );
 
     chunk.forEach((item, index) => this.merge(item, names[index]));

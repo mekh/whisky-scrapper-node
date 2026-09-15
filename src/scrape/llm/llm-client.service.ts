@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import OpenAI from 'openai';
 
 import { ScrapeConfig } from '~config';
+import { LlmMetricsService } from '~lib/metrics';
 
 import { LlmBudgetError } from './llm-budget.error';
 
@@ -89,7 +90,10 @@ export class LlmClientService {
    */
   private client?: OpenAI;
 
-  public constructor(config: ScrapeConfig) {
+  public constructor(
+    config: ScrapeConfig,
+    private readonly metrics: LlmMetricsService,
+  ) {
     this.config = config;
   }
 
@@ -146,7 +150,23 @@ export class LlmClientService {
       body.reasoning = { enabled: false };
     }
 
-    const completion = await client.chat.completions.create(body);
+    const pass = overrides.pass ?? 'unknown';
+    const startedAt = Date.now();
+    const completion = await client.chat.completions.create(body)
+      .catch((error: unknown) => {
+        this.metrics.call(pass, model, 'error', Date.now() - startedAt);
+
+        throw error;
+      });
+
+    this.metrics.call(pass, model, 'success', Date.now() - startedAt);
+    this.metrics.spent(pass, model, {
+      prompt: completion.usage?.prompt_tokens,
+      completion: completion.usage?.completion_tokens,
+      reasoning: completion.usage?.completion_tokens_details
+        ?.reasoning_tokens,
+    });
+
     const content = completion.choices[0]?.message.content;
 
     if (!content) {

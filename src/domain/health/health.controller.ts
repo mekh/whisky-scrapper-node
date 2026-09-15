@@ -1,41 +1,61 @@
 import { Controller, Get } from '@nestjs/common';
+import { HealthCheckResult } from '@nestjs/terminus';
 
 import { HEALTH_OK } from '~constants';
-import { CacheControl, NoRateLimit } from '~decorators/http';
+import { Permission } from '~decorators/auth';
+import { CacheControl, NoRateLimit, ValidateResponse } from '~decorators/http';
 import { Plain } from '~decorators/types';
 import { Resource } from '~enums';
 import type { HealthStatus } from '~types';
 
+import { DependencyHealthService } from './dependency-health.service';
 import { Health } from './health.type.dto';
 
 /**
- * Liveness, for the load balancer in front of the replicas.
+ * Three answers to three different questions, and keeping them apart is the
+ * design rather than a convenience.
  *
- * It answers from the process alone and names no dependency, deliberately. A
- * probe that checked Postgres or Valkey would take **every** replica out of
- * rotation the moment that one dependency wobbled, turning a degradation into
- * a total outage — and it would answer no question the balancer is asking.
- * What the balancer needs to know is whether this process still turns its
- * event loop, which a handler that returns a constant answers exactly: a
- * blocked or dying replica does not reply at all.
+ * `/health/live` is **the load balancer's probe**. It names no dependency and
+ * answers from the process alone, because every replica is probed on the same
+ * route at the same instant: a probe that could fail on a wobbling Postgres
+ * would fail on all of them at once and drain the whole backend, turning one
+ * dependency's bad minute into a total outage. What it does detect is the
+ * failure that matters there — a replica whose event loop is blocked does not
+ * reply at all. It is public and outside the rate limiter for the same
+ * reasons, and it is the only health route the host nginx leaves reachable.
  *
- * Public on purpose — a probe that needed a token could not be a probe — so
- * it states nothing about the deployment beyond "this is up". Anything
- * richer (which instance, which version, how deep the pool is) belongs on the
- * monitoring surface, not here.
- *
- * It is also the one route outside the rate limiter: every replica is probed
- * from the balancer's single address against buckets the whole fleet shares,
- * so a refused probe would read as an unhealthy replica and drain all of them
- * at once.
+ * `/health` and `/health/ready` are **for a person and for Grafana**: they
+ * probe Postgres and both Valkeys and answer 503 when a hard dependency is
+ * down. Blocked at the edge, inside the rate limiter, and never what HAProxy
+ * reads.
  */
 @Controller('health')
 export class HealthController {
+  public constructor(
+    private readonly dependencies: DependencyHealthService,
+  ) {}
+
   @Get()
+  @CacheControl('no-cache')
+  @ValidateResponse(false)
+  @Permission(Resource.PUBLIC)
+  public deep(): Promise<HealthCheckResult> {
+    return this.dependencies.check();
+  }
+
+  @Get('live')
   @CacheControl('no-cache')
   @NoRateLimit()
   @Plain(Health, Resource.PUBLIC)
-  public health(): HealthStatus {
+  public live(): HealthStatus {
     return { status: HEALTH_OK };
+  }
+
+  @Get('ready')
+  @CacheControl('no-cache')
+  @ValidateResponse(false)
+  @Permission(Resource.PUBLIC)
+  public ready(): Promise<HealthCheckResult> {
+    return this.dependencies.check();
   }
 }

@@ -15,7 +15,9 @@ import { RateLimitProfile } from '~enums';
 import { TooManyRequestsError } from '~errors';
 import type { RateLimitCharge, RateLimitDecision, Response } from '~types';
 
+import { PlatformMetricsService } from '~lib/metrics';
 import { ContextManager } from '../context';
+
 import { RateLimitStore } from './rate-limit.store';
 
 /**
@@ -83,6 +85,7 @@ export class UserRateLimitGuard implements CanActivate {
     private readonly config: RateLimitConfig,
     private readonly store: RateLimitStore,
     private readonly reflector: Reflector,
+    private readonly metrics: PlatformMetricsService,
   ) {}
 
   /**
@@ -102,8 +105,11 @@ export class UserRateLimitGuard implements CanActivate {
       return true;
     }
 
-    const decisions = await this.store.consume(this.charges(context));
+    const charges = this.charges(context);
+    const decisions = await this.store.consume(charges);
     const decision = UserRateLimitGuard.pick(decisions);
+
+    this.count(charges, decisions);
 
     /**
      * Nothing was charged, so the store could not answer: fail open and say
@@ -140,6 +146,38 @@ export class UserRateLimitGuard implements CanActivate {
       RATE_LIMIT_SKIP_META_INJECT_TOKEN,
       [context.getHandler(), context.getClass()],
     ) === true;
+  }
+
+  /**
+   * Counts each bucket the request was charged against, or the fail-open
+   * when nothing could be charged at all.
+   *
+   * Labelled by the bucket's own name — `global` or the profile — and never
+   * by the caller: the key holds a user id or an address, and a label drawn
+   * from either is how one caller mints unbounded series.
+   *
+   * @param charges - The charges that were sent.
+   * @param decisions - What came back, aligned with them.
+   */
+  private count(
+    charges: RateLimitCharge[],
+    decisions: RateLimitDecision[],
+  ): void {
+    if (decisions.length === 0) {
+      this.metrics.rateLimitFailedOpen();
+
+      return;
+    }
+
+    decisions.forEach((decision, index) => {
+      const key = charges[index]?.key ?? '';
+      const separator = key.indexOf(':');
+
+      this.metrics.rateLimited(
+        separator > 0 ? key.slice(0, separator) : 'unknown',
+        decision.allowed,
+      );
+    });
   }
 
   /**

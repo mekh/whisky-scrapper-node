@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { WebPushError, sendNotification, setVapidDetails } from 'web-push';
 
 import { PushConfig } from '~config';
+import { PlatformMetricsService } from '~lib/metrics';
 import { WebPushOutcome, WebPushTarget } from '~types';
 import { ErrorUtils } from '~utils';
 
@@ -27,7 +28,10 @@ export class WebPushService {
 
   private readonly usable: boolean;
 
-  public constructor(private readonly config: PushConfig) {
+  public constructor(
+    private readonly config: PushConfig,
+    private readonly metrics: PlatformMetricsService,
+  ) {
     this.usable = config.isUsable && this.applyVapidDetails();
 
     if (this.usable) {
@@ -62,7 +66,7 @@ export class WebPushService {
     payload: string,
   ): Promise<WebPushOutcome> {
     if (!this.usable) {
-      return 'failed';
+      return this.record('failed');
     }
 
     try {
@@ -78,10 +82,23 @@ export class WebPushService {
         { TTL: this.config.ttlSec },
       );
 
-      return 'sent';
+      return this.record('sent');
     } catch (error) {
-      return this.outcomeOf(error);
+      return this.record(this.outcomeOf(error));
     }
+  }
+
+  /**
+   * Counts one send and passes its outcome through, so every return of this
+   * service is recorded by construction rather than by remembering to.
+   *
+   * @param outcome - What the send came to.
+   * @returns The same outcome.
+   */
+  private record(outcome: WebPushOutcome): WebPushOutcome {
+    this.metrics.pushSent(outcome);
+
+    return outcome;
   }
 
   /**

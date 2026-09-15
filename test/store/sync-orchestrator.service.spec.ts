@@ -9,8 +9,14 @@ import type { SyncConfig } from '~config';
 import type { CoreStoreService } from '~core/store';
 import type { CoreSyncLogService } from '~core/sync-log';
 import type { InstanceService } from '~lib/instance';
+import type { SyncMetricsService } from '~lib/metrics';
 import type { SyncFileLogService, SyncFileLogWriter } from '~lib/sync-file-log';
-import type { RunningSync, SiteResult, StoreListItem } from '~types';
+import type {
+  CollectOptions,
+  RunningSync,
+  SiteResult,
+  StoreListItem,
+} from '~types';
 import type { PushDigestService } from '../../src/domain/push/push-digest.service';
 import type { ScrapeService } from '../../src/scrape/scrape.service';
 
@@ -40,6 +46,11 @@ interface Fakes {
    * The service under test.
    */
   orchestrator: SyncOrchestratorService;
+
+  /**
+   * The Prometheus recorder, so a spec can assert what a run counted.
+   */
+  metrics: { [key: string]: jest.Mock };
 
   /**
    * Store lookups (`findWithConfigBySlug`, `findAllWithConfig`).
@@ -216,6 +227,21 @@ function makeOrchestrator(
     dispatchAfterSync: jest.fn().mockResolvedValue(undefined),
   };
 
+  /**
+   * A recorder the specs can assert on; the counters' own arithmetic is
+   * covered by the orchestrator metrics spec.
+   */
+  const metrics = {
+    runStarted: jest.fn(),
+    runFinished: jest.fn(),
+    itemsWritten: jest.fn(),
+    pageWalked: jest.fn(),
+    detailFetched: jest.fn(),
+    listingIncompleted: jest.fn(),
+    stockDropped: jest.fn(),
+    deadlineSkipped: jest.fn(),
+  };
+
   const orchestrator = new SyncOrchestratorService(
     stores as unknown as CoreStoreService,
     syncLogs as unknown as CoreSyncLogService,
@@ -224,10 +250,12 @@ function makeOrchestrator(
     fileLog as unknown as SyncFileLogService,
     pushDigest as unknown as PushDigestService,
     instances as unknown as InstanceService,
+    metrics as unknown as SyncMetricsService,
   );
 
   return {
     orchestrator,
+    metrics,
     stores,
     syncLogs,
     scrape,
@@ -540,6 +568,79 @@ describe('SyncOrchestratorService.startStoreSync', () => {
 
     expect(syncLogs.touch).toHaveBeenCalledTimes(1);
     expect(syncLogs.touch).toHaveBeenCalledWith('log-1', 4);
+  });
+});
+
+describe('SyncOrchestratorService — what a run records', () => {
+  it('counts a finished run and what it wrote', async () => {
+    const { orchestrator, metrics } = makeOrchestrator(makeStore());
+
+    await orchestrator.startStoreSync('maudau', SyncTrigger.MANUAL);
+    await flush();
+
+    expect(metrics.runStarted).toHaveBeenCalledTimes(1);
+    expect(metrics.runFinished).toHaveBeenCalledWith(
+      'maudau',
+      SyncTrigger.MANUAL,
+      'success',
+      expect.any(Number),
+    );
+    expect(metrics.itemsWritten).toHaveBeenCalledWith('maudau', 'added', 3);
+    expect(metrics.itemsWritten).toHaveBeenCalledWith('maudau', 'removed', 2);
+    expect(metrics.itemsWritten).toHaveBeenCalledWith('maudau', 'updated', 5);
+  });
+
+  /**
+   * The counter is what the staleness alert reads, so a run that failed must
+   * be counted as failed rather than not counted at all — an uncounted run
+   * looks exactly like a store nobody tried to sync.
+   */
+  it('counts a failed run as failed', async () => {
+    const { orchestrator, metrics, scrape } = makeOrchestrator(makeStore());
+
+    scrape.collectStore.mockRejectedValue(new Error('boom'));
+
+    await orchestrator.startStoreSync('maudau', SyncTrigger.MANUAL);
+    await flush();
+
+    expect(metrics.runFinished).toHaveBeenCalledWith(
+      'maudau',
+      SyncTrigger.MANUAL,
+      'failed',
+      expect.any(Number),
+    );
+  });
+
+  /**
+   * The progress stream carries the store nowhere, so the reporter is handed
+   * the slug explicitly — without it every store's pages would be counted
+   * under one unlabelled series.
+   */
+  it('labels scrape progress with the store it came from', async () => {
+    const { orchestrator, metrics, scrape } = makeOrchestrator(makeStore());
+
+    scrape.collectStore.mockImplementation(
+      async (_slug: string, options: CollectOptions): Promise<SiteResult> => {
+        options.reporter?.({ kind: 'page', page: 1, added: 10, total: 10 });
+        options.reporter?.({
+          kind: 'listing-incomplete',
+          stop: ListingStop.PAGE_CAP,
+          inStock: 10,
+          baseline: 40,
+        });
+
+        return RESULT;
+      },
+    );
+
+    await orchestrator.startStoreSync('maudau', SyncTrigger.MANUAL);
+    await flush();
+
+    expect(metrics.pageWalked).toHaveBeenCalledWith('maudau');
+    expect(metrics.listingIncompleted).toHaveBeenCalledWith(
+      'maudau',
+      ListingStop.PAGE_CAP,
+    );
   });
 });
 

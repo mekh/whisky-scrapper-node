@@ -1,0 +1,244 @@
+# The monitoring stack, as a compose project of its own.
+#
+# Separate from `../docker-compose.yaml` deliberately: a broken exporter
+# config can never abort `scripts/deploy.sh`, and looking at a dashboard must
+# not require redeploying the API. The cost is two commands to operate the
+# host and the external network declarations at the bottom.
+#
+#   docker compose -f infra/docker-compose.monitoring.yaml --env-file infra/.env up -d
+#
+# Nothing here is reachable from the internet. Grafana publishes on the same
+# private address Postgres, both Valkeys and the API already use; everything
+# else is on the compose network only.
+name: whisky-monitoring
+
+services:
+  prometheus:
+    container_name: whisky-prom
+    image: prom/prometheus:v3.6.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # Fifteen days at these intervals is a few hundred megabytes, on the
+      # same disk as `pg_data` — which is why disk usage is itself alerted.
+      - --storage.tsdb.retention.time=${PROM_RETENTION:-15d}
+      - --storage.tsdb.retention.size=${PROM_RETENTION_SIZE:-8GB}
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    ports:
+      # Bound to the private interface for a person with a browser; Grafana
+      # reaches it over the compose network and needs no published port.
+      - '${MON_BIND_IP:-192.168.180.1}:${PROM_BIND_PORT:-9090}:9090'
+    networks:
+      # Its own network, plus the API's — where both the replicas and
+      # HAProxy's native exporter live.
+      - whisky_monitoring
+      - whisky-be
+    extra_hosts:
+      # node-exporter runs in the host's network namespace, so it is reached
+      # through the bridge gateway rather than by container name. Docker maps
+      # this name to that address; without it `host.docker.internal` does not
+      # resolve on Linux at all.
+      - 'host.docker.internal:host-gateway'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:9090/-/healthy']
+      start_period: 10s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  grafana:
+    container_name: whisky-grafana
+    image: grafana/grafana:12.1.1
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
+      # No sign-ups and no anonymous access: this is a private interface, not
+      # a public one, and the only accounts are the ones an operator creates.
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      # It is not served under a path by any proxy, so it addresses itself.
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://192.168.180.1:3000}
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+    volumes:
+      # Provisioned from files, so no dashboard exists only inside somebody's
+      # browser and every change is a diff.
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_started
+    ports:
+      - '${MON_BIND_IP:-192.168.180.1}:${GRAFANA_BIND_PORT:-3000}:3000'
+    networks:
+      - whisky_monitoring
+    restart: unless-stopped
+
+  alertmanager:
+    container_name: whisky-alerts
+    image: prom/alertmanager:v0.28.1
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      # Which config is mounted is a variable, because the one thing a
+      # deployment changes here — the chat id and the active receiver — has to
+      # be written into the file itself: Alertmanager expands no environment
+      # variables and has no include directive, so `receivers:` cannot be
+      # moved out into a file of its own. The default is the tracked,
+      # null-routed config; a deployment that delivers somewhere points this
+      # at a git-ignored copy (`*.local.yml`, or a path outside the repo), so
+      # that editing it never leaves the working tree dirty for `git pull`.
+      - ${ALERTMANAGER_CONFIG:-./alertmanager/alertmanager.yml}:/etc/alertmanager/alertmanager.yml:ro
+      # The bot token as a file, for the same reason the config is a copy.
+      # Git-ignored, and absent until the operator writes it — the tracked
+      # config routes to the null receiver, so a missing file is a stack that
+      # starts and simply delivers nowhere.
+      - ./alertmanager/telegram-token:/etc/alertmanager/telegram-token:ro
+      - alertmanager_data:/alertmanager
+    ports:
+      - '${MON_BIND_IP:-192.168.180.1}:${ALERTMANAGER_BIND_PORT:-9093}:9093'
+    networks:
+      - whisky_monitoring
+    restart: unless-stopped
+
+  node-exporter:
+    container_name: whisky-node-exporter
+    image: prom/node-exporter:v1.9.1
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host/root
+      # Only the host's real filesystems: without this every container's
+      # overlay mount appears as its own device and the disk panels become
+      # unreadable.
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|run/credentials)($$|/)
+      # Every interface, deliberately: it runs in the host's network
+      # namespace and is scraped through the bridge gateway, which binding to
+      # one private address would exclude. What keeps port 9100 off the
+      # internet is the host firewall — the same `DOCKER-USER` whitelist that
+      # already guards Postgres and both Valkeys — rather than this line.
+      - --web.listen-address=:9100
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro,rslave
+    # The host's own network namespace, so its interfaces are the ones
+    # measured rather than the container's.
+    network_mode: host
+    pid: host
+    restart: unless-stopped
+
+  cadvisor:
+    container_name: whisky-cadvisor
+    image: gcr.io/cadvisor/cadvisor:v0.53.0
+    # It answers the question this host actually has: which of the eight
+    # processes sharing eight cores spent them. The Docker socket is how it
+    # resolves container names — without it the panels are labelled by cgroup
+    # id and become useless on the next redeploy.
+    #
+    # It is read-only, it terminates no public traffic and it publishes
+    # nothing, which is what separates it from the Traefik case that socket
+    # was refused for (see docs/MULTI-PROCESS-PLAN.md).
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=30s
+      # Per-process and per-thread series are the bulk of cAdvisor's
+      # cardinality and answer nothing here.
+      - --disable_metrics=percpu,process,sched,tcp,udp,advtcp,hugetlb,referenced_memory,cpu_topology,resctrl
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    devices:
+      - /dev/kmsg
+    networks:
+      - whisky_monitoring
+    restart: unless-stopped
+
+  postgres-exporter:
+    container_name: whisky-exporter-pg
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.17.1
+    command:
+      - --collector.stat_statements
+    environment:
+      # The application's own role. It owns the database and may therefore
+      # read `pg_stat_statements`, which is the point — that extension was
+      # installed because nothing could say where the database's time went,
+      # and unscraped it answers only whoever is logged in at the time.
+      - DATA_SOURCE_NAME=postgresql://${DB_USER:?DB_USER is required}:${DB_PASS:?DB_PASS is required}@whisky-db:5432/${DB_NAME:?DB_NAME is required}?sslmode=disable
+      - PG_EXPORTER_EXTEND_QUERY_PATH=/etc/postgres-exporter/queries.yaml
+    volumes:
+      - ./postgres-exporter/queries.yaml:/etc/postgres-exporter/queries.yaml:ro
+    networks:
+      - whisky_monitoring
+      - whisky-db
+    restart: unless-stopped
+
+  redis-exporter-session:
+    container_name: whisky-exporter-session
+    image: oliver006/redis_exporter:v1.78.0
+    # Valkey speaks the Redis protocol, so this exporter reads it unchanged.
+    # This is the instance that must NEVER evict: a lost session key reads as
+    # a revoked session and signs that user out of every device, which is why
+    # `redis_evicted_keys_total` here is an alert rather than a statistic.
+    command:
+      - --redis.addr=redis://whisky-valkey:6379
+    environment:
+      - REDIS_PASSWORD=${VALKEY_PASSWORD:-}
+    networks:
+      - whisky_monitoring
+      - whisky-valkey
+    restart: unless-stopped
+
+  redis-exporter-cache:
+    container_name: whisky-exporter-cache
+    image: oliver006/redis_exporter:v1.78.0
+    # The opposite instance: eviction here is normal and expected, and the
+    # eviction count is the number that said 3 GiB was needed — a ladder once
+    # peaked at 1.16 GiB and evicted 4 038 live entries, each of which is a
+    # database query later.
+    command:
+      - --redis.addr=redis://whisky-cache:6379
+    environment:
+      - REDIS_PASSWORD=${CACHE_VALKEY_PASSWORD:-}
+    networks:
+      - whisky_monitoring
+      # The cache sits on the API's network, not on a Valkey one of its own.
+      - whisky-be
+    restart: unless-stopped
+
+networks:
+  # This project's own.
+  whisky_monitoring:
+    name: whisky_monitoring
+
+  # Created by `../docker-compose.yaml`. Declared external so this project
+  # attaches to them and never creates an empty copy under its own name —
+  # which is how an exporter ends up on a network where its target does not
+  # exist and reports everything down.
+  whisky-be:
+    external: true
+    name: whisky-be
+
+  whisky-db:
+    external: true
+    name: whisky_db
+
+  whisky-valkey:
+    external: true
+    name: whisky_valkey
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:

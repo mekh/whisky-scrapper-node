@@ -1,0 +1,695 @@
+{
+  "uid": "whisky-runtime",
+  "title": "Whisky — Runtime",
+  "description": "Which replica is struggling. Event loop, heap, GC, the connection pool, dependency health and what the load balancer sees.",
+  "tags": [
+    "whisky"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "type": "row",
+      "title": "Per replica",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Event-loop lag p99",
+      "description": "The number this API's own ceiling was diagnosed by: the constraint was one JavaScript thread, and lag is what that looks like. The alert fires above 200 ms.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "nodejs_eventloop_lag_p99_seconds{job=\"whisky-api\"}",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{replica}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "id": 2
+    },
+    {
+      "type": "timeseries",
+      "title": "Process CPU",
+      "description": "One whole core is 1.0.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "rate(process_cpu_seconds_total{job=\"whisky-api\"}[5m])",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{replica}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "id": 3
+    },
+    {
+      "type": "timeseries",
+      "title": "Heap used",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "nodejs_heap_size_used_bytes{job=\"whisky-api\"}",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{replica}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "id": 4
+    },
+    {
+      "type": "timeseries",
+      "title": "GC time",
+      "description": "Seconds of GC per second. A rising major-GC share is memory pressure before it is an OOM.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (replica, kind) (rate(nodejs_gc_duration_seconds_sum{job=\"whisky-api\"}[5m]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{replica}} {{kind}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "id": 5
+    },
+    {
+      "type": "row",
+      "title": "Dependencies",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Dependency health",
+      "description": "Postgres and the session store are hard dependencies. The cache fails open — 0 here means slower, never wrong.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "whisky_dependency_up",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{dependency}} @ {{replica}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "id": 7
+    },
+    {
+      "type": "timeseries",
+      "title": "Database pool, per replica",
+      "description": "`waiting` above zero is DB_ACQUIRE_TIMEOUT_MS about to start failing requests. Raising the pool is usually the wrong answer — cutting it once made the database faster.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (replica, state) (whisky_db_pool_connections)",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{replica}} {{state}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "id": 8
+    },
+    {
+      "type": "timeseries",
+      "title": "Dependency probe latency",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, dependency) (rate(whisky_dependency_check_duration_seconds_bucket[10m])))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{dependency}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "id": 9
+    },
+    {
+      "type": "timeseries",
+      "title": "Active handles",
+      "description": "Sockets, timers and file handles. A monotonic climb is a leak.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "nodejs_active_handles_total{job=\"whisky-api\"}",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{replica}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "id": 10
+    },
+    {
+      "type": "row",
+      "title": "Load balancer",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Sessions per replica",
+      "description": "HAProxy balances by outstanding work, so these should track each other. One slot carrying far more is a replica that has stopped finishing requests.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "haproxy_server_current_sessions{proxy=\"app\"}",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{server}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "id": 12
+    },
+    {
+      "type": "timeseries",
+      "title": "Backend responses by code",
+      "description": "HAProxy's own count, which includes the 503s it answers when no replica is up — those never reach the application.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (code) (rate(haproxy_backend_http_responses_total{proxy=\"app\"}[5m]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{code}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 40,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      },
+      "id": 13
+    },
+    {
+      "type": "timeseries",
+      "title": "Connection retries and redispatches",
+      "description": "A redispatch is `option redispatch` doing its job: a connection to a replica that went away, retried on another instead of being answered 503.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "rate(haproxy_backend_retry_warnings_total{proxy=\"app\"}[5m])",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "retries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "rate(haproxy_backend_redispatch_warnings_total{proxy=\"app\"}[5m])",
+          "refId": "B",
+          "format": "time_series",
+          "legendFormat": "redispatches"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 43
+      },
+      "id": 14
+    },
+    {
+      "type": "timeseries",
+      "title": "Backend queue",
+      "description": "Requests waiting for any replica to become free.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "haproxy_backend_current_queue{proxy=\"app\"}",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "queued"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 43
+      },
+      "id": 15
+    }
+  ]
+}

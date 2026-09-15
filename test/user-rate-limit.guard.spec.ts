@@ -8,6 +8,7 @@ import type { RateLimitConfig } from '~config';
 import { RATE_LIMIT_SKIP_META_INJECT_TOKEN } from '~constants';
 import { RateLimitProfile } from '~enums';
 import { TooManyRequestsError } from '~errors';
+import type { PlatformMetricsService } from '~lib/metrics';
 import type { CtxUser, ID, RateLimitCharge, RateLimitDecision } from '~types';
 
 const USER: CtxUser = {
@@ -140,6 +141,15 @@ function makeContext(options: {
 }
 
 /**
+ * A recorder that swallows everything: these specs assert the guard's own
+ * decisions, and the counters have their own coverage.
+ */
+const METRICS = {
+  rateLimited: (): void => undefined,
+  rateLimitFailedOpen: (): void => undefined,
+} as unknown as PlatformMetricsService;
+
+/**
  * Builds the guard over a stubbed store.
  *
  * @param options - The profile every route declares, the answer the store
@@ -164,6 +174,7 @@ function makeGuard(options: {
     options.config ?? CONFIG,
     store as unknown as RateLimitStore,
     reflector,
+    METRICS,
   );
 
   return { guard, store };
@@ -335,6 +346,7 @@ describe('UserRateLimitGuard — when it cannot count', () => {
       CONFIG,
       store as unknown as RateLimitStore,
       reflector,
+      METRICS,
     );
 
     const { context, headers } = makeContext({ user: USER });

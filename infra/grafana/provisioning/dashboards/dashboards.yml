@@ -1,0 +1,21 @@
+# Dashboards come from files under /var/lib/grafana/dashboards, which the
+# compose file mounts read-only from `infra/grafana/dashboards`.
+#
+# `allowUiUpdates: false` is deliberate: a dashboard edited in the browser
+# would be silently reverted on the next restart, so the UI refuses the edit
+# instead and the change has to go through git — which is the point of
+# provisioning them at all.
+
+apiVersion: 1
+
+providers:
+  - name: whisky
+    orgId: 1
+    folder: Whisky
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

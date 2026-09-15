@@ -29,8 +29,11 @@ infra/alertmanager/telegram-token
 # A deployment's own Alertmanager config. `receivers:` cannot be split out of
 # that file — Alertmanager has no include directive — so a deployment that
 # routes anywhere copies the tracked one and edits the copy. The copy is
-# ignored here so that editing it never makes `git pull` a merge.
+# ignored here so that editing it never makes `git pull` a merge. Both
+# spellings of the extension, because the tracked config is `.yml` and the
+# compose file beside it is `.yaml`, so either is a reasonable thing to type.
 infra/alertmanager/*.local.yml
+infra/alertmanager/*.local.yaml
 
 # The monitoring project's own environment, which carries the Grafana admin
 # password and the database credentials its exporter uses.

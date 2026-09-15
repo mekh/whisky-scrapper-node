@@ -111,11 +111,16 @@ docker compose -f infra/docker-compose.monitoring.yaml --env-file infra/.env \
   up -d alertmanager
 ```
 
+The token file is read by Alertmanager **at notification time, not at config
+load**, and the container runs as `nobody` — so a token written with a
+restrictive umask passes `check-config`, starts cleanly and then delivers
+nothing, saying so only in the container's log. `chmod 644` it.
+
 `up -d`, not `restart`: a restart reuses the container, and with it the mount
 it was created with. A relative path resolves against `infra/`; an absolute
 path outside the repository works as well, and is the stronger answer if the
-deployment would rather the file were not in the tree at all. Both
-`*.local.yml` and `telegram-token` are git-ignored.
+deployment would rather the file were not in the tree at all.
+`*.local.yml`, `*.local.yaml` and `telegram-token` are all git-ignored.
 
 **`receivers:` cannot be a file of its own.** Alertmanager has no include
 directive — `templates:` covers message bodies, not configuration — and

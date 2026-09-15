@@ -1,5 +1,6 @@
 import { TypeormRepository } from '@toxicoder/nestjs-typeorm-repository';
 
+import { ProductReviewStatus } from '~enums';
 import {
   ID,
   PushDevice,
@@ -56,6 +57,11 @@ const UPSERT_SQL = `
  *   rule.
  * - The `push_subscription EXISTS` keeps the claim from burning dedup rows
  *   for users no push can reach.
+ * - A `rejected` bottling is excluded, and of every read that filters on the
+ *   review queue this is the one that must not be forgotten: the others make
+ *   something invisible, while this one **sends a notification**. A push
+ *   announcing a discount on something a person has ruled not-whisky cannot be
+ *   taken back.
  * - `discountPct` is computed on `numeric` before the `float8` casts; the raw
  *   `numeric` prices are carried separately into the claim insert so no
  *   float round-trip touches what is audited.
@@ -101,6 +107,7 @@ const CLAIM_DROPS_SQL = `
     JOIN store st         ON st.id = sp."storeId"
     JOIN favorite f       ON f."productId" = sp."productId"
     WHERE sp."inStock"
+      AND p."reviewStatus" IS DISTINCT FROM '${ProductReviewStatus.REJECTED}'
       AND EXISTS (
         SELECT 1 FROM push_subscription s WHERE s."userId" = f."userId")
       AND NOT EXISTS (

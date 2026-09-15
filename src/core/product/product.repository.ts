@@ -7,6 +7,7 @@ import {
   FactSource,
   FlavorSource,
   ProductFactField,
+  ProductReviewStatus,
   TRUSTED_FACT_SOURCES,
 } from '~enums';
 import {
@@ -23,6 +24,8 @@ import {
   ProductFillInput,
   ProductMatchRow,
   ProductNameCandidateRow,
+  ProductReviewQueueRow,
+  ProductReviewStatusCounts,
   ProductScrapeFlavorLink,
   ProductSearchItem,
   ProductStoreFieldsRow,
@@ -53,6 +56,15 @@ import { ProductEntity } from './product.entity';
  * "first writer wins" into "last writer wins" rather than into a trust order.
  * A source is only ever stored next to a value it describes: where the value
  * is null the source is null too.
+ *
+ * `reviewStatus` is the one column deliberately **absent** from that list. Its
+ * `pending` default lives in the database precisely so that all three
+ * statements inserting into this table — and any fourth one — enrol their rows
+ * in the new-product queue without naming it; the provenance columns had to be
+ * explicit because their value differs per row, while this one is a constant
+ * at insert time. And the no-op `DO UPDATE` above not touching it is what
+ * makes the queue idempotent between syncs: a bottling somebody has already
+ * reviewed is not pushed back into it when a shop lists it again tomorrow.
  */
 const FIND_OR_CREATE_SQL = `
   INSERT INTO product
@@ -259,6 +271,47 @@ const PRODUCER_WINS_SQL = `
         AND k."producerSource" IS DISTINCT FROM '${FactSource.MANUAL}'))`;
 
 /**
+ * Which review state a merge's survivor ends up in: the **least settled** of
+ * the two, with a rejection outranking everything.
+ *
+ * `rejected` first, because a person ruled one of these rows out as not
+ * whisky and the merge has just said the two are the same whisky — so the
+ * survivor is not whisky either. Un-rejecting as a side effect of somebody
+ * editing a name would undo a human decision silently, which is the whole
+ * thing {@link FactSource.MANUAL} exists to prevent; a merge made in error is
+ * one click to reverse.
+ *
+ * Then `pending`, because a merge produces a combination of facts nobody has
+ * looked at in that combination — the queue entry survives rather than being
+ * absorbed by a verified twin. Then `verified`. Two null rows stay null: a
+ * merge of two bottlings that predate the queue must not drag them into it,
+ * for the same reason the migration left them out.
+ *
+ * `IS NOT DISTINCT FROM` rather than `=` throughout. A `NULL = 'rejected'`
+ * comparison yields NULL, so a `CASE` falls through to the next `WHEN` and the
+ * result happens to be right — but relying on null-as-no-match inside a `CASE`
+ * is exactly the subtlety that breaks under the next edit.
+ */
+const reviewStatusPrecedence = (): string => {
+  const order = [
+    ProductReviewStatus.REJECTED,
+    ProductReviewStatus.PENDING,
+    ProductReviewStatus.VERIFIED,
+  ];
+
+  const whens = order
+    .map((status) =>
+      `WHEN k."reviewStatus" IS NOT DISTINCT FROM '${status}'
+        OR l."reviewStatus" IS NOT DISTINCT FROM '${status}' THEN '${status}'`
+    )
+    .join('\n      ');
+
+  return `CASE
+      ${whens}
+      ELSE NULL END`;
+};
+
+/**
  * Folds the facts of a vanishing bottling (`$2`) into the one that stays
  * (`$1`). What each field does is decided by the helpers above; the two
  * timestamps take the later value, and `brandOrig` fills a gap only, as it
@@ -291,6 +344,8 @@ const MERGE_FACTS_SQL = `
     "brandOrig" = COALESCE(k."brandOrig", l."brandOrig"),
     "lastLlmFlavorAt" = GREATEST(k."lastLlmFlavorAt", l."lastLlmFlavorAt"),
     "flavorsCuratedAt" = GREATEST(k."flavorsCuratedAt", l."flavorsCuratedAt"),
+    "reviewStatus" = ${reviewStatusPrecedence()},
+    "reviewedAt" = GREATEST(k."reviewedAt", l."reviewedAt"),
     "updatedAt" = now()
   FROM product l
   WHERE k.id = $1 AND l.id = $2
@@ -1796,6 +1851,163 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
   }
 
   /**
+   * Counts the catalogue by its place in the new-product queue.
+   *
+   * `legacy` — the null bucket — is served rather than left to be derived,
+   * because it is the one number the retro-enqueue decision is made on: how
+   * much of the catalogue has never been looked at. The four sum to the whole
+   * table, which is also the invariant that says null is the only fourth
+   * state.
+   *
+   * @returns The four counts.
+   */
+  public async countReviewStatuses(): Promise<ProductReviewStatusCounts> {
+    const countOf = (status: ProductReviewStatus): string =>
+      `count(*) FILTER (WHERE "reviewStatus" = '${status}')::int`;
+
+    const rows = await this.query(
+      `SELECT
+         ${countOf(ProductReviewStatus.PENDING)} AS pending,
+         ${countOf(ProductReviewStatus.VERIFIED)} AS verified,
+         ${countOf(ProductReviewStatus.REJECTED)} AS rejected,
+         count(*) FILTER (WHERE "reviewStatus" IS NULL)::int AS legacy
+       FROM product`,
+    ) as ProductReviewStatusCounts[];
+
+    return rows[0] ?? { pending: 0, verified: 0, rejected: 0, legacy: 0 };
+  }
+
+  /**
+   * Lists one bucket of the new-product queue.
+   *
+   * Ordered **newest first**, which is a deliberate departure from the facts
+   * queue's ranking by catalogue reach. The question here is "what did last
+   * night's sync bring in", a new bottling's reach is not yet known when it is
+   * a day old, and a new product usually sits in one shop — so ranking by shop
+   * count would degrade to arbitrary.
+   *
+   * The search matches the canonical name **or** any shop's raw one, because
+   * the screen displays exactly that fallback pair and half the rows worth
+   * finding are the ones whose cleaned name came out wrong.
+   *
+   * @param status - Which bucket to list.
+   * @param limit - Page size.
+   * @param offset - Page offset.
+   * @param search - Case-insensitive substring of either name, or omit.
+   * @param storeSlug - Restrict to one shop's bottlings, or omit.
+   * @returns The page and the total matching count.
+   */
+  public async findReviewQueue(
+    status: ProductReviewStatus,
+    limit = 50,
+    offset = 0,
+    search?: string,
+    storeSlug?: string,
+  ): Promise<{ rows: ProductReviewQueueRow[]; total: number }> {
+    const where = `p."reviewStatus" = $1
+       AND (
+         $2::text IS NULL
+         OR p.name ILIKE '%' || $2 || '%'
+         OR EXISTS (
+           SELECT 1 FROM store_product snp
+           WHERE snp."productId" = p.id
+             AND snp."nameOrig" ILIKE '%' || $2 || '%')
+       )
+       AND (
+         $3::text IS NULL
+         OR EXISTS (
+           SELECT 1 FROM store_product ssp
+           JOIN store sst ON sst.id = ssp."storeId"
+           WHERE ssp."productId" = p.id AND sst.slug = $3)
+       )`;
+
+    const rows = await this.query(
+      `SELECT p.id, p.name, p."matchKey", p.age, p."ageSource",
+              p.abv, p."abvSource", p."volumeMl", p."volumeSource",
+              t.name AS type, p."typeSource",
+              c.code AS "countryCode", c."nameUa" AS "countryName",
+              c.icon AS "countryIcon", p."countrySource",
+              COALESCE(pr.name, bo.name) AS brand, pr.slug AS "producerSlug",
+              p."brandOrig", p."reviewStatus", p."reviewedAt", p."createdAt",
+              (SELECT sp."nameOrig" FROM store_product sp
+               WHERE sp."productId" = p.id
+               ORDER BY length(sp."nameOrig") DESC LIMIT 1) AS "nameOrig",
+              COALESCE((
+                SELECT array_agg(f.name ORDER BY f.name)
+                FROM product_flavor pf
+                JOIN flavor f ON f.id = pf."flavorId"
+                WHERE pf."productId" = p.id
+              ), ARRAY[]::text[]) AS flavors,
+              (SELECT count(DISTINCT sp."storeId")::int FROM store_product sp
+               WHERE sp."productId" = p.id AND sp."inStock") AS "storeCount",
+              (${STORE_LINKS_SQL}) AS stores
+       FROM product p
+       LEFT JOIN type t ON t.id = p."typeId"
+       LEFT JOIN country c ON c.id = p."countryId"
+       LEFT JOIN producer pr ON pr.id = p."producerId"
+       LEFT JOIN producer bo ON bo.id = p."bottlerId"
+       WHERE ${where}
+       ORDER BY p."createdAt" DESC, p.id
+       LIMIT $4 OFFSET $5`,
+      [status, search ?? null, storeSlug ?? null, limit, offset],
+    ) as ProductReviewQueueRow[];
+
+    const counted = await this.query(
+      `SELECT count(*)::int AS total FROM product p
+       WHERE ${where}`,
+      [status, search ?? null, storeSlug ?? null],
+    ) as { total: number }[];
+
+    return { rows, total: counted[0]?.total ?? 0 };
+  }
+
+  /**
+   * Records a reviewer's verdict on a batch of bottlings.
+   *
+   * **The only writer of this column outside the migration and the insert
+   * default**, deliberately: the relink that creates a bottling by hand, the
+   * edit that verifies a pending one and the three buttons on the queue all
+   * come through here, so the rule about what a decision does lives in one
+   * place rather than four.
+   *
+   * `onlyWhenPending` is what the edit path passes. Without it, editing a row
+   * that predates the queue would enrol it (undoing the migration's whole
+   * point one product at a time), and editing a rejected one would silently
+   * un-reject it — un-rejecting is its own decision with its own button.
+   *
+   * @param ids - The bottlings to stamp.
+   * @param status - The verdict.
+   * @param onlyWhenPending - Stamp only rows currently `pending`, leaving a
+   *   null, `verified` or `rejected` row exactly as it was.
+   * @returns How many rows were stamped.
+   */
+  public async applyReviewStatus(
+    ids: ID[],
+    status: ProductReviewStatus,
+    onlyWhenPending = false,
+  ): Promise<number> {
+    if (!ids.length) {
+      return 0;
+    }
+
+    const gate = onlyWhenPending
+      ? ` AND "reviewStatus" = '${ProductReviewStatus.PENDING}'`
+      : '';
+
+    const rows = await this.query(
+      `UPDATE product SET
+         "reviewStatus" = $2,
+         "reviewedAt" = now(),
+         "updatedAt" = now()
+       WHERE id = ANY($1::uuid[])${gate}
+       RETURNING id`,
+      [ids, status],
+    ) as { id: ID }[];
+
+    return rows.length;
+  }
+
+  /**
    * Counts the unresolved cross-shop contradictions.
    *
    * @returns How many are open.
@@ -2015,7 +2227,10 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
    *
    * A hand-curated bottling is never a candidate: `setLlmFlavors` would refuse
    * to write its answer anyway, so asking the model about it would only spend
-   * tokens on a result nobody can use.
+   * tokens on a result nobody can use. A `rejected` one is excluded for the
+   * same reason read one step further back — a person has already said it is
+   * not whisky, so there is no flavour profile to recall and no screen that
+   * would show one.
    *
    * **One candidate per distinct name, not per bottling.** Identically-named
    * bottlings are the same whisky in different sizes or packaging, so asking
@@ -2070,6 +2285,7 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
        LEFT JOIN producer pr ON pr.id = p."producerId"
        WHERE p."lastLlmFlavorAt" IS NULL
          AND p."flavorsCuratedAt" IS NULL
+         AND p."reviewStatus" IS DISTINCT FROM '${ProductReviewStatus.REJECTED}'
          AND ($1::text IS NULL OR EXISTS (
            SELECT 1 FROM store_product sp
            JOIN store st ON st.id = sp."storeId"

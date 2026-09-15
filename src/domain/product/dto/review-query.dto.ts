@@ -10,12 +10,13 @@ import {
   Min,
 } from 'class-validator';
 
-import { KbStatus } from '~enums';
+import { KbStatus, ProductReviewStatus } from '~enums';
 
 import type {
   ReviewConflictQuery,
   ReviewFactQuery,
   ReviewProducerQuery,
+  ReviewQueueQuery,
 } from '../product-review.interfaces';
 
 /**
@@ -38,10 +39,25 @@ const MAX_SEARCH_LENGTH = 128;
 const PRODUCER_SEGMENTS = ['resolved', 'unresolved'];
 
 export class ReviewQueryDto
-  implements ReviewProducerQuery, ReviewFactQuery, ReviewConflictQuery {
+  implements
+    ReviewProducerQuery,
+    ReviewFactQuery,
+    ReviewConflictQuery,
+    ReviewQueueQuery {
   @IsOptional()
   @IsEnum(KbStatus)
   public status?: KbStatus;
+
+  /**
+   * Which bucket of the new-product queue to list.
+   *
+   * A field of its own rather than a reuse of `status` above: that one is a
+   * {@link KbStatus}, whose `auto` means nothing for a bottling and which has
+   * no `pending` at all. Two vocabularies, two fields.
+   */
+  @IsOptional()
+  @IsEnum(ProductReviewStatus)
+  public reviewStatus?: ProductReviewStatus;
 
   @IsOptional()
   @IsString()

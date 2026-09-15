@@ -764,6 +764,63 @@ export interface ProductReviewSummary {
    * non-empty, since the full list is a separate read.
    */
   unresolvedBrands: number;
+
+  /**
+   * Bottlings by their place in the new-product queue.
+   */
+  products: ProductReviewStatusCounts;
+}
+
+/**
+ * What a reviewer's verdict wrote, plus the queue counters as they now stand.
+ *
+ * The counters ride along because they are exactly what changes on the
+ * screen's tab badge and its segment chips; without them a client re-reads the
+ * summary after every decision.
+ */
+export interface ProductReviewStatusResult {
+  /**
+   * How many rows the verdict actually wrote — lower than the request's id
+   * count when some were already in that state.
+   */
+  updated: number;
+
+  /**
+   * The queue counters after the write.
+   */
+  products: ProductReviewStatusCounts;
+}
+
+/**
+ * How the catalogue is distributed across the new-product queue.
+ *
+ * The four numbers sum to the whole `product` table, which is what makes
+ * `legacy` worth serving rather than deriving: it is the share of the
+ * catalogue nobody has ever looked at, and it is the number the retro-enqueue
+ * decision is made on.
+ */
+export interface ProductReviewStatusCounts {
+  /**
+   * Waiting for a person.
+   */
+  pending: number;
+
+  /**
+   * Looked at and kept.
+   */
+  verified: number;
+
+  /**
+   * Ruled out as not whisky. Hidden from the catalogue, still scraped,
+   * reversible.
+   */
+  rejected: number;
+
+  /**
+   * Predates the queue and was deliberately not enrolled in it. Not work —
+   * a separate decision with its own window.
+   */
+  legacy: number;
 }
 
 /**
@@ -874,6 +931,163 @@ export interface ReviewStoreLink {
    * reading, so it is offered rather than hidden — just marked.
    */
   inStock: boolean;
+}
+
+/**
+ * One bottling in the new-product queue.
+ *
+ * The field set is chosen so a parse error is visible without opening
+ * anything: `name` beside `nameOrig` is the comparison the whole screen is
+ * for, and the specs beside them are what the cleaner lifted out of that raw
+ * name.
+ */
+export interface ProductReviewQueueRow {
+  /**
+   * Canonical product id — what the review mutation and `POST /product/update`
+   * both take.
+   */
+  id: ID;
+
+  /**
+   * The bottling's canonical name, as the cleaner left it.
+   */
+  name: string | null;
+
+  /**
+   * The longest raw listing name behind it. Read together with `name`, this
+   * pair *is* the review: everything the cleaner dropped is the difference
+   * between them, and everything it dropped wrongly is the defect.
+   */
+  nameOrig: string | null;
+
+  /**
+   * The frozen match key.
+   *
+   * On screen nowhere else, and it belongs here because the key is derived
+   * once and never re-derived: a listing keyed wrongly is a duplicate that
+   * costs a manual merge later, and this is the only moment it is cheap to
+   * notice. Null means the row can never be matched automatically.
+   */
+  matchKey: string | null;
+
+  /**
+   * Age statement in years.
+   *
+   * Age and volume are **components of the frozen key**, so a wrong one is
+   * not a cosmetic error — it decides which listings land on this row. A
+   * Cyrillic `уо` the reader once did not know collapsed four Dalmore ages
+   * onto one bottling.
+   */
+  age: number | null;
+
+  /**
+   * Where the age came from.
+   */
+  ageSource: string | null;
+
+  /**
+   * Strength.
+   */
+  abv: number | null;
+
+  /**
+   * Where the strength came from.
+   */
+  abvSource: string | null;
+
+  /**
+   * Pack size in millilitres — the sum of a gift set's bottles.
+   */
+  volumeMl: number | null;
+
+  /**
+   * Where the volume came from.
+   */
+  volumeSource: string | null;
+
+  /**
+   * The stored whisky type.
+   */
+  type: string | null;
+
+  /**
+   * Where that type came from.
+   */
+  typeSource: string | null;
+
+  /**
+   * The stored country code.
+   */
+  countryCode: string | null;
+
+  /**
+   * The country's Ukrainian name, for the flag's tooltip.
+   */
+  countryName: string | null;
+
+  /**
+   * The country's flag emoji, or null for a country that has none.
+   */
+  countryIcon: string | null;
+
+  /**
+   * Where that country came from.
+   */
+  countrySource: string | null;
+
+  /**
+   * The label a report would print — the resolved producer's name, falling
+   * back to the bottler's.
+   */
+  brand: string | null;
+
+  /**
+   * The resolved producer's slug, or null when nothing resolved.
+   */
+  producerSlug: string | null;
+
+  /**
+   * The spelling a shop used.
+   *
+   * Worth a column here rather than anywhere else: a null `producerSlug`
+   * beside a non-null `brandOrig` is the signal "the knowledge base does not
+   * know this maker yet", and on a brand-new bottling that is the commonest
+   * real defect.
+   */
+  brandOrig: string | null;
+
+  /**
+   * The bottling's flavour tags. The LLM pass answers for new products, so a
+   * wrong tag is a parse error like any other.
+   */
+  flavors: string[];
+
+  /**
+   * How many shops carry it in stock.
+   */
+  storeCount: number;
+
+  /**
+   * A few of the shops' own pages, in-stock first — the fastest way to check
+   * what the listing actually said.
+   */
+  stores: ReviewStoreLink[];
+
+  /**
+   * Where the row sits in the queue. Echoed so one row renderer serves all
+   * three buckets.
+   */
+  reviewStatus: string | null;
+
+  /**
+   * When a person last decided about it. Null while it is still `pending`.
+   */
+  reviewedAt: Date | null;
+
+  /**
+   * When a sync first created the row.
+   */
+  createdAt: Date;
 }
 
 /**

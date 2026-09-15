@@ -6,6 +6,11 @@ export { ProducerProductType } from './producer-product.type.dto';
 export { ProducerReviewType } from './producer-review.type.dto';
 export { ProducerRuleType } from './producer-rule.type.dto';
 export { ProductFactReviewType } from './product-fact-review.type.dto';
+export { ProductReviewCountsType } from './product-review-counts.type.dto';
+export { ProductReviewQueueType } from './product-review-queue.type.dto';
+export {
+  ProductReviewStatusResultType,
+} from './product-review-status-result.type.dto';
 export { ProductReviewSummaryType } from './product-review-summary.type.dto';
 export { ProductSearchItemType } from './product-search-item.type.dto';
 export { ProductType } from './product.type.dto';

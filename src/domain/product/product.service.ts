@@ -7,7 +7,7 @@ import { CoreFlavorService } from '~core/flavor';
 import { CoreProductService } from '~core/product';
 import { CoreStoreProductService } from '~core/store-product';
 import { CoreTypeService } from '~core/type';
-import { FactSource, ProductFactField } from '~enums';
+import { FactSource, ProductFactField, ProductReviewStatus } from '~enums';
 import { BadRequestError, NotFoundError } from '~errors';
 import { VersionedCacheService } from '~lib/cache';
 import type {
@@ -37,7 +37,9 @@ export class ProductService {
    *
    * Deliberately not filtered by the caller's preferences: the settings
    * screen's picker must be able to find an already-hidden bottling so it can
-   * be un-hidden. The default limit is applied here rather than in the
+   * be un-hidden. A `rejected` bottling is offered for the same reason read
+   * one step further — the relink picker has to reach it in order to move a
+   * listing *off* it. The default limit is applied here rather than in the
    * controller — it is business policy, not transport.
    *
    * @param query - The term and an optional row limit.
@@ -81,6 +83,23 @@ export class ProductService {
    * the patch succeeded — an unknown country code must not leave a product with
    * new tags and an old country.
    *
+   * **An edit of a queued bottling is its review.** A row still `pending` is
+   * stamped `verified`: correcting the parse error is the act the queue asks
+   * for, and a second click to confirm it is a click somebody forgets, leaving
+   * a queue nobody trusts. Three things about that stamp:
+   *
+   * - it goes on the **merge survivor**, after `mergeTwins`. Put before the
+   *   merge it would be thrown away in exactly the case the feature exists
+   *   for: the merge's own precedence keeps the less-settled status, so a
+   *   `verified` loser folding into a `pending` survivor yields `pending`;
+   * - a row whose status is null stays null. Editing a bottling that predates
+   *   the queue from the catalogue's own product card must not enrol it, or
+   *   the decision to leave the old catalogue out of the queue unwinds one
+   *   edit at a time;
+   * - a `rejected` row stays rejected. Fixing a name before taking a
+   *   rejection back is fine, but taking it back is its own decision with its
+   *   own button.
+   *
    * @param input - The product or offer id plus the fields to update.
    * @returns The requested id, the bottling it now belongs to, the updated
    * name and a raw fallback.
@@ -113,6 +132,12 @@ export class ProductService {
       updated.name ?? null,
       updated.volumeMl ?? null,
       updated.age ?? null,
+    );
+
+    await this.products.applyReviewStatus(
+      [survivorId],
+      ProductReviewStatus.VERIFIED,
+      true,
     );
 
     const survivor = survivorId === ref.productId
@@ -369,6 +394,16 @@ export class ProductService {
     };
 
     const id = await this.products.createUnmatched(canonical);
+
+    /**
+     * Straight to `verified`, past the queue the insert default would have put
+     * it in. Every fact on this row is a person's, stamped `manual` above, so
+     * there is no parse error to find — and the row carries no raw shop name
+     * to compare a cleaned one against, which is what a queue entry is read
+     * for. Leaving it `pending` would mean the reviewer's own correction added
+     * an item to the queue it was shortening.
+     */
+    await this.products.applyReviewStatus([id], ProductReviewStatus.VERIFIED);
 
     if (input.flavors !== undefined) {
       await this.setFlavors(id, input.flavors);

@@ -20,6 +20,15 @@ have an endpoint and a UI, and the SQL below is for what those cannot express.
   fill the fields and let the server find it by identity — creating it only
   when nothing matches. The rest of the group stays where it is, and a row the
   offer leaves empty is deleted when nothing refers to it.
+- **A new bottling is mis-parsed, or is not whisky at all** → the «Нові
+  товари» tab of `/product/review`. Every row a sync creates lands there; an
+  edit from it is the review, and «Не віскі» (`POST /product/review/status`
+  with `rejected`) takes the bottling out of every report, out of the country
+  options, out a shop's listing count and out of the push digest. It is a
+  decision rather than a deletion: the row stays, its offers keep being
+  scraped, its price history keeps growing, and the button is reversible — so
+  a later listing of the same thing lands back on that row instead of
+  reappearing for somebody to reject again.
 
 What is still SQL: a key alias that should be dropped or pointed elsewhere, a
 merge where the survivor must be a _less_-listed row and nothing on it may be
@@ -236,6 +245,9 @@ already holds — that is the signal to merge instead.
 
 ## What not to do
 
+- **Do not delete a bottling to get rid of it.** «Не віскі» does the same job
+  without losing anything: the reports stop showing it, the history stays, and
+  the decision can be taken back. A `DELETE` can be taken back by nobody.
 - **Do not delete a bottling that still has offers.** The foreign key stops
   you, and it is stopping you from deleting a store's whole price history.
 - **Do not delete a bottling that sits in someone's collection.** The same kind

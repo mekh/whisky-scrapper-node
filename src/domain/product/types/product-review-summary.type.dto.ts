@@ -1,6 +1,9 @@
-import { IsInt, IsObject } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsInt, IsObject, ValidateNested } from 'class-validator';
 
 import type { ProductReviewSummary } from '~types';
+
+import { ProductReviewCountsType } from './product-review-counts.type.dto';
 
 export class ProductReviewSummaryType implements ProductReviewSummary {
   /**
@@ -33,4 +36,13 @@ export class ProductReviewSummaryType implements ProductReviewSummary {
 
   @IsInt()
   public unresolvedBrands!: number;
+
+  /**
+   * Bottlings by their place in the new-product queue. A nested DTO rather
+   * than `producers`' flat object, because this one is served by the review
+   * mutation too and the two must not be able to drift.
+   */
+  @ValidateNested()
+  @Type(() => ProductReviewCountsType)
+  public products!: ProductReviewCountsType;
 }

@@ -16,7 +16,7 @@ import {
   PRODUCT_NAME_MAX_LENGTH,
 } from '~constants';
 import { GuidV7Column } from '~decorators/columns';
-import { FactSource } from '~enums';
+import { FactSource, ProductReviewStatus } from '~enums';
 import type {
   EntityCountry,
   EntityProducer,
@@ -47,6 +47,7 @@ import { BaseRichEntity } from '../_common';
 @Index('product_match_key_uindex', ['matchKey'], { unique: true })
 @Index('product_producer_idx', ['producerId'])
 @Index('product_bottler_idx', ['bottlerId'])
+@Index('product_review_status_idx', ['reviewStatus'])
 export class ProductEntity extends BaseRichEntity implements EntityProduct {
   @IsOptional()
   @IsString()
@@ -137,6 +138,41 @@ export class ProductEntity extends BaseRichEntity implements EntityProduct {
   @IsEnum(FactSource)
   @Column({ type: 'varchar', length: KB_ENUM_MAX_LENGTH, nullable: true })
   public producerSource?: FactSource;
+
+  /**
+   * How far this bottling has been through the new-product queue, or null when
+   * it never entered it — see {@link ProductReviewStatus} for the four states
+   * and for why null is one of them.
+   *
+   * **The default lives in the database, and that is on purpose.** Three
+   * different statements insert into this table and none of them names this
+   * column; the column default is what enrols every row they create, and what
+   * a fourth insert path added later would inherit for free. Stating it in the
+   * three column lists instead would be three copies of one constant, and a
+   * bottling that never reaches the queue is invisible by construction.
+   *
+   * The other half of that is `FIND_OR_CREATE_SQL`'s no-op `ON CONFLICT DO
+   * UPDATE`, which does not touch this column: a bottling somebody has already
+   * reviewed is not pushed back into the queue when a shop lists it again
+   * tomorrow.
+   */
+  @IsOptional()
+  @IsEnum(ProductReviewStatus)
+  @Column({
+    type: 'varchar',
+    length: KB_ENUM_MAX_LENGTH,
+    nullable: true,
+    default: ProductReviewStatus.PENDING,
+  })
+  public reviewStatus?: ProductReviewStatus;
+
+  /**
+   * When a person last decided about this bottling.
+   */
+  @IsDate()
+  @IsOptional()
+  @Column({ type: 'timestamp', nullable: true })
+  public reviewedAt?: Date;
 
   @ManyToOne(
     'TypeEntity',

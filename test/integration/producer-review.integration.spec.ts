@@ -192,6 +192,9 @@ describe('producer review (integration)', () => {
       moduleRef.get(CoreFlavorService, { strict: false }),
       new ProducerReachService(producers, products, resolver),
       reconcile,
+      {
+        bumpAfterCommit: (): void => undefined,
+      } as unknown as VersionedCacheService,
     );
 
     fixture = await withRolledBackFixture(async () => {

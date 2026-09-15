@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { CoreBaseService } from '~core/_common';
+import { ProductReviewStatus } from '~enums';
 import {
   FlavorCandidateRow,
   ID,
@@ -15,6 +16,8 @@ import {
   ProductFillInput,
   ProductMatchRow,
   ProductNameCandidateRow,
+  ProductReviewQueueRow,
+  ProductReviewStatusCounts,
   ProductScrapeFlavorLink,
   ProductSearchItem,
   ProductStoreFieldsRow,
@@ -305,6 +308,53 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
       producer,
       search,
     );
+  }
+
+  /**
+   * Counts the catalogue by its place in the new-product queue.
+   *
+   * @returns The `pending` / `verified` / `rejected` / `legacy` counts.
+   */
+  public async countReviewStatuses(): Promise<ProductReviewStatusCounts> {
+    return this.repo.countReviewStatuses();
+  }
+
+  /**
+   * Lists one bucket of the new-product queue, newest first.
+   *
+   * @param status - Which bucket to list.
+   * @param limit - Page size.
+   * @param offset - Page offset.
+   * @param search - Case-insensitive substring of either name, or omit.
+   * @param storeSlug - Restrict to one shop's bottlings, or omit.
+   * @returns The rows and the total matching count.
+   */
+  public async findReviewQueue(
+    status: ProductReviewStatus,
+    limit?: number,
+    offset?: number,
+    search?: string,
+    storeSlug?: string,
+  ): Promise<{ rows: ProductReviewQueueRow[]; total: number }> {
+    return this.repo.findReviewQueue(status, limit, offset, search, storeSlug);
+  }
+
+  /**
+   * Records a reviewer's verdict on a batch of bottlings — the one writer of
+   * `product.reviewStatus` outside the insert default.
+   *
+   * @param ids - The bottlings to stamp.
+   * @param status - The verdict.
+   * @param onlyWhenPending - Stamp only rows still waiting in the queue,
+   *   leaving a legacy, verified or rejected row untouched.
+   * @returns How many rows were stamped.
+   */
+  public async applyReviewStatus(
+    ids: ID[],
+    status: ProductReviewStatus,
+    onlyWhenPending = false,
+  ): Promise<number> {
+    return this.repo.applyReviewStatus(ids, status, onlyWhenPending);
   }
 
   /**

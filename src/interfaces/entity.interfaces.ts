@@ -198,6 +198,26 @@ export interface EntityProduct extends EntityBaseRich {
    * answer, `manual` for a hand relink.
    */
   producerSource?: string;
+  /**
+   * How far this bottling has been through the new-product queue
+   * ({@link ProductReviewStatus}), or **null** when it never entered it — the
+   * state every row that predates the queue keeps.
+   *
+   * `pending` does not hide anything: the queue is a list of rows to check,
+   * not a gate. `rejected` does — it is the "not whisky" verdict, and the
+   * catalogue reads filter it out while the scrape keeps collecting its offers
+   * and prices, which is what makes the verdict reversible at no cost to the
+   * data. Because null is a real state here, a predicate over this column must
+   * be `IS DISTINCT FROM` rather than `<>`.
+   */
+  reviewStatus?: string;
+  /**
+   * When a person last decided about this bottling. Set by the explicit
+   * review mutation, and by the edit that stamps `verified` on a row that was
+   * still `pending` — so on a bottling nobody has re-decided since, it records
+   * the first look rather than the latest.
+   */
+  reviewedAt?: Date;
 }
 
 /**

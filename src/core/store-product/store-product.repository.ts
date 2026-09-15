@@ -1,7 +1,7 @@
 import { TypeormRepository } from '@toxicoder/nestjs-typeorm-repository';
 
 import { BaseRepository } from '~core/_common';
-import { TRUSTED_FACT_SOURCES } from '~enums';
+import { ProductReviewStatus, TRUSTED_FACT_SOURCES } from '~enums';
 import {
   DashboardLifecycleGroupRow,
   DashboardLifecycleRow,
@@ -336,6 +336,15 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
    * The row carries `producerId` and `bottlerId` for that pass to test
    * against; they are stripped before the response leaves `ReportService`.
    *
+   * **The one exception is the review queue's `rejected`, and it stays in SQL
+   * for the mirror of that reason.** It is the same answer for everybody — a
+   * bottling a person ruled not-whisky is not whisky for anyone — so it
+   * belongs in the set that is computed once and cached, where the
+   * per-user predicates could not. `IS DISTINCT FROM` rather than `<>`,
+   * because null is a real state on that column (every row predating the
+   * queue) and `NULL <> 'rejected'` is NULL, which would fail this `AND` and
+   * hide the whole pre-existing catalogue.
+   *
    * @param filter - The report filter; empty fields mean no constraint.
    * @returns One row per matching offer.
    */
@@ -377,6 +386,7 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
 
     const sql = `${CURRENT_SQL}
       AND sp."inStock"
+      AND p."reviewStatus" IS DISTINCT FROM '${ProductReviewStatus.REJECTED}'
       AND ($1::text[] IS NULL OR st.slug = ANY($1))
       AND ($2::float8 IS NULL OR r.price >= $2)
       AND ($3::float8 IS NULL OR r.price <= $3)
@@ -422,6 +432,11 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
    * out-of-stock offers are returned too (with `inStock: false`) so their price
    * history stays reachable.
    *
+   * A `rejected` bottling is returned too, for the same reason and one more:
+   * the verdict is reversible, so the product card is where somebody checks
+   * which row they rejected and takes it back. Filtering here would make
+   * un-rejecting unreachable from the UI.
+   *
    * @param id - Store-offer id.
    * @returns The offer's current row, or null when it has no snapshot.
    */
@@ -443,7 +458,9 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
    * query into `ReportService`, neither reads a user here, so a bottle
    * already bought keeps showing where it is sold even after its bottling is
    * hidden from the catalogue: the same exception `/report/history` makes,
-   * now true by construction rather than by omission.
+   * now true by construction rather than by omission. That covers a `rejected`
+   * bottling too — a bottle on somebody's shelf keeps its price beside it
+   * whatever the catalogue has since decided about the whisky.
    *
    * @param productIds - Canonical bottling ids; an empty array reads nothing.
    * @returns One row per in-stock offer of those bottlings, unordered.
@@ -513,6 +530,8 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
          SELECT 1 FROM store_product sp
          JOIN product p ON p.id = sp."productId"
          WHERE p."countryId" = c.id AND sp."inStock"
+           AND p."reviewStatus"
+               IS DISTINCT FROM '${ProductReviewStatus.REJECTED}'
        )
        ORDER BY c."nameUa"`,
     ) as Promise<MetaCountry[]>;
@@ -526,8 +545,12 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
    */
   public async countByStore(storeId: ID): Promise<number> {
     const rows = await this.query(
-      `SELECT COUNT(*)::int AS count FROM store_product
-       WHERE "storeId" = $1 AND "inStock"`,
+      `SELECT COUNT(*)::int AS count
+       FROM store_product sp
+       JOIN product p ON p.id = sp."productId"
+       WHERE sp."storeId" = $1 AND sp."inStock"
+         AND p."reviewStatus" IS DISTINCT FROM
+             '${ProductReviewStatus.REJECTED}'`,
       [storeId],
     ) as { count: number }[];
 
@@ -540,7 +563,9 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
    * the term. The raw name is matched too because the canonical one holds only
    * brand + expression, so descriptors a user may search for ("Welsh", "Single
    * Malt") survive only there. Out-of-stock offers still resolve (their history
-   * stays reachable), but an in-stock match wins a collision.
+   * stays reachable), but an in-stock match wins a collision. A `rejected`
+   * bottling resolves as well — this is what `/report/history?term=` reaches
+   * it by, and it has to stay inspectable to be un-rejectable.
    *
    * @param term - An offer id, a product id, or a name/URL substring.
    * @returns The matching offer id, or null when nothing matches.

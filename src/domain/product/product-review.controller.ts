@@ -15,17 +15,25 @@ import type {
   KbReconcileSummary,
   ProducerReviewRow,
   ProductFactReviewRow,
+  ProductReviewQueueRow,
+  ProductReviewStatusResult,
   ProductReviewSummary,
   ReviewConflictRow,
   TypePaginated,
 } from '~types';
 
-import { ConflictResolveDto, ReviewQueryDto } from './dto';
+import {
+  ConflictResolveDto,
+  ProductReviewStatusDto,
+  ReviewQueryDto,
+} from './dto';
 import { ProductReviewService } from './product-review.service';
 import {
   KbReconcileSummaryType,
   ProducerReviewType,
   ProductFactReviewType,
+  ProductReviewQueueType,
+  ProductReviewStatusResultType,
   ProductReviewSummaryType,
   ReviewConflictType,
 } from './types';
@@ -56,6 +64,21 @@ export class ProductReviewController {
     return this.reviewService.factsPage(query);
   }
 
+  /**
+   * One bucket of the new-product queue — what the last syncs created and
+   * nobody has checked yet.
+   *
+   * @param query - Bucket (`pending` by default), search, shop and paging.
+   * @returns A page of the queue, newest first.
+   */
+  @Get('queue')
+  @Paginated(ProductReviewQueueType, [Resource.PRODUCT, Action.REVIEW])
+  public queue(
+    @Query() query: ReviewQueryDto,
+  ): Promise<TypePaginated<ProductReviewQueueRow>> {
+    return this.reviewService.queuePage(query);
+  }
+
   @Get('conflicts')
   @Paginated(ReviewConflictType, [Resource.PRODUCT, Action.REVIEW])
   public conflicts(
@@ -69,6 +92,26 @@ export class ProductReviewController {
   @Plain(KbReconcileSummaryType, [Resource.PRODUCT, Action.REVIEW])
   public apply(): Promise<KbReconcileSummary> {
     return this.reviewService.applyKnowledgeBase();
+  }
+
+  /**
+   * Records a verdict on a batch of bottlings: verified, not whisky, or back
+   * into the queue.
+   *
+   * One route for all three, since they differ only in the value written and
+   * un-rejecting is the same operation as verifying. `POST` rather than
+   * `PATCH`, as every other review mutation here is.
+   *
+   * @param body - The bottlings and the verdict.
+   * @returns How many rows were written, and the fresh queue counters.
+   */
+  @Post('status')
+  @HttpCode(HttpStatus.OK)
+  @Plain(ProductReviewStatusResultType, [Resource.PRODUCT, Action.REVIEW])
+  public setStatus(
+    @Body() body: ProductReviewStatusDto,
+  ): Promise<ProductReviewStatusResult> {
+    return this.reviewService.setStatus(body);
   }
 
   @Post('conflicts/resolve')

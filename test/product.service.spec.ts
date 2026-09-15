@@ -41,6 +41,7 @@ interface Mocks {
     findById: jest.Mock;
     createUnmatched: jest.Mock;
     deleteIfUnreferenced: jest.Mock;
+    applyReviewStatus: jest.Mock;
   };
   offers: {
     findOfferRefById: jest.Mock;
@@ -79,6 +80,7 @@ function makeService(known: Map<string, ID> = new Map()): Mocks {
     findById: jest.fn().mockResolvedValue(undefined),
     createUnmatched: jest.fn().mockResolvedValue('product-new'),
     deleteIfUnreferenced: jest.fn().mockResolvedValue(true),
+    applyReviewStatus: jest.fn().mockResolvedValue(1),
   };
 
   const offers = {
@@ -266,6 +268,38 @@ describe('ProductService.update identity merge', () => {
     expect(products.findIdentityTwins).toHaveBeenCalledTimes(1);
   });
 
+  it('stamps the merge survivor verified, and only when pending', async () => {
+    /**
+     * An edit of a queued bottling **is** its review — the correction is the
+     * act the queue asks for, and a second click to confirm it is a click
+     * somebody forgets.
+     *
+     * Two things are asserted, and both are the bug this would otherwise be.
+     * The stamp names the **survivor**, not the row the client sent: the
+     * merge's own precedence keeps the less-settled status, so a `verified`
+     * loser folding into a `pending` survivor yields `pending` and a stamp
+     * written before the merge would be thrown away in exactly the case the
+     * queue exists for. And it passes the pending-only gate, which is what
+     * keeps a legacy row null and a rejected row rejected.
+     */
+    const { service, products } = makeService();
+
+    products.findIdentityTwins.mockResolvedValue([TWIN_ID]);
+
+    await service.update({ id: OFFER_ID, name: 'Sample Twin' });
+
+    expect(products.applyReviewStatus).toHaveBeenCalledWith(
+      [TWIN_ID],
+      'verified',
+      true,
+    );
+
+    const mergeAt = products.mergeInto.mock.invocationCallOrder[0];
+    const stampAt = products.applyReviewStatus.mock.invocationCallOrder[0];
+
+    expect(mergeAt).toBeLessThan(stampAt);
+  });
+
   it('writes the flavors before the merge so they ride along', async () => {
     const { service, products } = makeService(
       new Map([['peated', 'flavor-1' as ID]]),
@@ -407,6 +441,41 @@ describe('ProductService.relink', () => {
       merged: false,
       created: true,
     });
+  });
+
+  it('marks a bottling it created verified, not pending', async () => {
+    /**
+     * The insert default would have enrolled it in the queue, and relink
+     * shares `createUnmatched` with the sync's own fallback — so the stamp is
+     * what tells the two apart. Every fact on this row is a person's, and it
+     * carries no raw shop name for a cleaned one to be compared against, so
+     * there is nothing in it for a reviewer to look at. Left pending, the
+     * reviewer's own correction would add an item to the queue it was
+     * shortening.
+     */
+    const { service, products } = makeService();
+
+    await service.relink({ id: OFFER_ID, name: 'Arran Amarone Cask' });
+
+    expect(products.applyReviewStatus).toHaveBeenCalledWith(
+      ['product-new'],
+      'verified',
+    );
+  });
+
+  it('leaves the review status of a bottling it only points at', async () => {
+    /**
+     * A relink says the listing was on the wrong whisky. It says nothing
+     * about whether the target's own facts are right, so an existing target
+     * keeps whatever place in the queue it had.
+     */
+    const { service, products } = makeService();
+
+    products.findById.mockResolvedValue({ id: TWIN_ID, name: 'Target' });
+
+    await service.relink({ id: OFFER_ID, productId: TWIN_ID });
+
+    expect(products.applyReviewStatus).not.toHaveBeenCalled();
   });
 
   it('deletes the emptied bottling the offer left behind', async () => {

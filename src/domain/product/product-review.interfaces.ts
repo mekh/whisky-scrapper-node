@@ -4,9 +4,11 @@ import type {
   KbStatus,
   PeatProfile,
   ProducerKind,
+  ProductReviewStatus,
   ScotlandLegalRegion,
   ScotlandRegion,
 } from '~enums';
+import type { ID } from '~types';
 
 /**
  * Status filter and paging for the producers tab.
@@ -95,6 +97,65 @@ export interface ReviewConflictQuery {
    * Page size.
    */
   perPage?: number;
+}
+
+/**
+ * Status filter and paging for the new-product queue.
+ */
+export interface ReviewQueueQuery {
+  /**
+   * Which bucket to list. Defaults to `pending` — the work. The other two are
+   * the archive, and `rejected` is reachable for one reason that matters: it
+   * is the only way back from a rejection somebody made by mistake.
+   *
+   * Deliberately a field of its own rather than a reuse of the producers tab's
+   * `status`: that one is a {@link KbStatus}, whose `auto` means nothing here
+   * and which has no `pending` at all.
+   */
+  reviewStatus?: ProductReviewStatus;
+
+  /**
+   * Case-insensitive name search over the canonical name or any shop's raw
+   * one, or omit for all.
+   */
+  name?: string;
+
+  /**
+   * Restrict to bottlings one shop carries.
+   */
+  store?: string;
+
+  /**
+   * 1-based page number.
+   */
+  page?: number;
+
+  /**
+   * Page size.
+   */
+  perPage?: number;
+}
+
+/**
+ * A reviewer's verdict on one or more bottlings.
+ *
+ * One input for all three transitions, because they differ only in the value
+ * written — and "back into the queue" and "un-reject" are the same operation
+ * as "verify" with a different one. Three endpoints writing one column would
+ * be three places to forget the cache bump.
+ */
+export interface ProductReviewStatusInput {
+  /**
+   * The bottlings to decide about. Bulk from the start: a pass over a night's
+   * arrivals is twenty decisions, and twenty requests against a 3-per-second
+   * limiter would earn a 429 doing nothing unusual.
+   */
+  productIds: ID[];
+
+  /**
+   * The verdict to record.
+   */
+  reviewStatus: ProductReviewStatus;
 }
 
 /**

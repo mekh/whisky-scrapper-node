@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
 
+import { CACHE_GENERATION_CATALOGUE } from '~constants';
 import { CoreFlavorService } from '~core/flavor';
 import { CoreProducerService } from '~core/producer';
 import { CoreProductService } from '~core/product';
-import { FlavorRuleMatchMode, KbStatus } from '~enums';
+import { FlavorRuleMatchMode, KbStatus, ProductReviewStatus } from '~enums';
 import { BadRequestError, DuplicateError, NotFoundError } from '~errors';
+import { VersionedCacheService } from '~lib/cache';
 import type {
   ID,
   KbReconcileSummary,
@@ -14,6 +16,8 @@ import type {
   ProducerReviewRow,
   ProducerRuleInput,
   ProductFactReviewRow,
+  ProductReviewQueueRow,
+  ProductReviewStatusResult,
   ProductReviewSummary,
   ReviewConflictRow,
   TypePaginated,
@@ -27,9 +31,11 @@ import { ProducerReachService } from './producer-reach.service';
 import type {
   ProducerPatchInput,
   ProducerRuleCreateInput,
+  ProductReviewStatusInput,
   ReviewConflictQuery,
   ReviewFactQuery,
   ReviewProducerQuery,
+  ReviewQueueQuery,
 } from './product-review.interfaces';
 
 /**
@@ -73,18 +79,22 @@ export class ProductReviewService {
 
   private readonly reconcile: KbReconcileService;
 
+  private readonly cache: VersionedCacheService;
+
   public constructor(
     producers: CoreProducerService,
     products: CoreProductService,
     flavors: CoreFlavorService,
     reach: ProducerReachService,
     reconcile: KbReconcileService,
+    cache: VersionedCacheService,
   ) {
     this.producers = producers;
     this.products = products;
     this.flavors = flavors;
     this.reach = reach;
     this.reconcile = reconcile;
+    this.cache = cache;
   }
 
   /**
@@ -115,12 +125,14 @@ export class ProductReviewService {
    * @returns The counters the screen's tabs badge themselves with.
    */
   public async summary(): Promise<ProductReviewSummary> {
-    const [statuses, facts, conflicts, unresolved] = await Promise.all([
-      this.producers.countByStatus(),
-      this.products.countUntrustedFacts(),
-      this.products.countOpenConflicts(),
-      this.producers.listUnresolvedBrands(1),
-    ]);
+    const [statuses, facts, conflicts, unresolved, products] = await Promise
+      .all([
+        this.producers.countByStatus(),
+        this.products.countUntrustedFacts(),
+        this.products.countOpenConflicts(),
+        this.producers.listUnresolvedBrands(1),
+        this.products.countReviewStatuses(),
+      ]);
 
     return {
       producers: {
@@ -135,7 +147,72 @@ export class ProductReviewService {
       untrustedFactsUnresolved: facts.eitherUnresolved,
       openConflicts: conflicts,
       unresolvedBrands: unresolved.length,
+      products,
     };
+  }
+
+  /**
+   * Lists one bucket of the new-product queue.
+   *
+   * Defaults to `pending`, which is the work. The other two buckets are the
+   * archive, and `rejected` is reachable for one reason that matters: a
+   * rejection made by mistake is only reversible if the row can still be
+   * found, and a later legitimate listing of a rejected bottling lands back on
+   * that row rather than in the queue.
+   *
+   * @param query - Bucket, search, shop filter and paging.
+   * @returns A page of the queue, newest first.
+   */
+  public async queuePage(
+    query: ReviewQueueQuery,
+  ): Promise<TypePaginated<ProductReviewQueueRow>> {
+    const limit = query.perPage ?? PAGE_SIZE;
+    const offset = ((query.page ?? 1) - 1) * limit;
+
+    const { rows, total } = await this.products.findReviewQueue(
+      query.reviewStatus ?? ProductReviewStatus.PENDING,
+      limit,
+      offset,
+      query.name,
+      query.store,
+    );
+
+    return { data: rows, total, limit, offset };
+  }
+
+  /**
+   * Records a reviewer's verdict on a batch of bottlings.
+   *
+   * One method for all three transitions, because they differ only in the
+   * value written — "back into the queue" and "un-reject" are the same
+   * operation as "verify" with a different one. Three of them would be three
+   * places to forget the line below.
+   *
+   * **The catalogue cache is bumped whatever the verdict**, not only when it
+   * crosses the `rejected` boundary that actually changes what a report
+   * returns. Two reasons: one request may carry both values, and a rule about
+   * which values matter is a rule that drifts — while the cost is asymmetric,
+   * since a spent bump costs one regeneration of a set that expires daily
+   * anyway, and a missed one serves a rejected bottling until the next sync.
+   * The bulk shape is what makes that cheap: a pass over fifty rows is one
+   * request and one bump, not fifty.
+   *
+   * @param input - The bottlings and the verdict.
+   * @returns How many rows were written, and the queue counters after it.
+   */
+  public async setStatus(
+    input: ProductReviewStatusInput,
+  ): Promise<ProductReviewStatusResult> {
+    const updated = await this.products.applyReviewStatus(
+      input.productIds,
+      input.reviewStatus,
+    );
+
+    this.cache.bumpAfterCommit(CACHE_GENERATION_CATALOGUE, 'product:review');
+
+    const products = await this.products.countReviewStatuses();
+
+    return { updated, products };
   }
 
   /**

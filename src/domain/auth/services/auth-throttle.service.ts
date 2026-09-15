@@ -207,12 +207,15 @@ export class AuthThrottleService {
   public async registerFailure(
     address: string,
   ): Promise<LoginThrottleStanding | null> {
-    const reply = await this.guard('failure', () =>
-      this.failure.run([this.key(address)], [
-        LOGIN_ATTEMPTS_PER_STAGE,
-        LOGIN_THROTTLE_RETENTION_SEC,
-        ...LOGIN_PENALTY_SECONDS,
-      ]));
+    const reply = await this.guard(
+      'failure',
+      () =>
+        this.failure.run([this.key(address)], [
+          LOGIN_ATTEMPTS_PER_STAGE,
+          LOGIN_THROTTLE_RETENTION_SEC,
+          ...LOGIN_PENALTY_SECONDS,
+        ]),
+    );
 
     const values = AuthThrottleService.numbers(reply, 2);
 

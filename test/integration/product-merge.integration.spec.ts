@@ -431,6 +431,96 @@ describe('product merge and identity resolution (integration)', () => {
       expect((await rowOf('product', survivor))?.flavorsCuratedAt).not
         .toBeNull();
     });
+
+    describe('the review status of the survivor', () => {
+      /**
+       * Distinguishes every pair this block creates.
+       *
+       * A case asserts on two merges, and the first retires the vanishing
+       * row's key into `product_match_alias` — so reusing the key would
+       * resolve the second pair's "loser" through that alias onto the
+       * survivor, and the merge would refuse a row merging into itself.
+       */
+      let pair = 0;
+
+      /**
+       * Merges two bottlings carrying the given review statuses and reads the
+       * survivor's.
+       *
+       * @param keep - The survivor's status before the merge, or null.
+       * @param lose - The vanishing row's status before the merge, or null.
+       * @returns The survivor's status afterwards.
+       */
+      const mergeStatuses = async (
+        keep: string | null,
+        lose: string | null,
+      ): Promise<string | null> => {
+        pair += 1;
+
+        const survivor = await makeBottling({
+          matchKey: `${TOKEN}-keep-${pair}`,
+          name: `${TOKEN} Keep ${pair}`,
+        });
+
+        const loser = await makeBottling({
+          matchKey: `${TOKEN}-lose-${pair}`,
+          name: `${TOKEN} Lose ${pair}`,
+        });
+
+        await dataSource.query(
+          `UPDATE product SET "reviewStatus" = v.status
+           FROM (VALUES ($1::uuid, $2::text), ($3::uuid, $4::text))
+             AS v(id, status)
+           WHERE product.id = v.id`,
+          [survivor, keep, loser, lose],
+        );
+
+        await products.mergeInto(loser, survivor);
+
+        return (await rowOf('product', survivor))?.reviewStatus as
+          | string
+          | null;
+      };
+
+      it('keeps a rejection whichever side it was on', async () => {
+        /**
+         * A person ruled one of these rows out as not whisky, and the merge
+         * has just said the two are the same whisky — so the survivor is not
+         * whisky either. Un-rejecting as a side effect of somebody editing a
+         * name would undo a human decision silently.
+         */
+        await expect(mergeStatuses('verified', 'rejected'))
+          .resolves.toBe('rejected');
+        await expect(mergeStatuses('rejected', 'pending'))
+          .resolves.toBe('rejected');
+      });
+
+      it('re-opens a verified survivor absorbing a pending row', async () => {
+        /**
+         * The merge produces a combination of facts nobody has looked at in
+         * that combination, so the queue entry survives rather than being
+         * absorbed.
+         */
+        await expect(mergeStatuses('verified', 'pending'))
+          .resolves.toBe('pending');
+        await expect(mergeStatuses('pending', 'verified'))
+          .resolves.toBe('pending');
+      });
+
+      it('carries a verified status onto a legacy survivor', async () => {
+        await expect(mergeStatuses(null, 'verified'))
+          .resolves.toBe('verified');
+      });
+
+      it('leaves two legacy rows out of the queue', async () => {
+        /**
+         * The case the `IS NOT DISTINCT FROM` chain exists for: merging two
+         * bottlings that predate the queue must not drag them into it, for the
+         * same reason the migration left them out.
+         */
+        await expect(mergeStatuses(null, null)).resolves.toBeNull();
+      });
+    });
   });
 
   describe('findOrCreateByMatchKeys', () => {

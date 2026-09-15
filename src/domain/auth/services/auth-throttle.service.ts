@@ -13,7 +13,7 @@ import {
   ValkeyScript,
   ValkeyService,
 } from '~lib/valkey';
-import type { LoginThrottleDecision } from '~types';
+import type { LoginThrottleDecision, LoginThrottleStanding } from '~types';
 
 import {
   AUTH_THROTTLE_ATTEMPT_COMMAND,
@@ -54,6 +54,51 @@ const MS_PER_SEC = 1000;
 @Injectable()
 export class AuthThrottleService {
   /**
+   * Reads a run of integers a script answered with, or null when the reply
+   * was not one — which every caller here reads as "say nothing", the same
+   * fail-open a cache outage gets.
+   *
+   * @param reply - Whatever the driver handed back.
+   * @param length - How many integers the script promises.
+   * @returns The numbers, or null.
+   */
+  private static numbers(reply: unknown, length: number): number[] | null {
+    if (!Array.isArray(reply) || reply.length !== length) {
+      return null;
+    }
+
+    const values = reply as unknown[];
+
+    if (values.some((value) => typeof value !== 'number')) {
+      return null;
+    }
+
+    return values as number[];
+  }
+
+  /**
+   * Turns a failure count and a penalty into the standing a response states.
+   *
+   * The run length is applied here rather than in the Lua because it is
+   * already stated here: the script is handed the ladder's numbers as
+   * arguments precisely so they live in `~constants` alone.
+   *
+   * @param failures - Failed attempts recorded against the caller.
+   * @param blockedForMs - What is left of any penalty in force.
+   * @returns The standing.
+   */
+  private static standing(
+    failures: number,
+    blockedForMs: number,
+  ): LoginThrottleStanding {
+    return {
+      limit: LOGIN_ATTEMPTS_PER_STAGE,
+      remaining: Math.max(0, LOGIN_ATTEMPTS_PER_STAGE - failures),
+      blockedForMs: Math.max(0, blockedForMs),
+    };
+  }
+
+  /**
    * Reads the attempt script's answer.
    *
    * @param reply - Whatever the driver handed back.
@@ -61,17 +106,20 @@ export class AuthThrottleService {
    *   read as "allow", like every other failure here.
    */
   private static decision(reply: unknown): LoginThrottleDecision | null {
-    if (!Array.isArray(reply) || reply.length !== 2) {
+    const values = AuthThrottleService.numbers(reply, 4);
+
+    if (!values) {
       return null;
     }
 
-    const [allowed, retryAfterMs] = reply as unknown[];
+    const [allowed = 1, retryAfterMs = 0, failures = 0, blockedForMs = 0] =
+      values;
 
-    if (typeof allowed !== 'number' || typeof retryAfterMs !== 'number') {
-      return null;
-    }
-
-    return { allowed: allowed === 1, retryAfterMs };
+    return {
+      allowed: allowed === 1,
+      retryAfterMs,
+      standing: AuthThrottleService.standing(failures, blockedForMs),
+    };
   }
 
   private readonly logger = new Logger(AuthThrottleService.name);
@@ -111,10 +159,16 @@ export class AuthThrottleService {
    * previous one, and records the attempt otherwise.
    *
    * @param address - The caller's resolved client address.
+   * @returns Where the caller now stands, or null when the cache could not
+   *   say — in which case the response states nothing rather than a standing
+   *   this process does not know.
    * @throws {TooManyRequestsError} When the attempt may not proceed, naming
-   *   the wait in seconds and carrying it in milliseconds for the client.
+   *   the wait in seconds and carrying it in milliseconds for the client,
+   *   with the standing beside it so a refusal describes itself too.
    */
-  public async assertAllowed(address: string): Promise<void> {
+  public async assertAllowed(
+    address: string,
+  ): Promise<LoginThrottleStanding | null> {
     const reply = await this.guard(
       'attempt',
       () =>
@@ -126,15 +180,19 @@ export class AuthThrottleService {
 
     const decision = AuthThrottleService.decision(reply);
 
-    if (!decision || decision.allowed) {
-      return;
+    if (!decision) {
+      return null;
+    }
+
+    if (decision.allowed) {
+      return decision.standing;
     }
 
     const seconds = Math.ceil(decision.retryAfterMs / MS_PER_SEC);
 
     throw new TooManyRequestsError(
       `Too many login attempts, retry in ${seconds} s`,
-      { retryAfterMs: decision.retryAfterMs },
+      { retryAfterMs: decision.retryAfterMs, standing: decision.standing },
     );
   }
 
@@ -143,14 +201,28 @@ export class AuthThrottleService {
    * is exhausted.
    *
    * @param address - The caller's resolved client address.
+   * @returns Where the caller stands after it, or null when the cache could
+   *   not say.
    */
-  public async registerFailure(address: string): Promise<void> {
-    await this.guard('failure', () =>
+  public async registerFailure(
+    address: string,
+  ): Promise<LoginThrottleStanding | null> {
+    const reply = await this.guard('failure', () =>
       this.failure.run([this.key(address)], [
         LOGIN_ATTEMPTS_PER_STAGE,
         LOGIN_THROTTLE_RETENTION_SEC,
         ...LOGIN_PENALTY_SECONDS,
       ]));
+
+    const values = AuthThrottleService.numbers(reply, 2);
+
+    if (!values) {
+      return null;
+    }
+
+    const [failures = 0, blockedForMs = 0] = values;
+
+    return AuthThrottleService.standing(failures, blockedForMs);
   }
 
   /**

@@ -41,7 +41,16 @@ interface Sent {
 class FakeClient {
   public readonly sent: Sent[] = [];
 
-  public reply: unknown = [1, 0];
+  /**
+   * What each script answers, by the name it is registered under. Two
+   * fields rather than one, because the two scripts answer different
+   * shapes: the attempt states a decision and a standing, the failure only
+   * the standing it just wrote.
+   */
+  public readonly replies: Record<string, unknown> = {
+    authThrottleAttempt: [1, 0, 0, 0],
+    authThrottleFailure: [0, 0],
+  };
 
   public failing = false;
 
@@ -56,7 +65,7 @@ class FakeClient {
     self[name] = async (...args: unknown[]): Promise<unknown> => {
       this.sent.push({ command: name, args });
 
-      return this.answer();
+      return this.answer(this.replies[name]);
     };
   }
 
@@ -68,7 +77,7 @@ class FakeClient {
    */
   public async del(key: string): Promise<number> {
     this.sent.push({ command: 'del', args: [key] });
-    await this.answer();
+    await this.answer(1);
 
     return 1;
   }
@@ -76,15 +85,16 @@ class FakeClient {
   /**
    * Answers the scripted reply, or fails when the client is marked down.
    *
+   * @param reply - What this command is set to answer.
    * @returns The reply.
    * @throws {Error} When the client is set to fail.
    */
-  private async answer(): Promise<unknown> {
+  private async answer(reply: unknown): Promise<unknown> {
     if (this.failing) {
       throw new Error('valkey is down');
     }
 
-    return this.reply;
+    return reply;
   }
 }
 
@@ -177,15 +187,19 @@ describe('AuthThrottleService — what it does with the answer', () => {
   it('lets an allowed attempt through', async () => {
     const { service, client } = makeService();
 
-    client.reply = [1, 0];
+    client.replies.authThrottleAttempt = [1, 0, 0, 0];
 
-    await expect(service.assertAllowed(ADDRESS)).resolves.toBeUndefined();
+    await expect(service.assertAllowed(ADDRESS)).resolves.toEqual({
+      limit: LOGIN_ATTEMPTS_PER_STAGE,
+      remaining: LOGIN_ATTEMPTS_PER_STAGE,
+      blockedForMs: 0,
+    });
   });
 
   it('refuses with the wait the script stated', async () => {
     const { service, client } = makeService();
 
-    client.reply = [0, 4500];
+    client.replies.authThrottleAttempt = [0, 4500, 0, 4500];
 
     await expect(service.assertAllowed(ADDRESS)).rejects
       .toThrow(TooManyRequestsError);
@@ -199,14 +213,92 @@ describe('AuthThrottleService — what it does with the answer', () => {
   it('states the wait in seconds and carries it in milliseconds', async () => {
     const { service, client } = makeService();
 
-    client.reply = [0, 4500];
+    client.replies.authThrottleAttempt = [0, 4500, 0, 4500];
 
     const thrown = await service.assertAllowed(ADDRESS)
       .then(() => null)
       .catch((error: unknown) => error as TooManyRequestsError);
 
     expect(thrown?.message).toContain('5 s');
-    expect(thrown?.data).toEqual({ retryAfterMs: 4500 });
+    expect(thrown?.data).toMatchObject({ retryAfterMs: 4500 });
+  });
+});
+
+/**
+ * What the two answers say about the caller's position, which is what
+ * `../web` draws under the login form. The run length is applied here and
+ * not in the Lua, so the scripts hand over a raw failure count.
+ */
+describe('AuthThrottleService — the standing it reports', () => {
+  it('turns the failure count into attempts left', async () => {
+    const { service, client } = makeService();
+
+    client.replies.authThrottleFailure = [2, 0];
+
+    await expect(service.registerFailure(ADDRESS)).resolves.toEqual({
+      limit: LOGIN_ATTEMPTS_PER_STAGE,
+      remaining: LOGIN_ATTEMPTS_PER_STAGE - 2,
+      blockedForMs: 0,
+    });
+  });
+
+  /**
+   * The failure that exhausts a run answers with the penalty it just
+   * imposed, which is the moment the form has to stop counting and start
+   * counting down.
+   */
+  it('reports the penalty the last failure of a run imposed', async () => {
+    const { service, client } = makeService();
+
+    client.replies.authThrottleFailure = [0, 5000];
+
+    await expect(service.registerFailure(ADDRESS)).resolves.toEqual({
+      limit: LOGIN_ATTEMPTS_PER_STAGE,
+      remaining: LOGIN_ATTEMPTS_PER_STAGE,
+      blockedForMs: 5000,
+    });
+  });
+
+  it('carries the standing on its own refusal', async () => {
+    const { service, client } = makeService();
+
+    client.replies.authThrottleAttempt = [0, 3200, 0, 3200];
+
+    const thrown = await service.assertAllowed(ADDRESS)
+      .then(() => null)
+      .catch((error: unknown) => error as TooManyRequestsError);
+
+    expect(thrown?.data).toEqual({
+      retryAfterMs: 3200,
+      standing: {
+        limit: LOGIN_ATTEMPTS_PER_STAGE,
+        remaining: LOGIN_ATTEMPTS_PER_STAGE,
+        blockedForMs: 3200,
+      },
+    });
+  });
+
+  /**
+   * A second of spacing is not a block: the wait is stated, so the caller
+   * backs off, but nothing is drawn as a penalty because none is in force.
+   */
+  it('states no penalty when it is the spacing that refused', async () => {
+    const { service, client } = makeService();
+
+    client.replies.authThrottleAttempt = [0, 700, 3, 0];
+
+    const thrown = await service.assertAllowed(ADDRESS)
+      .then(() => null)
+      .catch((error: unknown) => error as TooManyRequestsError);
+
+    expect(thrown?.data).toEqual({
+      retryAfterMs: 700,
+      standing: {
+        limit: LOGIN_ATTEMPTS_PER_STAGE,
+        remaining: LOGIN_ATTEMPTS_PER_STAGE - 3,
+        blockedForMs: 0,
+      },
+    });
   });
 });
 
@@ -222,16 +314,22 @@ describe('AuthThrottleService — when the cache cannot answer', () => {
 
     client.failing = true;
 
-    await expect(service.assertAllowed(ADDRESS)).resolves.toBeUndefined();
-    await expect(service.registerFailure(ADDRESS)).resolves.toBeUndefined();
+    await expect(service.assertAllowed(ADDRESS)).resolves.toBeNull();
+    await expect(service.registerFailure(ADDRESS)).resolves.toBeNull();
     await expect(service.reset(ADDRESS)).resolves.toBeUndefined();
   });
 
+  /**
+   * Null, not a guess: a standing this process does not know must not be
+   * stated, or the form would count down a block nobody is serving.
+   */
   it('allows the attempt on an answer it cannot read', async () => {
     const { service, client } = makeService();
 
-    client.reply = ['nonsense'];
+    client.replies.authThrottleAttempt = ['nonsense'];
+    client.replies.authThrottleFailure = ['nonsense'];
 
-    await expect(service.assertAllowed(ADDRESS)).resolves.toBeUndefined();
+    await expect(service.assertAllowed(ADDRESS)).resolves.toBeNull();
+    await expect(service.registerFailure(ADDRESS)).resolves.toBeNull();
   });
 });

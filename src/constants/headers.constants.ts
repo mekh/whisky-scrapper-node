@@ -38,3 +38,20 @@ export const HEADER_RATE_LIMIT_REMAINING = 'X-RateLimit-Remaining';
 export const HEADER_RATE_LIMIT_RESET = 'X-RateLimit-Reset';
 export const HEADER_RATE_LIMIT_RETRY_MS = 'X-RateLimit-Retry-After-Ms';
 export const HEADER_RETRY_AFTER = 'Retry-After';
+
+/**
+ * Login-ladder response headers, stated on the two answers that carry news
+ * about it: the `401` a wrong password earns, and the `429` the ladder
+ * refuses with. They are the ladder's own standing and deliberately not the
+ * `X-RateLimit-*` family above — both limits can refuse the same request, for
+ * different reasons and with different waits, so one set of headers could not
+ * describe both.
+ *
+ * `X-Login-Retry-After-Ms` is the wait a **penalty** has left, which is not
+ * the same figure as `Retry-After`: a refusal for the one-per-second spacing
+ * states a `Retry-After` and no penalty at all, because a second of spacing
+ * is not a block and `../web` must not draw a countdown for it.
+ */
+export const HEADER_LOGIN_ATTEMPTS = 'X-Login-Attempts';
+export const HEADER_LOGIN_ATTEMPTS_REMAINING = 'X-Login-Attempts-Remaining';
+export const HEADER_LOGIN_RETRY_MS = 'X-Login-Retry-After-Ms';

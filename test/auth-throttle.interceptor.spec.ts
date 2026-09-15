@@ -11,8 +11,18 @@ import {
   ServerError,
   TooManyRequestsError,
 } from '~errors';
+import type { LoginThrottleStanding } from '~types';
 
 const ADDRESS = '203.0.113.7';
+
+/**
+ * A standing the stubs report unless a test asks for another.
+ */
+const STANDING: LoginThrottleStanding = {
+  limit: 5,
+  remaining: 3,
+  blockedForMs: 0,
+};
 
 /**
  * What the interceptor asked the throttle to do, in order.
@@ -27,32 +37,44 @@ interface Calls {
  * Builds a throttle that records its calls, optionally refusing the check.
  *
  * @param refuseWithMs - When set, `assertAllowed` refuses with this wait.
+ * @param standing - What the throttle reports, or null for a cache that
+ *   could not say.
  * @returns The stub and the record of what it was asked.
  */
-function makeThrottle(refuseWithMs?: number): {
+function makeThrottle(
+  refuseWithMs?: number,
+  standing: LoginThrottleStanding | null = STANDING,
+): {
   throttle: AuthThrottleService;
   calls: Calls;
 } {
   const calls: Calls = { allowed: [], failures: [], resets: [] };
 
   const throttle = {
-    assertAllowed: (address: string): Promise<void> => {
+    assertAllowed: (
+      address: string,
+    ): Promise<LoginThrottleStanding | null> => {
       calls.allowed.push(address);
 
       if (refuseWithMs) {
         return Promise.reject(
           new TooManyRequestsError('Too many login attempts, retry in 5 s', {
             retryAfterMs: refuseWithMs,
+            standing: standing
+              ? { ...standing, blockedForMs: refuseWithMs }
+              : undefined,
           }),
         );
       }
 
-      return Promise.resolve();
+      return Promise.resolve(standing);
     },
-    registerFailure: (address: string): Promise<void> => {
+    registerFailure: (
+      address: string,
+    ): Promise<LoginThrottleStanding | null> => {
       calls.failures.push(address);
 
-      return Promise.resolve();
+      return Promise.resolve(standing);
     },
     reset: (address: string): Promise<void> => {
       calls.resets.push(address);
@@ -65,18 +87,30 @@ function makeThrottle(refuseWithMs?: number): {
 }
 
 /**
- * An execution context carrying the address the client-ip hook resolved.
+ * The headers one reply was given, in the order they were set.
+ */
+type Written = Record<string, unknown>;
+
+/**
+ * An execution context carrying the address the client-ip hook resolved,
+ * over a reply that records what is written to it.
  *
+ * @param written - The map the reply records its headers into.
  * @returns The context the interceptor reads.
  */
-function makeContext(): ExecutionContext {
+function makeContext(written: Written = {}): ExecutionContext {
   const request = { ip: '127.0.0.1', ctx: { ip: ADDRESS }, headers: {} };
+  const reply = {
+    header: (name: string, value: unknown): void => {
+      written[name] = value;
+    },
+  };
 
   return {
     getType: () => 'http',
     switchToHttp: () => ({
       getRequest: (): object => request,
-      getResponse: (): object => ({}),
+      getResponse: (): object => reply,
     }),
   } as unknown as ExecutionContext;
 }
@@ -106,9 +140,10 @@ function makeHandler(outcome: unknown): CallHandler {
 function run(
   interceptor: AuthThrottleInterceptor,
   outcome: unknown,
+  written: Written = {},
 ): Promise<unknown> {
   return firstValueFrom(
-    interceptor.intercept(makeContext(), makeHandler(outcome)),
+    interceptor.intercept(makeContext(written), makeHandler(outcome)),
   );
 }
 
@@ -198,5 +233,87 @@ describe('AuthThrottleInterceptor — the refusal', () => {
 
     expect(calls.failures).toEqual([]);
     expect(calls.resets).toEqual([]);
+  });
+});
+
+/**
+ * The headers `../web`'s login form reads. They are written here and not in
+ * a guard because only this hook sees both the check that precedes the
+ * handler and the write that follows it.
+ */
+describe('AuthThrottleInterceptor — the standing it states', () => {
+  it('states the run and what is left of it on a wrong password', async () => {
+    const { throttle } = makeThrottle();
+    const interceptor = new AuthThrottleInterceptor(throttle);
+    const written: Written = {};
+
+    await expect(run(interceptor, new NotAuthenticatedError('nope'), written))
+      .rejects.toBeInstanceOf(NotAuthenticatedError);
+
+    expect(written).toEqual({
+      'X-Login-Attempts': 5,
+      'X-Login-Attempts-Remaining': 3,
+    });
+  });
+
+  /**
+   * The failure that exhausts a run answers `401` and imposes the wait in
+   * the same breath, so that one response has to carry both.
+   */
+  it('states the penalty a failure imposed, on the 401', async () => {
+    const { throttle } = makeThrottle(undefined, {
+      limit: 5,
+      remaining: 5,
+      blockedForMs: 5000,
+    });
+    const interceptor = new AuthThrottleInterceptor(throttle);
+    const written: Written = {};
+
+    await expect(run(interceptor, new NotAuthenticatedError('nope'), written))
+      .rejects.toBeInstanceOf(NotAuthenticatedError);
+
+    expect(written['X-Login-Retry-After-Ms']).toBe(5000);
+  });
+
+  it('states the wait on its own refusal', async () => {
+    const { throttle } = makeThrottle(5000);
+    const interceptor = new AuthThrottleInterceptor(throttle);
+    const written: Written = {};
+
+    await expect(run(interceptor, { access: 'token' }, written))
+      .rejects.toBeInstanceOf(TooManyRequestsError);
+
+    expect(written).toEqual({
+      'X-Login-Attempts': 5,
+      'X-Login-Attempts-Remaining': 3,
+      'X-Login-Retry-After-Ms': 5000,
+    });
+  });
+
+  /**
+   * Fail-open means the ladder allowed the attempt without knowing anything,
+   * and a header stating a standing this process does not have would be a
+   * countdown against a block nobody is serving.
+   */
+  it('states nothing when the ladder could not say', async () => {
+    const { throttle } = makeThrottle(undefined, null);
+    const interceptor = new AuthThrottleInterceptor(throttle);
+    const written: Written = {};
+
+    await expect(run(interceptor, new NotAuthenticatedError('nope'), written))
+      .rejects.toBeInstanceOf(NotAuthenticatedError);
+
+    expect(written).toEqual({});
+  });
+
+  it('says nothing about the ladder on a success', async () => {
+    const { throttle } = makeThrottle();
+    const interceptor = new AuthThrottleInterceptor(throttle);
+    const written: Written = {};
+
+    await expect(run(interceptor, { access: 'token' }, written)).resolves
+      .toEqual({ access: 'token' });
+
+    expect(written).toEqual({});
   });
 });

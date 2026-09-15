@@ -10,7 +10,7 @@ import {
 import { AuthThrottleService } from '~domain/auth/services/auth-throttle.service';
 import { TooManyRequestsError } from '~errors';
 import { ValkeyService } from '~lib/valkey';
-import type { LoginThrottleState } from '~types';
+import type { LoginThrottleStanding, LoginThrottleState } from '~types';
 
 /**
  * Own prefix per run, so a suite cannot collide with a locally running
@@ -114,6 +114,27 @@ async function refusedFor(address: string): Promise<number> {
     };
 
     return data.retryAfterMs;
+  }
+}
+
+/**
+ * Makes one attempt and reports the standing it answered with, whether it
+ * was allowed or refused.
+ *
+ * @param address - The caller's address.
+ * @returns The standing, or null when none was stated.
+ */
+async function standingOf(
+  address: string,
+): Promise<LoginThrottleStanding | null> {
+  try {
+    return await service.assertAllowed(address);
+  } catch (error) {
+    const data = (error as TooManyRequestsError).data as {
+      standing?: LoginThrottleStanding;
+    };
+
+    return data.standing ?? null;
   }
 }
 
@@ -394,8 +415,85 @@ describe('the login ladder over a live Valkey — failure', () => {
 
     const address = freshAddress();
 
-    await expect(offline.assertAllowed(address)).resolves.toBeUndefined();
-    await expect(offline.registerFailure(address)).resolves.toBeUndefined();
+    await expect(offline.assertAllowed(address)).resolves.toBeNull();
+    await expect(offline.registerFailure(address)).resolves.toBeNull();
     await expect(offline.reset(address)).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * The standing both scripts report, which is what `../web` draws under the
+ * login form. It is asserted against a live Valkey because the arithmetic
+ * behind it — the failure count, and the penalty a failure imposes — is in
+ * the Lua and nowhere else.
+ */
+const STANDING = 'the login ladder over a live Valkey — the standing';
+
+describe(STANDING, () => {
+  it('counts a run down as the failures land', async () => {
+    const address = freshAddress();
+
+    const counted = await Array.from({ length: LOGIN_ATTEMPTS_PER_STAGE - 1 })
+      .reduce<Promise<number[]>>(async (sofar) => {
+        const seen = await sofar;
+        const standing = await service.registerFailure(address);
+
+        return [...seen, standing?.remaining ?? -1];
+      }, Promise.resolve([]));
+
+    expect(counted).toEqual([4, 3, 2, 1]);
+  });
+
+  /**
+   * The failure that exhausts the run answers with the penalty it imposed,
+   * which is the one response that has to say both "none left" and "wait
+   * this long".
+   */
+  it('reports the penalty on the failure that imposes it', async () => {
+    const address = freshAddress();
+
+    await failTimes(address, LOGIN_ATTEMPTS_PER_STAGE - 1);
+
+    const standing = await service.registerFailure(address);
+
+    expect(standing?.blockedForMs).toBe(LOGIN_PENALTY_SECONDS[0]! * 1000);
+  });
+
+  it('reports what is left of a live penalty on a refusal', async () => {
+    const address = freshAddress();
+    const now = await serverNow();
+
+    await seed(address, { blockedUntil: now + 5000 });
+
+    const standing = await standingOf(address);
+
+    expect(standing?.blockedForMs).toBeGreaterThan(4000);
+    expect(standing?.blockedForMs).toBeLessThanOrEqual(5000);
+  });
+
+  /**
+   * A second of spacing is not a block. The attempt is still refused and
+   * still states its wait — it is `blockedForMs` that must stay zero, or the
+   * form would count down a penalty nobody imposed.
+   */
+  it('reports no penalty when it is the spacing that refused', async () => {
+    const address = freshAddress();
+
+    await service.assertAllowed(address);
+
+    const standing = await standingOf(address);
+
+    expect(await refusedFor(address)).toBeGreaterThan(0);
+    expect(standing?.blockedForMs).toBe(0);
+  });
+
+  it('reports a full run to a caller with no history', async () => {
+    const standing = await standingOf(freshAddress());
+
+    expect(standing).toEqual({
+      limit: LOGIN_ATTEMPTS_PER_STAGE,
+      remaining: LOGIN_ATTEMPTS_PER_STAGE,
+      blockedForMs: 0,
+    });
   });
 });

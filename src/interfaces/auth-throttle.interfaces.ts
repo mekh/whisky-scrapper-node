@@ -36,6 +36,41 @@ export interface LoginThrottleState {
 }
 
 /**
+ * Where one caller stands on the ladder, as an answer states it.
+ *
+ * This is what `../web`'s login form draws under itself: the count so a
+ * person can see the door closing before it shuts, and the deadline so the
+ * wait is a number that moves rather than a sentence that does not. It is
+ * the ladder's own standing and not the flat limiter's — the two refuse for
+ * different reasons and can both be in force at once, which is why they
+ * carry separate headers.
+ */
+export interface LoginThrottleStanding {
+  /**
+   * Attempts one run allows, `LOGIN_ATTEMPTS_PER_STAGE`. Stated rather than
+   * assumed: a client that only learns the rule by hitting it cannot show
+   * how close to it the caller is.
+   */
+  limit: number;
+
+  /**
+   * Failed attempts left before the next penalty. It reads `limit` again
+   * while a penalty is in force, which is true — the run is granted afresh
+   * when the wait ends — and is why a blocked answer is read by its
+   * deadline, not by this.
+   */
+  remaining: number;
+
+  /**
+   * Milliseconds until the penalty in force ends, or 0 when there is none.
+   * Deliberately not the same figure as `retryAfterMs` below: a refusal for
+   * the one-per-second spacing states a wait here of zero, because a second
+   * of spacing is not a block and must not be drawn as one.
+   */
+  blockedForMs: number;
+}
+
+/**
  * The answer to one login-attempt check.
  */
 export interface LoginThrottleDecision {
@@ -48,4 +83,9 @@ export interface LoginThrottleDecision {
    * Milliseconds until the caller may try again. Zero when allowed.
    */
   retryAfterMs: number;
+
+  /**
+   * What the caller may still do, for the response to state.
+   */
+  standing: LoginThrottleStanding;
 }

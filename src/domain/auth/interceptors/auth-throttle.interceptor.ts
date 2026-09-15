@@ -7,7 +7,13 @@ import {
 import { Observable, catchError, from, map, mergeMap, throwError } from 'rxjs';
 
 import { ContextManager } from '~app/context';
-import { NotAuthenticatedError } from '~errors';
+import {
+  HEADER_LOGIN_ATTEMPTS,
+  HEADER_LOGIN_ATTEMPTS_REMAINING,
+  HEADER_LOGIN_RETRY_MS,
+} from '~constants';
+import { NotAuthenticatedError, TooManyRequestsError } from '~errors';
+import type { LoginThrottleStanding, Response } from '~types';
 
 import { AuthThrottleService } from '../services/auth-throttle.service';
 
@@ -31,6 +37,13 @@ import { AuthThrottleService } from '../services/auth-throttle.service';
  * `NotAuthenticatedError` throw to this path would silently start counting
  * it, which is the one thing to keep in mind when editing the login flow.
  *
+ * It is also the one place that can **state** the ladder's standing, and for
+ * the same reason: the count a person is shown comes from the write that
+ * happens after the handler, while the deadline comes from the check before
+ * it. A guard could write neither. The headers go on the `401` as much as on
+ * the `429`, because the whole point is a door seen closing rather than one
+ * reported shut.
+ *
  * Two details worth knowing. Pipes run **after** interceptors, so a request
  * with a malformed body reaches the throttle before validation rejects it:
  * it counts toward the one-per-second spacing but never as a failed guess.
@@ -39,6 +52,28 @@ import { AuthThrottleService } from '../services/auth-throttle.service';
  */
 @Injectable()
 export class AuthThrottleInterceptor implements NestInterceptor {
+  /**
+   * Reads the standing a refusal carries, when it is one of ours.
+   *
+   * Written as a read of the error's data rather than a type test on the
+   * error alone: `UserRateLimitGuard` raises the same class, and although a
+   * guard runs before any interceptor and so cannot reach this one today,
+   * a refusal with no standing in it is not one this can describe.
+   *
+   * @param error - The error being answered.
+   * @returns The standing, or null when the error carries none.
+   */
+  private static standingOf(error: unknown): LoginThrottleStanding | null {
+    if (!(error instanceof TooManyRequestsError)) {
+      return null;
+    }
+
+    const { standing } = error.data as
+      { standing?: LoginThrottleStanding } ?? {};
+
+    return standing ?? null;
+  }
+
   public constructor(private readonly throttle: AuthThrottleService) {}
 
   /**
@@ -53,11 +88,12 @@ export class AuthThrottleInterceptor implements NestInterceptor {
     next: CallHandler,
   ): Observable<unknown> {
     const address = ContextManager.create(context).manager.ip;
+    const reply = context.switchToHttp().getResponse<Response>();
 
     return from(this.throttle.assertAllowed(address)).pipe(
       mergeMap(() => next.handle()),
       mergeMap((answer: unknown) => this.onSuccess(address, answer)),
-      catchError((error: unknown) => this.onFailure(address, error)),
+      catchError((error: unknown) => this.onFailure(address, reply, error)),
     );
   }
 
@@ -74,23 +110,67 @@ export class AuthThrottleInterceptor implements NestInterceptor {
   }
 
   /**
-   * Records a wrong password and re-raises, or re-raises anything else
-   * untouched.
+   * Records a wrong password and re-raises, describing where the caller now
+   * stands; re-raises anything else untouched, save for its own refusal,
+   * which describes itself.
    *
    * The recording is awaited before the error propagates, so the response a
    * caller receives is never ahead of the state it was counted against.
    *
    * @param address - The caller's resolved client address.
+   * @param reply - The reply being built.
    * @param error - What the handler threw.
    * @returns A stream that fails with the same error.
    */
-  private onFailure(address: string, error: unknown): Observable<never> {
+  private onFailure(
+    address: string,
+    reply: Response,
+    error: unknown,
+  ): Observable<never> {
+    const refusal = AuthThrottleInterceptor.standingOf(error);
+
+    if (refusal) {
+      this.describe(reply, refusal);
+
+      return throwError(() => error);
+    }
+
     if (!(error instanceof NotAuthenticatedError)) {
       return throwError(() => error);
     }
 
     return from(this.throttle.registerFailure(address)).pipe(
-      mergeMap(() => throwError(() => error)),
+      mergeMap((standing: LoginThrottleStanding | null) => {
+        this.describe(reply, standing);
+
+        return throwError(() => error);
+      }),
     );
+  }
+
+  /**
+   * States the caller's standing on the ladder in the response headers.
+   *
+   * Nothing is written when the ladder could not say — a cache outage fails
+   * open, and a client told "four attempts left" by a process that does not
+   * know would be worse served than one told nothing.
+   *
+   * @param reply - The reply being built.
+   * @param standing - Where the caller stands, or null when unknown.
+   */
+  private describe(
+    reply: Response,
+    standing: LoginThrottleStanding | null,
+  ): void {
+    if (!standing) {
+      return;
+    }
+
+    reply.header(HEADER_LOGIN_ATTEMPTS, standing.limit);
+    reply.header(HEADER_LOGIN_ATTEMPTS_REMAINING, standing.remaining);
+
+    if (standing.blockedForMs > 0) {
+      reply.header(HEADER_LOGIN_RETRY_MS, standing.blockedForMs);
+    }
   }
 }

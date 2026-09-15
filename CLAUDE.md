@@ -1322,6 +1322,11 @@ leaves them null; setting the default afterwards reaches only inserts that omit
 the column, which is all three of them. Purely additive and structurally
 reversible, so `ROLLBACK.md`'s PATH A can leave it applied.
 
+Then `vina-mira-store` (2026-09-15), the `vina-mira` store + config, the same
+shape and un-onboarding `down()` semantics as the other store seeds; its
+comment documents both the `pnpm backfill --store vina-mira` first fill and
+why the shop's promotions page is deliberately not the listing walked.
+
 Then the pair of 2026-09-06: `product-match-alias` creates the retired-key table (`key` PK, `productId` → `product.id`, `ON DELETE CASCADE`), and `product-duplicate-merge` folds the catalogue's duplicates together, once, from what the data says. It works in five steps — the `Casc` misspelling, the curated Arran corrections (addressed by identity and by URL, never by id, each a no-op on a catalogue that lacks the row), the identity groups (rows with one name, volume and age), the barcode groups (rows whose listings state one retail barcode — read out of the Zakaz.ua URL suffix and the codes Rozetka and MauDau print in parentheses — where the volumes agree and one name's significant words are a subset of the other's, which keeps `Clan Denny Islay` apart from `Clan Denny Speyside` and `Hyde №3` from `Hyde №4` where a shop plainly reused a code) and the orphans (a bottling nothing refers to is deleted). The survivor is the row a person named, else the most listed; the vanishing row's facts fold in by the canonical write's trust rules and its key is retired into an alias. Measured on the 2026-09-06 dump: 1 name respelled, 4 Arran corrections, 85 identity groups (95 rows folded, 129 offers moved), 132 barcode groups (135 rows folded, 315 offers moved), 10 orphans deleted; 4 078 bottlings became 3 835 with every offer, snapshot and purchase in place, and 40 barcode groups were refused and logged for a person. It asserts all of that before committing; `down()` is a documented no-op. Applied to production with the 2026-09-06 deploy.
 
 **`flavor-llm-import` ships its data as a CSV beside the migration.** Flavors
@@ -1574,11 +1579,15 @@ wrappers): `scrape/` has its own internal layering.
   end **redirects to page 1** (verified live 2026-07-25 and 2026-09-05), and
   reconciles the tiles handed over against the «Знайдено N товарів» figure the
   listing states, while a page that rendered no tile at all is the Cloudflare
-  challenge winning and reads as incomplete; the seven `PagedHtmlAdapterBase`
+  challenge winning and reads as incomplete; the eight `PagedHtmlAdapterBase`
   stores use a 404/410 or a page with no new SKU — and `winebutik`
   additionally the first page carrying a known out-of-stock label, because
   its listing sorts purchasable items ahead of a sold-out tail, which makes
-  that page the end of everything the walk is for (`pageEndsListing`).
+  that page the end of everything the walk is for (`pageEndsListing`), and
+  `vina-mira` additionally reconciles against the count its pager prints
+  (`statedItemCount`, the second hook on that base), because its page past
+  the end answers 200 with an empty grid and the site sits behind a page
+  cache, so a cached blank page reads exactly like the end of the catalogue.
   `MAX_PAGES` is incomplete everywhere.
   **The count is reconciled against what the source handed over, not against
   the snapshots that survived mapping** — a listing routinely repeats a SKU or
@@ -1592,7 +1601,11 @@ wrappers): `scrape/` has its own internal layering.
   sold-out tail is that marker; a page that fails ends the walk unless
   nothing was collected yet, in which case it throws — and whether that
   ending counts as reaching the end of the listing depends on the status, see
-  "Listing completeness")
+  "Listing completeness". A store whose listing prints a real total states it
+  through the `statedItemCount` hook — default null, overridden by
+  `vina-mira` — which turns "a page brought nothing new" from an assumption
+  into a fact reconciled against the cards the source handed over; with the
+  default the other seven stores' verdicts are unchanged)
   → `WooCommerceAdapterBase` (shared card markup,
   `/whiskey/page/N/` pagination and specification table of the two WooCommerce
   stores). `BrowserAdapterBase` is the parallel branch for the browser tier.
@@ -1736,7 +1749,49 @@ wrappers): `scrape/` has its own internal layering.
   still null, and the body description into `rawAttrs` for the LLM flavor
   pass. `link-producer` is **never** read: it names the legal producer
   (`Bardinet` for Sir Edwards, `Glen Turner` for Glen Clan) — the same trap
-  as alcomag's «Виробник» — so brand is left to the brand-from-name pass).
+  as alcomag's «Виробник» — so brand is left to the brand-from-name pass),
+  and `vina-mira/`
+  (vina-mira.com.ua — «Best Wine», OpenCart SSR via cheerio behind plain
+  nginx with no bot wall, so tier 1 plain fetch; one flat whisky category
+  walked as `?limit=100&page=N`, ~294 bottlings. **It is the first store whose
+  listing states a count** — `Показано з 1 по 100 із 294` — read through the
+  new `statedItemCount` hook on `PagedHtmlAdapterBase`, because the page past
+  the end answers 200 with an empty grid rather than a 404 and the site sits
+  behind a page cache, where a cached blank page is indistinguishable from the
+  end of the catalogue and would let the sweep flag everything the walk never
+  reached. The SKU is the OpenCart `product_id` carried by the card root's
+  class, not the article: that lives on the product page only, is sometimes
+  empty, and comes in unrelated shapes (`bw056559`, `Я00056559`, `AT4P162`).
+  **Three traps.** The microdata states `priceCurrency: RUB` on every card
+  while the shop prices in hryvnia, so the field is never read. **The listing
+  states no availability at all** — the card's stock span is empty (filled by
+  AJAX) and `span.prlistb.active` is a layout modifier rather than a buy
+  marker, since the product page renders the same eight related products once
+  with the class and once without, both labelled «Купити» — so a listed card
+  is taken as in stock, maudau's rule, and the only real signal is the product
+  page's `itemprop="availability"`, which `enrichDetail` reads fail-open.
+  Whether the listing carries sold-out items at all is an assumption to
+  re-check against the first weeks of data. And the pre-discount price sits in
+  the image sticker panel (`.stiker_panel .price-old`), not beside the current
+  price. `supportsDetail`: the product page's `additionalProperty` list is
+  read as a label-to-value dictionary — the attribute set varies per product —
+  filling type, country, volume and abv, plus the description tab into
+  `rawAttrs`; the `meta[itemprop="description"]` in the head is marketing
+  boilerplate naming the shop and the price, and is deliberately not read, as
+  is OpenCart's manufacturer field, the same trap alcomag and winebutik
+  document. The shop's promotions page (`/specials/?fcid=90`, 88 whiskies) is
+  a subset of the category carrying the same strike-through markup and is
+  deliberately not walked: scraping it alone would flag a bottling out of
+  stock the day it left the sale while the shop still sold it.
+  Two live-data quirks are the shop's own and are left alone: a few products
+  carry a broken SEO alias — the alias field holds the page's meta keywords,
+  so every link on the card points at `/виски, nestville, blended, …` and
+  answers 403 from the shop's own listing too, which costs those offers their
+  detail page and nothing else — and a few names are written entirely in
+  Cyrillic transliteration («Віскі Джек Деніелс»), which the shared name
+  cleaner reduces to nothing, so those bottlings carry no canonical name and
+  no match key and stand on their own, exactly as they already do for every
+  other shop that writes names that way).
   The registry
   resolves a specialized adapter by slug and falls back to `ZakazAdapter` for
   any store with a `retailChain`/`category`.
@@ -1841,12 +1896,14 @@ wrappers): `scrape/` has its own internal layering.
   the run persists the listing instead of dying on the store timeout — the
   skipped items' fields stay empty until a backfill run, which the log line
   says outright.
-  Five stores' first full detail sweep exceeds `SYNC_STORE_TIMEOUT_MS` and so
+  Six stores' first full detail sweep exceeds `SYNC_STORE_TIMEOUT_MS` and so
   has to be seeded through `pnpm backfill --store <slug>` once: `fozzy`
   (~300 pages), `alcomag` (~600), `silpo` (778 stored rows missing ABV,
   ~60–110 min at its 4–8 s delay), `goodwine` (~724 SKUs the 30-page cap
-  had been hiding, at an 8–15 s delay), and `winebutik` (~550 purchasable
-  SKUs, heavy on collector bottlings the catalogue does not cover). After
+  had been hiding, at an 8–15 s delay), `winebutik` (~550 purchasable
+  SKUs, heavy on collector bottlings the catalogue does not cover), and
+  `vina-mira` (~294 SKUs, whose type and country live on the product page).
+  After
   that the normal gate leaves only genuinely new SKUs to fetch, which fits
   the budget easily.
 - **Parity harness**: `scripts/scrape-parity-diff.ts <slug> [--python <dump>]
@@ -3863,7 +3920,11 @@ its first full detail sweep exceeds `SYNC_STORE_TIMEOUT_MS` too, so seed the
 fields with `pnpm backfill --store alcomag` once after deploy), and
 `winebutik` (added 2026-08-26, TS-only too — Drupal Commerce SSR with an
 availability-sorted listing the walk stops at, see "Adapters"; seed the
-fields with `pnpm backfill --store winebutik` once after deploy) —
+fields with `pnpm backfill --store winebutik` once after deploy), and
+`vina-mira` (added 2026-09-15, TS-only too — OpenCart SSR whose listing
+states its own item count, which the walk reconciles against, see
+"Adapters"; seed the fields with `pnpm backfill --store vina-mira` once
+after deploy) —
 with golden tests and the parity harness, and the internal daily cron — which **ships disabled**
 (`SYNC_CRON_ENABLED` unset), so the Python system cron still owns the schedule.
 Pending: the web "Sync" button and the Python decommission. **The cutover is

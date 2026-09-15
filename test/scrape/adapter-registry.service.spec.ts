@@ -9,6 +9,7 @@ import { MaudauAdapter } from '../../src/scrape/adapters/maudau';
 import { OkwineAdapter } from '../../src/scrape/adapters/okwine';
 import { RozetkaAdapter } from '../../src/scrape/adapters/rozetka';
 import { SilpoAdapter } from '../../src/scrape/adapters/silpo';
+import { VinaMiraAdapter } from '../../src/scrape/adapters/vina-mira';
 import { WinePointAdapter } from '../../src/scrape/adapters/wine-point';
 import { WinebutikAdapter } from '../../src/scrape/adapters/winebutik';
 import { WinewineAdapter } from '../../src/scrape/adapters/winewine';
@@ -122,6 +123,8 @@ describe('AdapterRegistryService', () => {
     expect(registry.create(spec('fozzy'))).toBeInstanceOf(FozzyAdapter);
     expect(registry.create(spec('winebutik')))
       .toBeInstanceOf(WinebutikAdapter);
+    expect(registry.create(spec('vina-mira')))
+      .toBeInstanceOf(VinaMiraAdapter);
   });
 
   it('reports which of the detail-page stores fetch product pages', () => {
@@ -133,6 +136,7 @@ describe('AdapterRegistryService', () => {
     expect(registry.create(spec('goodwine')).supportsDetail).toBe(true);
     expect(registry.create(spec('fozzy')).supportsDetail).toBe(true);
     expect(registry.create(spec('winebutik')).supportsDetail).toBe(true);
+    expect(registry.create(spec('vina-mira')).supportsDetail).toBe(true);
     expect(registry.create(spec('rozetka')).supportsDetail).toBe(false);
     expect(registry.create(spec('maudau')).supportsDetail).toBe(false);
   });

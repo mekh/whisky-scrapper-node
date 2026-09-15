@@ -410,3 +410,107 @@ describe('ProductNameUtils.clean — repeated source text', () => {
       .toBe('Old Malt Cask Auchentoshan');
   });
 });
+
+describe('ProductNameUtils.clean — the vina-mira name format', () => {
+  const clean = (raw: string): string | null => ProductNameUtils.clean(raw);
+
+  it('drops the trailing trademark tag with the country beside it', () => {
+    expect(clean('Віскі Jameson 0,7 л 40% (Ірландія, ТМ Jameson)'))
+      .toBe('Jameson');
+    expect(
+      clean('Віскі Hven Hvenus Rye 0,5 л 45,6% (Швеція, ТМ Hven)'),
+    ).toBe('Hven Hvenus Rye');
+  });
+
+  it('drops the tag whichever alphabet the marker is typed in', () => {
+    /**
+     * The Cyrillic `ТМ` and the Latin `TM` render identically, and the
+     * catalogue holds both.
+     */
+    expect(
+      clean('Віскі 1770 Original Single Malt 0,7л 46% (Шотландія, TM 1770)'),
+    ).toBe('1770 Original');
+    expect(clean('Віскі Umiki Blended 0,7 л 40% (ТМ Umiki)')).toBe('Umiki');
+  });
+
+  it('keeps a parenthesis that carries no trademark tag', () => {
+    expect(clean('Віскі Aberlour A Bunadh (Batch 10) 0,7 л 60%'))
+      .toBe('Aberlour A Bunadh (Batch 10)');
+  });
+
+  it('drops the abbreviated gift-box note', () => {
+    expect(
+      clean(
+        'Віскі Wolfburn Aurora Single Malt 0,7 л 46% кор (Шотландія,'
+          + ' ТМ Wolfburn)',
+      ),
+    ).toBe('Wolfburn Aurora');
+    expect(clean('Віскі Ardbeg AN OA, (в кор, 46,6%) 0,7 л'))
+      .toBe('Ardbeg AN OA');
+    expect(clean('Віскі Clynelish (14 років, туб., 46%) 0,7 л'))
+      .toBe('Clynelish');
+  });
+
+  it('never takes the abbreviation for the start of a longer word', () => {
+    /**
+     * `кор` and `дер` both head real words, which is why the abbreviations
+     * are matched as whole tokens rather than as prefixes.
+     */
+    expect(clean('Bourbon Корона 0,7 л 40%')).toBe('Корона');
+    expect(clean('Whisky Корнер Хаус 0,7 л 40%')).toBe('Корнер Хаус');
+  });
+
+  it('drops the abbreviated packaging note, adjective and all', () => {
+    /**
+     * What a packaging note leaves behind goes into the match key, so these
+     * are identity bugs rather than cosmetics.
+     */
+    expect(
+      clean(
+        'Віскі Glenmorangie Quinta Ruban (14 лет, подарунк. уп., 46%)'
+          + ' 0,7 л',
+      ),
+    ).toBe('Glenmorangie Quinta Ruban');
+    expect(clean(
+      'Віскі Johnnie Walker Red label (подар.упак. + 2 склянки)'
+        + ' 0,7 л',
+    )).toBe('Johnnie Walker Red label');
+    expect(clean('Віскі Tullamore Dew Original 0,7л. у мет. коробці'))
+      .toBe('Tullamore Dew Original');
+    /**
+     * A mistyped comma stands in for the period.
+     */
+    expect(
+      clean(
+        'Віскі Compass Box The Peat Monster 0,7 л 46% подар, кор. +2'
+          + ' стак, (Шотландія, ТМ Compass Box)',
+      ),
+    ).toBe('Compass Box The Peat Monster');
+  });
+
+  it('never takes an abbreviation for the start of a longer word', () => {
+    expect(clean('Bourbon Держава 0,7 л 40%')).toBe('Держава');
+    expect(clean('Whisky Метал Хаус 0,7 л 40%')).toBe('Метал Хаус');
+    expect(clean('Whisky Картон Сіті 0,7 л 40%')).toBe('Картон Сіті');
+  });
+
+  it('drops a litre size written without its unit', () => {
+    /**
+     * Recognisable only because the strength follows it.
+     */
+    expect(
+      clean(
+        'Віскі The Whistler Imperial Saut 0,7 43% кор. (Ірландія,'
+          + ' ТМ The Whistler)',
+      ),
+    ).toBe('The Whistler Imperial Saut');
+  });
+
+  it('keeps a number that is part of the name', () => {
+    expect(clean('Віскі Wild Turkey 81 0,7 л 40,5%')).toBe('Wild Turkey 81');
+    expect(clean('Віскі Bruichladdich Black Art 9.1 0,7 л 46%'))
+      .toBe('Bruichladdich Black Art 9.1');
+    expect(clean('Віскі Aerstone Land Cask 10 років 0,7 л 40%'))
+      .toBe('Aerstone Land Cask');
+  });
+});

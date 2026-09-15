@@ -34,6 +34,11 @@ const VOLUME_L = new RegExp(
   `(\\d+(?:[.,]\\d+)?)\\s*(?:літр|л|l)${NOT_LETTER}`,
   'i',
 );
+// Litres with the unit left out, read only when the strength follows
+// ("Imperial Saut 0,7 43%"). Mirrors VOLUME_L_BARE in
+// `~utils/product-name.util.ts`, which strips the same token from the name.
+const VOLUME_L_BARE =
+  /(?<![\d.,\/])([0-4][.,]\d{1,3})(?=\s+\d{1,3}(?:[.,]\d{1,2})?\s*%)/;
 
 // ABV: "40%", "43 %", "alc 46%".
 const ABV = /(\d{1,2}(?:[.,]\d)?)\s*%/g;
@@ -153,7 +158,7 @@ export class NormalizeService {
       return Number.parseInt(ml[1], 10);
     }
 
-    const litres = VOLUME_L.exec(text);
+    const litres = VOLUME_L.exec(text) ?? VOLUME_L_BARE.exec(text);
 
     if (litres) {
       return Math.round(NormalizeService.toFloat(litres[1]) * 1000);

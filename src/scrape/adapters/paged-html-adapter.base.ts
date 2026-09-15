@@ -28,6 +28,11 @@ import type { HtmlNode } from '../html/html.interfaces';
  * {@link pageEndsListing} — the winebutik case, whose listing sorts the
  * purchasable items strictly ahead of a sold-out tail dozens of pages long,
  * so the first sold-out card is the end of everything the walk is for.
+ *
+ * A store whose listing prints a real total may state it through
+ * {@link statedItemCount}, which turns "a page brought nothing new" from an
+ * assumption into a reconciled fact. That matters wherever a blank page is a
+ * plausible failure rather than the end of the catalogue.
  */
 export abstract class PagedHtmlAdapterBase extends HttpAdapterBase {
   /**
@@ -50,6 +55,8 @@ export abstract class PagedHtmlAdapterBase extends HttpAdapterBase {
   public async fetchListing(): Promise<ListingResult> {
     const snaps: ProductSnapshot[] = [];
     const seen = new Set<string>();
+    let stated: number | null = null;
+    let received = 0;
 
     for (let page = 1; page <= this.maxPages; page += 1) {
       let html: string;
@@ -66,12 +73,16 @@ export abstract class PagedHtmlAdapterBase extends HttpAdapterBase {
           isEndOfCatalog(error)
             ? ListingStop.EXHAUSTED
             : ListingStop.PAGE_FAILED,
+          stated,
+          received,
         );
       }
 
       const $ = load(html);
-      const fresh = this.parsePage($, seen);
+      const { cards, fresh } = this.parsePage($, seen);
 
+      stated ??= this.statedItemCount($);
+      received += cards;
       fresh.forEach((snap) => seen.add(snap.storeSku));
       snaps.push(...fresh);
 
@@ -83,13 +94,13 @@ export abstract class PagedHtmlAdapterBase extends HttpAdapterBase {
       });
 
       if (fresh.length === 0 || this.pageEndsListing($)) {
-        return this.listing(snaps, ListingStop.EXHAUSTED);
+        return this.listing(snaps, ListingStop.EXHAUSTED, stated, received);
       }
 
       await this.sleep();
     }
 
-    return this.listing(snaps, ListingStop.PAGE_CAP);
+    return this.listing(snaps, ListingStop.PAGE_CAP, stated, received);
   }
 
   /**
@@ -131,20 +142,40 @@ export abstract class PagedHtmlAdapterBase extends HttpAdapterBase {
   }
 
   /**
-   * Parses one page's cards, keeping only SKUs not seen on earlier pages.
+   * How many items the source says its listing holds, read from the first
+   * page only, so a walk that stopped early reports `short` instead of
+   * claiming it reached the end. The default states nothing, which leaves
+   * every other store's verdict exactly where it was.
+   *
+   * @param _$ - Cheerio root of the listing page; unused by the default.
+   * @returns The stated item count, or null when the source states none.
+   */
+  protected statedItemCount(_$: CheerioAPI): number | null {
+    return null;
+  }
+
+  /**
+   * Parses one page's cards, keeping only SKUs not seen on earlier pages. The
+   * raw card count travels with them because that, not the snapshots that
+   * survived mapping, is what a stated count is reconciled against.
    *
    * @param $ - Cheerio root of the listing page.
    * @param seen - SKUs collected so far.
-   * @returns The page's new snapshots.
+   * @returns The page's new snapshots and how many cards it held.
    */
   private parsePage(
     $: CheerioAPI,
     seen: ReadonlySet<string>,
-  ): ProductSnapshot[] {
-    return this.freshSnapshots(
-      $(this.cardSelector).toArray(),
-      seen,
-      (card) => this.parseCard($, card),
-    );
+  ): { cards: number; fresh: ProductSnapshot[] } {
+    const cards = $(this.cardSelector).toArray();
+
+    return {
+      cards: cards.length,
+      fresh: this.freshSnapshots(
+        cards,
+        seen,
+        (card) => this.parseCard($, card),
+      ),
+    };
   }
 }

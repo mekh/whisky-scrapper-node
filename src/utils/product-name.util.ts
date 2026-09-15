@@ -89,7 +89,7 @@ const PRODUCT_CODE = new RegExp(
  * bar spoon, coffee, a mixer. The bottle is the product; the accessory is a
  * promotion, and keeping it made one bottling render as half a dozen names.
  */
-const ACCESSORY = '(?:келих|склянк|стакан|чарк|бокал|фляг|тумблер|костер'
+const ACCESSORY = '(?:келих|склянк|стак|чарк|бокал|фляг|тумблер|костер'
   + '|ложк|джигер|підставк|гойдалк|кав[аиуі]|набір\\s+склянок'
   + '|glass|glasses|tumbler|coffee|cola)';
 const ACCESSORY_TEST = new RegExp(
@@ -232,6 +232,17 @@ const VOLUME_L = new RegExp(
 );
 
 /**
+ * Bottle volume in litres with the unit left out, recognisable only because
+ * the strength follows it (`The Whistler Imperial Saut 0,7 43%`). Paired with
+ * `extractVolumeMl`, which must learn every form this one deletes.
+ */
+const VOLUME_L_BARE = new RegExp(
+  '(?<![\\d.,/])[0-4][.,]\\d{1,3}'
+    + '(?=\\s+\\d{1,3}(?:[.,]\\d{1,2})?\\s*%)',
+  'g',
+);
+
+/**
  * Adjectives and nouns that name the packaging (`в подарунковій коробці`,
  * `у сувенірному пакуванні`, `в тубусі`, `gift box`, `Tube`). They describe
  * the box, not the bottle, so they are dropped from the product name.
@@ -240,10 +251,35 @@ const PACK_ADJECTIVE = "(?:подарунков|сувенірн|дерев['’
   + `|пластиков|фірмов|святков|оригінальн|престижн)[${CYRILLIC}]*`;
 const PACK_NOUN = '(?:коробц|коробк|упаковц|упаковк|пак(?:уванн|ован)'
   + `|туб|футляр|бляшанц|бляшанк|набір|набор)[${CYRILLIC}]*`;
+
+/**
+ * The same two words abbreviated (`дер.кор`, `подар.упак.`, `подарунк. уп.`,
+ * a bare `кор`), each ending in a period or the comma a shop mistyped for
+ * one. Kept out of the lists above, whose `[CYRILLIC]*` tail would make `кор`
+ * match `Королівський`.
+ */
+const PACK_ADJECTIVE_ABBREVIATION =
+  '(?:подарунк|подар|сувен|дерев|дер|метал|мет|картон|карт)[.,]';
+
+/**
+ * The noun forms are tried before the spelled-out ones so the period of
+ * `туб.` is consumed rather than left inside a parenthesis. Two-letter `уп`
+ * must carry its period, where three letters need no such help.
+ */
+const PACK_NOUN_ABBREVIATION = '(?:(?:кор|туб|упак)[.,]?|уп[.,])';
+
+/**
+ * The preposition that introduces a packaging note (`в коробці`, `у тубусі`,
+ * `(в кор, 46,6%)`), which otherwise strands a bare `в`.
+ */
+const PACK_PREPOSITION = '(?:(?:в|у|во)\\s+)?';
+
 const PACKAGING = new RegExp(
   NOT_LETTER_BEFORE
     + '(?:'
-    + `(?:(?:в|у|во)\\s+)?(?:${PACK_ADJECTIVE}\\s+)?${PACK_NOUN}`
+    + PACK_PREPOSITION
+    + `(?:${PACK_ADJECTIVE}\\s+|${PACK_ADJECTIVE_ABBREVIATION}\\s*)?`
+    + `(?:${PACK_NOUN_ABBREVIATION}|${PACK_NOUN})`
     + '|gift\\s*(?:box|tube|pack|set)|wooden\\s+box|metal\\s+(?:box|tin)'
     + '|tube|tin\\s+box'
     + ')'
@@ -422,6 +458,25 @@ const ORIGIN_WORDS_CYRILLIC = [
 const COUNTRIES = 'Франція|Шотландія|Ірландія|Словаччина|Іспанія|Японія'
   + '|Індія|Канада|США|Англія|Німеччина|Італія|Польща|Уельс';
 const PAREN_COUNTRY = new RegExp(`\\s*\\(\\s*(?:${COUNTRIES})\\s*\\)`, 'g');
+
+/**
+ * Trademark marker in either alphabet and any mixture of the two, since
+ * `foldScripts` leaves a pure-Cyrillic `ТМ` alone. Upper case only, which is
+ * the only form the catalogue holds.
+ */
+const TRADEMARK = `(?<![A-Za-z${CYRILLIC_ANY}])[TТ][MМ]`
+  + `(?![A-Za-z${CYRILLIC_ANY}])`;
+
+/**
+ * A parenthesis carrying a trademark tag, as vina-mira ends every second
+ * listing (`Hven Hvenus Rye 0,5 л 45,6% (Швеція, ТМ Hven)`). Dropped whole,
+ * country and all: keeping it signed the bottling `jamesonтмірландія` where
+ * every other shop signed it `jameson`.
+ */
+const PAREN_TRADEMARK = new RegExp(
+  `\\s*\\((?=[^)]*${TRADEMARK})[^)]*\\)`,
+  'g',
+);
 
 /**
  * Builds a matcher for one descriptor phrase, with Cyrillic-safe word
@@ -626,7 +681,8 @@ export class ProductNameUtils {
           .replace(APOSTROPHES, "'")
           .replace(QUOTES, ' ')
           .replace(DUP_MARKER, '')
-          .replace(PRODUCT_CODE, ''),
+          .replace(PRODUCT_CODE, '')
+          .replace(PAREN_TRADEMARK, ''),
       ),
     );
 
@@ -648,6 +704,7 @@ export class ProductNameUtils {
       .replace(AGING, '')
       .replace(VOLUME_ML, '')
       .replace(VOLUME_L, '')
+      .replace(VOLUME_L_BARE, '')
       .replace(PACKAGING, '')
       .replace(ASSORTMENT, '')
       .replace(PAREN_NUMBER, '')

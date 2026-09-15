@@ -72,6 +72,24 @@ describe('NormalizeService.extractVolumeMl', () => {
     expect(n.extractVolumeMl('Bottle 1 л')).toBe(1000);
     expect(n.extractVolumeMl("без об'єму")).toBeNull();
   });
+
+  it('reads litres with the unit left out, when the strength follows', () => {
+    /**
+     * Paired with `VOLUME_L_BARE` in `~utils/product-name.util.ts`: a size
+     * the stripper removes and the reader misses signs the bottling `|v0`.
+     */
+    expect(n.extractVolumeMl('Віскі The Whistler Imperial Saut 0,7 43%'))
+      .toBe(700);
+    expect(n.extractVolumeMl('Віскі Hven 0.5 45,6%')).toBe(500);
+  });
+
+  it('leaves a number that is not a size alone', () => {
+    /**
+     * An edition number after a dot, and a bare integer in the name.
+     */
+    expect(n.extractVolumeMl('Bruichladdich Black Art 9.1 46%')).toBeNull();
+    expect(n.extractVolumeMl('Wild Turkey 81 40,5%')).toBeNull();
+  });
 });
 
 describe('NormalizeService.extractAbv', () => {

@@ -20,6 +20,7 @@ import { MaudauAdapter } from './maudau';
 import { OkwineAdapter } from './okwine';
 import { RozetkaAdapter } from './rozetka';
 import { SilpoAdapter } from './silpo';
+import { VinaMiraAdapter } from './vina-mira';
 import { WinePointAdapter } from './wine-point';
 import { WinebutikAdapter } from './winebutik';
 import { WinewineAdapter } from './winewine';
@@ -108,6 +109,14 @@ const SPECIALIZED: Record<string, (deps: AdapterDeps) => ScrapeAdapter> = {
     ),
   winebutik: (deps) =>
     new WinebutikAdapter(
+      deps.spec,
+      deps.delayMultiplier,
+      deps.http,
+      deps.normalizer,
+      deps.reporter,
+    ),
+  'vina-mira': (deps) =>
+    new VinaMiraAdapter(
       deps.spec,
       deps.delayMultiplier,
       deps.http,

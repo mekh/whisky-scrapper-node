@@ -1,9 +1,16 @@
 import type { PushConfig } from '~config';
+import type { CoreMessageService } from '~core/message';
+import type { MessageStreamService } from '~domain/message';
 import type { CorePriceSnapshotService } from '~core/price-snapshot';
 import type { CorePushService } from '~core/push';
 import type { PlatformMetricsService } from '~lib/metrics';
 import type { WebPushService } from '~lib/web-push';
-import type { ID, PushDropRow, WebPushOutcome } from '~types';
+import type {
+  ID,
+  MessageDeliverInput,
+  PushDropRow,
+  WebPushOutcome,
+} from '~types';
 
 import { PushDigestService } from '../src/domain/push/push-digest.service';
 
@@ -48,6 +55,8 @@ function makeService(options?: {
   core: Record<string, jest.Mock>;
   webPush: { enabled: boolean; send: jest.Mock };
   metrics: Record<string, jest.Mock>;
+  messages: Record<string, jest.Mock>;
+  streams: Record<string, jest.Mock>;
 } {
   const outcomes = [...options?.outcomes ?? []];
 
@@ -95,35 +104,99 @@ function makeService(options?: {
     pushSent: jest.fn(),
   };
 
+  /**
+   * The inbox write. It is what the dispatch records whether or not push is
+   * configured, so the specs assert against it as much as against the sends.
+   */
+  const messages = {
+    deliver: jest.fn().mockResolvedValue('message-1'),
+  };
+
+  /** The event fan-out, which the dispatch fires but does not depend on. */
+  const streams = {
+    announce: jest.fn().mockResolvedValue(undefined),
+  };
+
   const service = new PushDigestService(
     core as unknown as CorePushService,
+    messages as unknown as CoreMessageService,
+    streams as unknown as MessageStreamService,
     snapshots as unknown as CorePriceSnapshotService,
     webPush as unknown as WebPushService,
     config as PushConfig,
     metrics as unknown as PlatformMetricsService,
   );
 
-  return { service, core, webPush, metrics };
+  return { service, core, webPush, metrics, messages, streams };
 }
 
 describe('PushDigestService.dispatch', () => {
-  it('does nothing while push is disabled', async () => {
-    const { service, core } = makeService({ enabled: false });
+  it('still claims and records while push is disabled', async () => {
+    /*
+     * The guard used to sit above the claim, which meant an unconfigured
+     * VAPID key silently emptied the inbox as well as the push channel. The
+     * inbox is the durable record and does not depend on push at all.
+     */
+    const { service, core, webPush, messages } = makeService({
+      enabled: false,
+      drops: [drop({})],
+    });
 
     const report = await service.dispatch();
 
+    expect(core.claimDrops).toHaveBeenCalled();
+    expect(messages.deliver).toHaveBeenCalledTimes(1);
+    expect(webPush.send).not.toHaveBeenCalled();
     expect(report.sent).toBe(0);
-    expect(core.hasAnySubscription).not.toHaveBeenCalled();
-    expect(core.claimDrops).not.toHaveBeenCalled();
   });
 
-  it('skips the claim entirely when nobody is subscribed', async () => {
-    const { service, core } = makeService({ hasAny: false });
+  it('still claims and records when nobody is subscribed', async () => {
+    const { service, core, webPush, messages } = makeService({
+      hasAny: false,
+      drops: [drop({})],
+    });
 
     const report = await service.dispatch();
 
-    expect(report.items).toBe(0);
-    expect(core.claimDrops).not.toHaveBeenCalled();
+    expect(core.claimDrops).toHaveBeenCalled();
+    expect(messages.deliver).toHaveBeenCalledTimes(1);
+    expect(webPush.send).not.toHaveBeenCalled();
+    expect(report.items).toBe(1);
+  });
+
+  it('records the message before it tries to send anything', async () => {
+    const { service, messages } = makeService({
+      drops: [
+        drop({ storeProductId: 'offer-1' as ID }),
+        drop({ storeProductId: 'offer-2' as ID, storeName: 'silpo' }),
+      ],
+    });
+
+    await service.dispatch();
+
+    expect(messages.deliver).toHaveBeenCalledTimes(1);
+
+    const calls = messages.deliver.mock.calls as [MessageDeliverInput][];
+    const delivered = calls[0]![0];
+
+    expect(delivered.kind).toBe('discount_digest');
+    expect(delivered.userIds).toEqual(['user-1']);
+    expect(delivered.payload.total).toBe(1);
+
+    const items = delivered.payload.items ?? [];
+
+    expect(items).toHaveLength(1);
+
+    /*
+     * The prices the push body never names: the inbox renders them, and they
+     * come from the same reduction that picked the winning offer.
+     */
+    expect(items[0]).toMatchObject({
+      name: 'Ardbeg 10yo',
+      price: expect.any(Number),
+      previousPrice: expect.any(Number),
+      currency: 'UAH',
+    });
   });
 
   it('sends one rendered digest to every device of a user', async () => {

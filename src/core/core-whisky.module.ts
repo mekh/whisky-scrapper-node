@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { CoreCountryModule } from './country';
 import { CoreCurrencyModule } from './currency';
 import { CoreFlavorModule } from './flavor';
+import { CoreMessageModule } from './message';
 import { CorePreferenceModule } from './preference';
 import { CorePriceSnapshotModule } from './price-snapshot';
 import { CoreProducerModule } from './producer';
@@ -26,6 +27,7 @@ import { CoreUserCollectionModule } from './user-collection';
     CoreCountryModule,
     CoreCurrencyModule,
     CoreFlavorModule,
+    CoreMessageModule,
     CorePreferenceModule,
     CorePriceSnapshotModule,
     CoreProducerModule,
@@ -43,6 +45,7 @@ import { CoreUserCollectionModule } from './user-collection';
     CoreCountryModule,
     CoreCurrencyModule,
     CoreFlavorModule,
+    CoreMessageModule,
     CorePreferenceModule,
     CorePriceSnapshotModule,
     CoreProducerModule,

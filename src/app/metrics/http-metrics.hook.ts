@@ -2,7 +2,7 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
-import { METRIC_ROUTE_UNMATCHED } from '~constants';
+import { MESSAGE_STREAM_PATH, METRIC_ROUTE_UNMATCHED } from '~constants';
 import { HttpMetricsService } from '~lib/metrics';
 
 /**
@@ -64,13 +64,37 @@ export const registerHttpMetricsHooks = (
 ): void => {
   const instance = app.getHttpAdapter().getInstance();
 
+  /**
+   * The inbox stream is deliberately uncounted. It is parked for as long as a
+   * tab stays open, so `onResponse` would eventually record its whole lifetime
+   * as one request's latency and put a twenty-minute outlier into
+   * `whisky_http_request_duration_seconds`.
+   *
+   * @param request - The request to judge.
+   * @returns True when it should not be measured.
+   */
+  const isStream = (request: { url: string }): boolean =>
+    request.url.startsWith(`/${MESSAGE_STREAM_PATH}`);
+
   instance.addHook('onRequest', (request, _reply, done): void => {
+    if (isStream(request)) {
+      done();
+
+      return;
+    }
+
     metrics.started(request.method);
 
     done();
   });
 
   instance.addHook('onResponse', (request, reply, done): void => {
+    if (isStream(request)) {
+      done();
+
+      return;
+    }
+
     const tracked = request as TrackedRequest;
 
     if (tracked[RELEASED]) {

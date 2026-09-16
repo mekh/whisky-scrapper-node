@@ -12,6 +12,7 @@ export * from './entity.interfaces';
 export * from './health.interfaces';
 export * from './jwt.interfaces';
 export * from './kb.interfaces';
+export * from './message.interfaces';
 export * from './meta.interfaces';
 export * from './metrics.interfaces';
 export * from './permission.interfaces';

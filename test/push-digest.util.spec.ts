@@ -112,6 +112,10 @@ describe('PushDigestUtils.payload', () => {
       name: 'Ardbeg 10yo',
       discountPct: 12,
       storeCount: 1,
+      price: 1000,
+      previousPrice: 1200,
+      currency: 'UAH',
+      storeName: 'Silpo',
       ...overrides,
     };
   }

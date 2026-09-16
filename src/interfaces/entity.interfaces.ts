@@ -1,6 +1,6 @@
 import { DeepPartial, FindOptionsWhere } from 'typeorm';
 
-import { Action, Resource } from '~enums';
+import { Action, MessageKind, Resource } from '~enums';
 
 export type ID = string; // guid v7
 
@@ -723,6 +723,56 @@ export interface EntityPushDigestLog {
 /**
  * One user's named, saved catalogue filter set.
  */
+export interface EntityMessage extends EntityBaseRich {
+  /**
+   * What produced the message, which decides how `payload` is populated.
+   */
+  kind: MessageKind;
+
+  /**
+   * The message's content, stored as `jsonb`. Typed structurally here and as
+   * `MessagePayload` everywhere else — this file is the root of the interface
+   * graph and importing a feature's shapes back into it would be a cycle.
+   */
+  payload: Record<string, unknown>;
+
+  /**
+   * The admin who sent a broadcast, or null for a machine-made message. Set
+   * to null rather than cascaded, so deleting an account never deletes what
+   * it announced.
+   */
+  createdByUserId?: ID;
+}
+
+/**
+ * One recipient's copy of a message. Composite-keyed like `EntityFavorite`
+ * and for the same reason: the pair is the identity. `readAt` is the one
+ * mutable field, so there is no `updatedAt` and no `EntityBaseRich`.
+ */
+export interface EntityMessageRecipient {
+  /**
+   * The message this row delivers.
+   */
+  messageId: ID;
+
+  /**
+   * The user it was delivered to.
+   */
+  userId: ID;
+
+  /**
+   * When this user read it; null while unread. This is what the inbox sorts
+   * and counts on.
+   */
+  readAt?: Date;
+
+  /**
+   * When the row was created. Duplicated from the message so the inbox can
+   * sort and page without joining back to it.
+   */
+  createdAt: Date;
+}
+
 export interface EntityQuickFilter extends EntityBaseRich {
   /**
    * The owning user. Sets are strictly private — nothing shares them.

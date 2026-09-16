@@ -191,6 +191,27 @@ export interface PushDigestItem {
    * How many distinct stores dropped the price.
    */
   storeCount: number;
+
+  /**
+   * Today's price at the store holding the best drop.
+   */
+  price: number;
+
+  /**
+   * The previous existing snapshot's price, which `discountPct` measures
+   * against.
+   */
+  previousPrice: number;
+
+  /**
+   * ISO-4217 code both prices are stated in.
+   */
+  currency: string;
+
+  /**
+   * The store holding the best drop.
+   */
+  storeName: string;
 }
 
 /**

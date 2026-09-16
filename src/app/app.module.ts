@@ -2,17 +2,20 @@ import {
   MiddlewareConsumer,
   Module,
   NestModule,
+  RequestMethod,
   ValidationPipe,
 } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { ClsMiddleware } from 'nestjs-cls';
+
 import { DataSource, DataSourceOptions } from 'typeorm';
 import {
   addTransactionalDataSource,
   getDataSourceByName,
 } from 'typeorm-transactional';
+import { MESSAGE_STREAM_PATH } from '~constants';
 
 import { ConfigModule, DbConfig, ValidationConfig } from '~config';
 import { DomainAuthModule } from '~domain/auth';
@@ -24,6 +27,7 @@ import {
 } from '~domain/currency';
 import { DomainDashboardModule } from '~domain/dashboard';
 import { DomainHealthModule } from '~domain/health';
+import { DomainMessageModule } from '~domain/message';
 import { DomainMetaModule } from '~domain/meta';
 import { DomainMetricsModule } from '~domain/metrics';
 import { DomainPreferenceModule } from '~domain/preference';
@@ -99,6 +103,7 @@ import { RateLimitModule, UserRateLimitGuard } from './rate-limit';
     DomainDashboardModule,
     DomainHealthModule,
     DomainReportModule,
+    DomainMessageModule,
     DomainMetaModule,
     DomainMetricsModule,
     DomainStoreModule,
@@ -177,9 +182,22 @@ export class AppModule implements NestModule {
    *
    * @param consumer - The middleware consumer to register on.
    */
+  /**
+   * `ClsMiddleware` runs everywhere; the deadline does not.
+   *
+   * `RequestDeadlineMiddleware` arms `request.setTimeout`, which would destroy
+   * the inbox's event stream every 45 seconds — and nothing in the message
+   * feature's own code would look wrong while it happened. The stream is the
+   * one route in the app that is *meant* to outlive a request budget.
+   */
   public configure(consumer: MiddlewareConsumer): void {
     consumer
-      .apply(RequestDeadlineMiddleware, ClsMiddleware)
+      .apply(ClsMiddleware)
+      .forRoutes('*');
+
+    consumer
+      .apply(RequestDeadlineMiddleware)
+      .exclude({ path: MESSAGE_STREAM_PATH, method: RequestMethod.GET })
       .forRoutes('*');
   }
 }

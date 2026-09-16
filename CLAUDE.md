@@ -2783,6 +2783,13 @@ Access token payload: `sub` (user id), `sid` (session id), `admin`, `scope`
 | `DELETE /push/subscription` `{endpoint}` — drop this browser's subscription (body on DELETE)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | any logged-in user                           |
 | `POST /push/test` — send a test notification to every device of the caller                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | any logged-in user                           |
 | `POST /push/digest` `{capturedOn?}` — manually run the price-drop digest dispatch (idempotent per day)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `store:sync`                                 |
+| `GET /message` — the caller's inbox, unread first then newest first, `{data,total,limit,offset}`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | any logged-in user                           |
+| `GET /message/unread-count` — the badge's tally                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | any logged-in user                           |
+| `PATCH /message/{id}/read` `{read}` — mark one read or unread; answers the new unread count                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | any logged-in user                           |
+| `POST /message/read-all` — clear the badge without deleting anything                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | any logged-in user                           |
+| `GET /message/stream` — Server-Sent Events; the client polls when it is down (see "Inbox messages")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | any logged-in user                           |
+| `POST /message/broadcast/preview` — how many users an audience resolves to, sending nothing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `message:create`                             |
+| `POST /message/broadcast` — send one authored message to an audience. No admin UI yet, by design                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `message:create`                             |
 | `GET /currency` — the currencies prices can be displayed in (see "Currency rates")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | any logged-in user                           |
 | `GET /currency/rate/latest` — the newest stored rate of every currency                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | any logged-in user                           |
 | `GET /currency/rate?codes=USD,EUR&date=` — the rates of several currencies on one day                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | any logged-in user                           |
@@ -3180,6 +3187,94 @@ run. The contract the pieces rely on:
   (30). Missing keys degrade to "push off" — `GET /push/config` answers
   `{enabled: false}` and the client renders its switch disabled. Rotating the
   public key invalidates every stored subscription.
+
+### Inbox messages (2026-09-16)
+
+A durable per-user message inbox: an envelope with an unread badge in the web
+header, and the record that the favourites-discount digest writes alongside the
+push it already sent. Two tables, `message` (the announcement) and
+`message_recipient` (one row per reader, composite-keyed like `favorite`).
+
+- **The payload is structured, not rendered.** Push ships pre-rendered
+  Ukrainian because the service worker has no API access; the inbox is drawn by
+  the SPA, which knows the reader's language, so a digest carries its items and
+  the client counts and inflects them. That is also what lets a digest row
+  expand into its bottlings, each linking to its product.
+- **`claimDrops` is now the shared source of truth for both channels**, and the
+  change that made it so is the important one. A `push_subscription EXISTS`
+  clause used to sit inside `CLAIM_DROPS_SQL`, and two more guards
+  (`webPush.enabled`, `hasAnySubscription`) sat above the claim in
+  `PushDigestService.dispatch()`. Together they meant a favouriting user who
+  never granted notification permission had their drops filtered out _before
+  the claim_ — and since the dedup log has no catch-up, those drops were lost
+  for good, on every day. All three are gone from the claim path; the
+  subscription filter now applies only at send time, in
+  `findTargetsByUserIds`. `push_digest_log`'s meaning widens from "already
+  pushed" to "already announced", which is what stops the two channels ever
+  disagreeing about a drop.
+- **Ownership is a `WHERE` clause**, never a check: a message addressed to
+  somebody else matches no row and is a plain 404.
+- **Marking read is idempotent** — `COALESCE("readAt", CURRENT_TIMESTAMP)`, so
+  a second call keeps the instant the message was first read.
+- **One expression index carries both reads**: `message_recipient_inbox_idx` on
+  `("userId", ("readAt" IS NULL) DESC, "messageId" DESC)`. Its leading two
+  columns also serve the unread count's `WHERE "userId" = $1 AND "readAt" IS
+  NULL`. `@Index` cannot spell the expression, so it is written by hand in the
+  migration and marked `synchronize: false` on the entity, as
+  `sync_log_running_uindex` is.
+- **The unread count is deliberately not cached.** `VersionedCacheService` is
+  built for one blob shared by every reader, bumped a few times a day; a
+  per-user counter invalidated by nearly every write is the opposite shape. The
+  query is a partial-index `COUNT(*)` over one user's unread rows.
+- **Ids are uuid v7**, so `ORDER BY "messageId" DESC` _is_ newest-first and the
+  list needs no second sort key.
+
+**The event stream** (`GET /message/stream`) is Server-Sent Events, with the
+client's polling as the fallback. Four things about it are load-bearing:
+
+- It is a raw `@Res()` handler that **returns immediately**, the
+  `sync-log/:id/file` precedent. The connection then lives on `reply.raw`,
+  which is what keeps `TimeoutInterceptor` out of it: the observable it watches
+  completes in milliseconds.
+- **`RequestDeadlineMiddleware` is excluded from it** in `app.module.ts`. It
+  arms `request.setTimeout(45_000)`, so without the exclusion every stream is
+  destroyed and logged as an error every 45 seconds — while nothing in the
+  feature's own code looks wrong.
+- **The HTTP metrics hook skips it.** A parked stream fires `onResponse` only
+  when it finally closes, which would record its whole lifetime as one
+  request's latency.
+- **Fan-out is Valkey pub/sub** (`ValkeyPubSubService`, the first in this
+  codebase), not an in-process `Subject`. The API runs several replicas behind
+  HAProxy with no stickiness, so the replica that writes a digest is usually
+  not the one holding the reader's stream — an in-process subject delivers to
+  roughly one replica in N and looks perfectly correct in single-instance local
+  development. The subscriber needs its own duplicated connection, and that
+  connection is duplicated with **`enableOfflineQueue: true`**: the shared
+  client disables the queue so a request fails fast, but a subscriber issues
+  its one `SUBSCRIBE` at boot before the socket is writable, and with the queue
+  off that command is rejected outright and the subscription silently never
+  exists.
+- Auth is the ordinary `Authorization: Bearer` header, because the client is
+  `fetch` + `ReadableStream` rather than an `EventSource`. A stream ticket in
+  the query string would have been a second way to authenticate a request, for
+  exactly one route.
+- The first thing written on every connect is the reader's true unread count,
+  which is what makes a reconnect correct regardless of what it missed;
+  `Last-Event-ID` replay would add nothing, since every event makes the client
+  refetch anyway.
+- The edge needs both halves: `location = /api/message/stream` in
+  `infra/nginx/nginx.conf` (`proxy_buffering off`, long `proxy_read_timeout`)
+  and `http-request set-timeout server 1h` on the stream path in
+  `infra/haproxy/haproxy.cfg` — which must live in the **backend**, since
+  `set-timeout` needs backend capability.
+
+**Admin broadcast** (`POST /message/broadcast`, `.../preview`) is wired
+end-to-end behind `message:create`, with **no admin UI** — that was the brief.
+One audience predicate serves both routes, so an admin can never be shown one
+audience and mail another; inactive accounts are excluded, since a message to
+an account that cannot sign in is a row nobody will ever read. The recipient
+ids never leave the server: core returns them for the event fan-out, and the
+domain layer strips them from the response.
 
 ### Currency rates (2026-09-06)
 

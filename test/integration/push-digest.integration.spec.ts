@@ -314,11 +314,16 @@ describe('push digest claim (integration)', () => {
     expect(await push.claimDrops(TODAY, MAX_GAP_DAYS)).toHaveLength(0);
   });
 
-  it('skips users with no subscription and foreign favorites', async () => {
+  it('claims for a favoriting user who never subscribed to push', async () => {
     /**
-     * User B favorites the bottling too but never subscribed, so the claim
-     * must produce user A's row alone — the `EXISTS` guard, not the join,
-     * is what keeps B out.
+     * The regression this suite exists to hold. A `push_subscription EXISTS`
+     * guard used to sit inside the claim, so user B — who favorites the
+     * bottling but never granted notification permission — was filtered out
+     * before the row was ever claimed, and the dedup log has no catch-up.
+     * Their drop was therefore lost for good, on every day.
+     *
+     * The claim now feeds the inbox as well as push, so it must see both
+     * users; filtering by subscription belongs at send time.
      */
     await preferences.addFavorites(userB, [productId]);
     await makeSnapshot(offerId, daysAgo(1), 1000);
@@ -326,8 +331,8 @@ describe('push digest claim (integration)', () => {
 
     const drops = await push.claimDrops(TODAY, MAX_GAP_DAYS);
 
-    expect(drops).toHaveLength(1);
-    expect(drops[0].userId).toBe(userA);
+    expect(drops.map((row) => row.userId).sort())
+      .toEqual([userA, userB].sort());
   });
 
   it('claims each store offer of one bottling separately', async () => {

@@ -39,6 +39,11 @@ export class PushDigestUtils {
    * Reduces one user's claimed drops to one digest line per bottling: the
    * largest discount among its offers, plus how many distinct stores dropped.
    *
+   * The winning offer's own price, previous price, currency and store ride
+   * along. The push body names none of them, but the inbox message renders
+   * them — and both channels must agree about which offer won, which one
+   * reduction is what guarantees.
+   *
    * @param rows - One user's claimed drops.
    * @returns Digest items sorted by discount descending, then by name.
    */
@@ -64,6 +69,10 @@ export class PushDigestUtils {
         name: PushDigestUtils.displayName(best),
         discountPct: best.discountPct,
         storeCount: stores.size,
+        price: best.price,
+        previousPrice: best.previousPrice,
+        currency: best.currency,
+        storeName: best.storeName,
       };
     });
 

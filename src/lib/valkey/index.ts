@@ -6,5 +6,6 @@ export {
 export type {
   ValkeyCluster,
 } from '@toxicoder/nestjs-valkey/dist/valkey.interfaces';
+export { ValkeyPubSubService } from './valkey-pubsub.service';
 export { ValkeyScript } from './valkey-script';
 export { ValkeyModule } from './valkey.module';

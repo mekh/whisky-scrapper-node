@@ -6,6 +6,8 @@ import {
 
 import { ConfigModule, ValkeyConfig } from '~config';
 
+import { ValkeyPubSubService } from './valkey-pubsub.service';
+
 /**
  * Builds the client options from configuration.
  *
@@ -54,8 +56,12 @@ const valkey = ValkeyBaseModule.forRootAsync({
   imports: [
     valkey,
   ],
+  providers: [
+    ValkeyPubSubService,
+  ],
   exports: [
     valkey,
+    ValkeyPubSubService,
   ],
 })
 export class ValkeyModule {}

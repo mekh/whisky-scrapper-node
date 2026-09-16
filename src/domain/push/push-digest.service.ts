@@ -2,13 +2,17 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import { PushConfig } from '~config';
 import { PUSH_MAX_PREVIOUS_GAP_DAYS } from '~constants';
+import { CoreMessageService } from '~core/message';
 import { CorePriceSnapshotService } from '~core/price-snapshot';
 import { CorePushService } from '~core/push';
+import { MessageKind } from '~enums';
 import { PlatformMetricsService } from '~lib/metrics';
+import { MessageStreamService } from '~domain/message';
 import { WebPushService } from '~lib/web-push';
 import {
   ID,
   PushDeliveryStats,
+  PushDigestItem,
   PushDispatchInput,
   PushDispatchReport,
   PushUserTarget,
@@ -78,6 +82,8 @@ export class PushDigestService {
 
   public constructor(
     private readonly core: CorePushService,
+    private readonly messages: CoreMessageService,
+    private readonly streams: MessageStreamService,
     private readonly snapshots: CorePriceSnapshotService,
     private readonly webPush: WebPushService,
     private readonly config: PushConfig,
@@ -96,41 +102,29 @@ export class PushDigestService {
   public async dispatch(
     input?: PushDispatchInput,
   ): Promise<PushDispatchReport> {
-    if (!this.webPush.enabled) {
-      return PushDigestService.emptyReport(
-        input?.capturedOn ?? PushDigestService.today(),
-      );
-    }
-
-    const hasSubscriptions = await this.core.hasAnySubscription();
-
-    if (!hasSubscriptions) {
-      return PushDigestService.emptyReport(
-        input?.capturedOn ?? PushDigestService.today(),
-      );
-    }
-
     const capturedOn = await this.resolveDay(input);
+
+    /*
+     * The claim runs before any push consideration, and that ordering is the
+     * feature: it is the shared source of truth and the shared dedup, so a
+     * drop is announced exactly once in both channels. Gating it on push
+     * being configured would empty the inbox too.
+     */
     const drops = await this.core.claimDrops(
       capturedOn,
       PUSH_MAX_PREVIOUS_GAP_DAYS,
     );
 
     const byUser = PushDigestUtils.byUser(drops);
-    const payloads = new Map<ID, string>();
+    const items = new Map<ID, PushDigestItem[]>();
 
     byUser.forEach((rows, userId) => {
-      const items = PushDigestUtils.bestPerProduct(rows);
-
-      payloads.set(userId, JSON.stringify(PushDigestUtils.payload(items)));
+      items.set(userId, PushDigestUtils.bestPerProduct(rows));
     });
 
-    const targets = await this.core.findTargetsByUserIds([...byUser.keys()]);
+    await this.announce(items);
 
-    const stats = await this.broadcast(
-      targets,
-      (target) => payloads.get(target.userId) ?? '',
-    );
+    const stats = await this.push(items);
 
     await this.core.pruneDigestLog(
       PushDigestService.shiftDay(capturedOn, -this.config.logRetentionDays),
@@ -154,6 +148,71 @@ export class PushDigestService {
     );
 
     return report;
+  }
+
+  /**
+   * Writes one inbox message per affected user — the durable record, sent
+   * whether or not push is configured and whether or not the user ever
+   * granted notification permission.
+   *
+   * A per-user loop rather than a bulk insert: each digest's content differs,
+   * so a bulk write would have to pair returned ids against the input array
+   * positionally, and a mispairing here would deliver one person's favorites
+   * into another person's inbox.
+   *
+   * @param items - Each affected user's digest items.
+   */
+  private async announce(items: Map<ID, PushDigestItem[]>): Promise<void> {
+    for (const [userId, digest] of items) {
+      const messageId = await this.messages.deliver({
+        kind: MessageKind.DISCOUNT_DIGEST,
+        payload: { items: digest, total: digest.length },
+        userIds: [userId],
+      });
+
+      if (messageId) {
+        await this.streams.announce(messageId, [userId]);
+      }
+    }
+  }
+
+  /**
+   * Sends the same digests as push notifications, to whoever can receive one.
+   *
+   * Both guards live here rather than at the top of `dispatch`: with push
+   * unconfigured or nobody subscribed there is nothing to send, but there is
+   * still everything to record.
+   *
+   * @param items - Each affected user's digest items.
+   * @returns What the send did; all zeros when nothing was sent.
+   */
+  private async push(
+    items: Map<ID, PushDigestItem[]>,
+  ): Promise<PushDeliveryStats> {
+    const empty: PushDeliveryStats = { sent: 0, gone: 0, failed: 0 };
+
+    if (!this.webPush.enabled || !items.size) {
+      return empty;
+    }
+
+    const hasSubscriptions = await this.core.hasAnySubscription();
+
+    if (!hasSubscriptions) {
+      return empty;
+    }
+
+    const payloads = new Map<ID, string>();
+
+    items.forEach((digest, userId) => {
+      payloads.set(userId, JSON.stringify(PushDigestUtils.payload(digest)));
+    });
+
+    const targets = await this.core.findTargetsByUserIds([...items.keys()]);
+
+    return this.broadcast(
+      targets,
+      (target) => payloads.get(target.userId) ?? '',
+    );
   }
 
   /**

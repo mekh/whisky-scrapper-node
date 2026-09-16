@@ -55,8 +55,12 @@ const UPSERT_SQL = `
  * - The blacklist `NOT EXISTS` pair is copied from `findCurrentRows`,
  *   NULL-brand semantics included: a brandless bottling survives every brand
  *   rule.
- * - The `push_subscription EXISTS` keeps the claim from burning dedup rows
- *   for users no push can reach.
+ * - There is deliberately **no** `push_subscription EXISTS` filter. It used to
+ *   sit here, and it silently cost every favoriting user without a push
+ *   subscription their drops for good: unclaimed is unrecorded, and the dedup
+ *   log has no catch-up. The claim now feeds the inbox as well as push, so it
+ *   must see every affected user; the subscription filter belongs at send
+ *   time, in `findTargetsByUserIds`.
  * - A `rejected` bottling is excluded, and of every read that filters on the
  *   review queue this is the one that must not be forgotten: the others make
  *   something invisible, while this one **sends a notification**. A push
@@ -108,8 +112,6 @@ const CLAIM_DROPS_SQL = `
     JOIN favorite f       ON f."productId" = sp."productId"
     WHERE sp."inStock"
       AND p."reviewStatus" IS DISTINCT FROM '${ProductReviewStatus.REJECTED}'
-      AND EXISTS (
-        SELECT 1 FROM push_subscription s WHERE s."userId" = f."userId")
       AND NOT EXISTS (
         SELECT 1 FROM blacklist_product bp
         WHERE bp."userId" = f."userId" AND bp."productId" = sp."productId")

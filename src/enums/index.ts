@@ -1,4 +1,5 @@
 export { Action } from './action.enum';
+export { AudienceMode } from './audience-mode.enum';
 export { CollectionTimelineGranularity } from './collection.enum';
 export { DashboardBreakdownBy, DashboardGranularity } from './dashboard.enum';
 export { ErrorCodes } from './error-codes.enum';
@@ -26,6 +27,7 @@ export {
   ScotlandRegion,
 } from './kb.enum';
 export { ListingStop } from './listing.enum';
+export { MessageKind } from './message-kind.enum';
 export { PermissionMode } from './permission.enum';
 export { ProductReviewStatus } from './product-review.enum';
 export { RateLimitProfile } from './rate-limit.enum';

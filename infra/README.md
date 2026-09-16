@@ -89,6 +89,32 @@ the scrape target, which silently broke the moment that variable changed —
 Prometheus expands no environment variables in its own config, so the two
 could not be kept in step.
 
+**That firewall needs a rule in `INPUT`, and `DOCKER-USER` is not where it
+goes.** This is the one scrape that terminates _on the host_ rather than
+crossing between containers: Prometheus addresses the bridge gateway, so the
+packet arrives on the host's own `INPUT` chain, while `DOCKER-USER` is
+consulted from `FORWARD` and never sees it. A whitelist written for the
+container-to-container traffic therefore drops it, and the symptom is narrow
+enough to be misread as a dashboard problem — every panel in the infra
+dashboard's **Host** row reads `No data` while Postgres, Valkey and the
+containers below it are fine, and `WhiskyDiskFilling`, `WhiskyHostSaturated`
+and `WhiskyHostMemoryLow` are silent rather than firing. Allow the subnet of
+every network Prometheus is attached to, since which one it sources from
+depends on the container's default route:
+
+```bash
+for n in whisky_monitoring whisky-be; do
+  docker network inspect "$n" -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}'
+done
+# then, for each, and persisted the way the rest of the whitelist is:
+sudo iptables -I INPUT -p tcp -s <SUBNET> --dport 9100 -j ACCEPT
+```
+
+The target's own error says which half is wrong, and the three answers do not
+overlap: `no such host` is `extra_hosts` never reaching the container,
+`connection refused` is nothing listening on 9100, and `i/o timeout` is this
+rule missing — a DROP times out where a REJECT would have refused.
+
 ### Turning on Telegram
 
 The stack ships **delivering nowhere on purpose**: alerts fire and are visible

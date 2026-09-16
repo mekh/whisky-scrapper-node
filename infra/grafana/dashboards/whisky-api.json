@@ -338,7 +338,7 @@
             "type": "prometheus",
             "uid": "whisky-prometheus"
           },
-          "expr": "count(haproxy_server_status{proxy=\"app\"} == 2)",
+          "expr": "sum(haproxy_server_status{proxy=\"app\", state=\"UP\"})",
           "refId": "A",
           "format": "time_series",
           "instant": true,

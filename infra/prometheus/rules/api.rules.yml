@@ -9,8 +9,13 @@ groups:
       - alert: WhiskyReplicaDown
         # HAProxy is the authority on which replicas are in rotation: its
         # server slots are stable names that survive a redeploy, unlike a
-        # container address. `2` is UP in its encoding.
-        expr: haproxy_server_status{proxy="app"} != 2 and haproxy_server_check_status{proxy="app"} != 0
+        # container address. Its exporter publishes one 0/1 series per state
+        # rather than an enum, so the state is a label and never a value.
+        #
+        # `DOWN` specifically, not "anything but UP": the template provisions
+        # sixteen slots and the unfilled ones sit at `MAINT` forever, so a
+        # negated form fires for every slot the deployment does not use.
+        expr: haproxy_server_status{proxy="app", state="DOWN"} == 1
         for: 2m
         labels:
           severity: warning
@@ -22,7 +27,11 @@ groups:
             next one follows.
 
       - alert: WhiskyAllReplicasDown
-        expr: count(haproxy_server_status{proxy="app"} == 2) == 0
+        # `sum`, not `count(... == 1)`: the `UP` series exist with the value 0
+        # while the replicas are down, and `count()` over an empty vector
+        # returns nothing at all — so the counted form could never fire, which
+        # is the worst thing a critical alert can be.
+        expr: sum(haproxy_server_status{proxy="app", state="UP"}) == 0
         for: 1m
         labels:
           severity: critical

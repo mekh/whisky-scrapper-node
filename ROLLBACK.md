@@ -104,10 +104,14 @@ here: the HAProxy probe URI moved from `/health` to `/health/live`.**
 
   ```bash
   docker exec whisky-lb wget -qO- http://127.0.0.1:8404/metrics \
-    | grep '^haproxy_server_status{proxy="app"'
+    | grep '^haproxy_server_status{proxy="app".*state="UP"'
   ```
 
-  `2` is UP. Anything else on every slot is this trap.
+  One line per slot, and the value is what matters: `1` is in rotation, `0` is
+  not. Three slots at `1` is a healthy fleet; every slot at `0` is this trap.
+  The exporter publishes a 0/1 series per state rather than a status number,
+  so the unused slots of the sixteen-slot template read `state="MAINT"` and
+  are not a fault.
 
 Two smaller notes for the same deploy:
 

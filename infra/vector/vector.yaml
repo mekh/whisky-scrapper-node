@@ -86,7 +86,22 @@ sources:
   nginx:
     type: file
     include:
-      - /var/log/nginx/access.log
+      # THIS SITE's access log, not the shared one. Every vhost on this host
+      # writes into /var/log/nginx/access.log — Grafana most of all, since its
+      # UI polls every 30 seconds — and `combined` carries no $host field, so
+      # once the lines are in that file nothing can separate them again. So
+      # the split happens in nginx, where the information still exists:
+      # `access_log /var/log/nginx/whisky.access.log` in infra/nginx/nginx.conf.
+      #
+      # If that config has not been applied yet this path simply does not
+      # exist, which a file source treats as "nothing to read" rather than an
+      # error — so the two halves can land in either order.
+      - /var/log/nginx/whisky.access.log
+      # The error log stays SHARED and undivided, deliberately. It is low
+      # volume, so there is no noise to remove, and errors raised above this
+      # site's server block — at the http{} level — would stop being collected
+      # if it were split. The line that ended the 2026-08-30 diagnosis was one
+      # of those.
       - /var/log/nginx/error.log
     # From the END, and this is the one setting that keeps the first start
     # sane: these files have not been rotated since March 2023 — 1.25 GB and

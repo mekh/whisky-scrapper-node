@@ -257,7 +257,13 @@ Loki, and it would be self-inflicted here.
 ### 4.5 nginx
 
 A `file` source over the host side of the **`nginx-proxy` container's** log
-mount, `:ro` into Vector. nginx is a container here, not a host service
+mount, `:ro` into Vector — reading **this vhost's own** `whisky.access.log`
+plus the shared `error.log`. The access log is split in nginx because
+`combined` carries no `$host` field: every vhost writes into one file, Grafana
+polls its own UI every 30 seconds, and once the lines are mixed nothing
+downstream can tell them apart. The error log stays shared, since it is low
+volume and splitting it would drop the `http{}`-level errors — the class the
+2026-08-30 diagnosis turned on. nginx is a container here, not a host service
 (confirmed by the owner, 2026-09-16) — so this is a bind mount of a path both
 containers see, and Vector needs no access to the host's service manager.
 

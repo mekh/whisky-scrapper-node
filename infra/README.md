@@ -250,12 +250,12 @@ not need.
 
 Three sources, and each one is read a different way:
 
-| Source                                                           | How                                                                                                        | Stream field     |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------- |
-| Container stdout — the replicas, HAProxy, Postgres, both Valkeys | the Docker API, over the socket cAdvisor already uses                                                      | `container_name` |
-| nginx access and error logs                                      | the host side of the `nginx-proxy` container’s log mount, bind-mounted `:ro` — it writes files, not stdout | —                |
-| The per-sync scrape logs under `../log`                          | bind-mounted `:ro`; the date is read out of the **filename**                                               | `store`          |
-| `db_backup.log`, in that same directory                          | the nightly `scripts/db-backup.sh`; its lines carry their own ISO timestamp                                | —                |
+| Source                                                           | How                                                                                    | Stream field     |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------- |
+| Container stdout — the replicas, HAProxy, Postgres, both Valkeys | the Docker API, over the socket cAdvisor already uses                                  | `container_name` |
+| nginx access and error logs                                      | `whisky.access.log` (this vhost's own) plus the shared `error.log`, bind-mounted `:ro` | —                |
+| The per-sync scrape logs under `../log`                          | bind-mounted `:ro`; the date is read out of the **filename**                           | `store`          |
+| `db_backup.log`, in that same directory                          | the nightly `scripts/db-backup.sh`; its lines carry their own ISO timestamp            | —                |
 
 ### Before the first deploy: the plugin download is a firewall question
 
@@ -336,6 +336,33 @@ docker compose -f infra/docker-compose.monitoring.yaml --env-file infra/.env up 
 **VictoriaLogs serves its own log-explorer UI** on `VLOGS_BIND_PORT`, so a
 plugin that cannot be installed is a degraded experience rather than no log
 search at all.
+
+### The nginx access log is this site's own, not the shared one
+
+`infra/nginx/nginx.conf` sets `access_log /var/log/nginx/whisky.access.log`,
+and that line exists for the log pipeline rather than for nginx. Without it
+the block inherits the http-level default and writes into the shared
+`access.log` that **every** vhost on this host uses — Grafana above all, whose
+UI polls every 30 seconds, so the shared file ends up mostly Grafana. And
+`combined` carries no `$host` field, so once the lines are in one file nothing
+downstream can separate them again. The split therefore happens in nginx,
+where the information still exists.
+
+**The error log is deliberately left shared.** It is low volume, so there is
+no noise to remove, and errors raised above this site's server block — at the
+`http{}` level — would stop being collected if it were split. The line that
+ended the 2026-08-30 diagnosis was one of those.
+
+Two consequences worth holding:
+
+- **This site's requests are no longer in `/var/log/nginx/access.log`.** Query
+  them in Grafana, which is what this whole stack is for.
+  `docs/OUTAGE-2026-08-30-HANDOFF.md` predates it and still reaches for
+  `grep -a … access.log`.
+- **The two halves can be applied in either order.** Until the nginx config is
+  applied the new path does not exist, and a Vector file source treats a
+  missing path as nothing to read rather than an error. The worst case is a
+  gap in nginx logs between the two steps, not a failure.
 
 ### Where the logs actually are — and one place they are not
 

@@ -258,6 +258,31 @@ transforms:
       # answer nothing.
       del(.label)
 
+      # `context` is NOT a field on an ordinary record, which is worth knowing
+      # before writing `context:="ReportService"` and getting nothing back.
+      # `LoggerModule.logMethod` composes `msg` as `[context, message].join(':
+      # ')`, and `PinoService` sets a real `context` field only on the TypeORM
+      # child logger. So the context every line carries lives inside the
+      # message text, and this lifts it back out into something filterable.
+      #
+      # The guard that makes this safe is that the context has NO SPACE in it
+      # — it is a class name. A message whose own text contains a colon, like
+      # `failed for %s: x`, does not match, because `failed for` is two words.
+      #
+      # NON-DESTRUCTIVE on purpose: `msg` keeps the prefix. The extraction is
+      # a pattern over a composed string rather than a field the logger
+      # emitted, so the cost of it ever being wrong should be a redundant
+      # field and never a truncated message.
+      if !exists(.context) {
+        ctx, ctxErr = parse_regex(
+          to_string(.msg) ?? "",
+          r'(?s)^(?P<context>[A-Za-z][A-Za-z0-9_.-]*): .*'
+        )
+        if ctxErr == null {
+          .context = ctx.context
+        }
+      }
+
       # Postgres writes `2026-09-16 12:00:00.123 UTC [412] ERROR:  …` —
       # log_line_prefix is `%m [%p] ` at the default. Only the severity is
       # lifted, because ERROR/FATAL against LOG is the entire reason to read
@@ -693,3 +718,36 @@ tests:
             source: |
               assert_eq!(.timestamp, t'2026-09-13T10:00:05Z')
               assert!(contains(string!(.message), "sftp> rename"))
+
+  # Verified against real production output: every boot line arrived with an
+  # empty `context`, because the logger folds it into the message instead.
+  - name: the Nest context is lifted out of the composed message
+    inputs:
+      - insert_at: docker_parsed
+        type: log
+        log_fields:
+          container_name: whisky-be-1
+          message: '{"level":"info","time":"2026-09-16T16:35:00.477Z","msg":"InstanceLoader: CoreWhiskyModule dependencies initialized"}'
+    outputs:
+      - extract_from: docker_parsed
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.context, "InstanceLoader")
+              assert_eq!(.msg, "InstanceLoader: CoreWhiskyModule dependencies initialized")
+              assert_eq!(.level, "info")
+
+  - name: a message whose own text has a colon gains no false context
+    inputs:
+      - insert_at: docker_parsed
+        type: log
+        log_fields:
+          container_name: whisky-be-1
+          message: '{"level":"warn","time":"2026-09-16T16:35:00.477Z","msg":"could not read sync log file: ENOENT"}'
+    outputs:
+      - extract_from: docker_parsed
+        conditions:
+          - type: vrl
+            source: |
+              assert!(!exists(.context))
+              assert_eq!(.msg, "could not read sync log file: ENOENT")

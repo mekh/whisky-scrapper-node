@@ -96,6 +96,27 @@ scrape_configs:
       - targets:
           - whisky-cadvisor:8080
 
+  # The log store. It has no container healthcheck on purpose — this job is
+  # the liveness answer instead, which is the stronger of the two: a probe
+  # inside the container cannot say whether anything can reach it.
+  - job_name: victorialogs
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - whisky-vlogs:9428
+
+  # The collector, and the more important of the two targets. A log pipeline
+  # that has quietly stopped collecting looks exactly like a quiet week, so
+  # `vector_component_sent_events_total` going flat is the only thing that can
+  # tell them apart. Vector publishes this from its own `internal_metrics`
+  # source; the port is the `prometheus_exporter` sink in
+  # infra/vector/vector.yaml and is not published to the host.
+  - job_name: vector
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - whisky-vector:9598
+
   # Prometheus watching itself, which is what says whether a rule evaluation
   # or the storage is falling behind.
   - job_name: prometheus

@@ -11,6 +11,22 @@
 # down` (never `-v` — the data volumes are external) and a fresh `up`.
 name: whisky
 
+# Where every service's `logging:` points. The `json-file` driver ran with no
+# rotation at all until 2026-09-16, on the disk that also carries `pg_data`,
+# the session Valkey's AOF, the bind-mounted `./log` and the Prometheus TSDB —
+# an unbounded growth path whose only guard was the 85 %-full alert.
+#
+# These files are no longer the archive. Vector ships every line to
+# VictoriaLogs, which keeps thirty days of it under two ceilings of its own
+# (see docs/LOGS-PLAN.md), so what is left here is the buffer `docker compose
+# logs` reads. It is therefore sized for "recent enough to be useful" rather
+# than for retention: 60 MB per container, and `be` is three of them.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '20m'
+    max-file: '3'
+
 services:
   db:
     container_name: whisky-db
@@ -100,6 +116,7 @@ services:
       timeout: 1s
       retries: 10
     stop_grace_period: 60s
+    logging: *logging
     restart: unless-stopped
 
   valkey:
@@ -124,6 +141,7 @@ services:
       timeout: 2s
       retries: 3
     stop_grace_period: 30s
+    logging: *logging
     restart: unless-stopped
 
   migrate:
@@ -144,6 +162,7 @@ services:
         condition: service_healthy
     networks:
       - whisky-db
+    logging: *logging
     restart: 'no'
 
   cache:
@@ -194,6 +213,7 @@ services:
           # the way to get the container OOM-killed instead of shedding its
           # oldest entries, which is why both are variables.
           memory: ${CACHE_MEMORY_LIMIT:-640M}
+    logging: *logging
     restart: unless-stopped
 
   be:
@@ -291,16 +311,36 @@ services:
       # the 2026-09-13 load test found the API bound by one event loop that
       # has no room for that. `debug` is the level production has run at.
       - LOG_LEVEL=${LOG_LEVEL:-info}
-      - LOG_JSON=false
+      # JSON since 2026-09-16, which reverses what this block used to pin. The
+      # previous answer was `pino-pretty` with `singleLine` and `colorize`, so
+      # production wrote ANSI escape codes and no structure — the worst
+      # possible input for a log pipeline, which would have had to strip the
+      # colour and regex the line back apart, with every field breaking on the
+      # next `pino-pretty` release. With this true pino installs no transport
+      # at all, and `level`, `time`, `context` and `reqId` arrive as fields
+      # Vector ships and LogsQL filters on (docs/LOGS-PLAN.md §5).
+      #
+      # The cost is that `docker compose logs be` is no longer pleasant to read
+      # directly. That is what pino-pretty is for, on demand:
+      #
+      #   docker compose logs -f be | npx pino-pretty
+      #
+      # The two lines below are inert while this is true — the transport they
+      # configure is never installed — and are deliberately left as they were,
+      # so that flipping this one line back restores exactly the previous
+      # behaviour rather than a colourless variant of it.
+      - LOG_JSON=true
       - LOG_PRETTY=false
       - LOG_CALLSITES=false
       - LOG_COLOR=true
       - LOG_DB=${LOG_DB:-}
-      # The four LOG_* lines above are pinned rather than passed through, and
-      # stay that way: these are this deployment's settled answers, and
-      # `SWAGGER_ENABLED` in particular is load-bearing — `../web` generates
-      # its API client by fetching /docs-json at deploy time, so turning it
-      # off breaks that build rather than merely hiding a page.
+      # The four LOG_* lines above are pinned rather than passed through: they
+      # are this deployment's settled answers, and the pipeline above now
+      # depends on `LOG_JSON` being one of them rather than a host variable
+      # somebody can unset. `SWAGGER_ENABLED` is load-bearing for a different
+      # reason — `../web` generates its API client by fetching /docs-json at
+      # deploy time, so turning it off breaks that build rather than merely
+      # hiding a page.
       - SWAGGER_ENABLED=true
       - METRICS_ENABLED=${METRICS_ENABLED:-}
       - METRICS_DEFAULT_METRICS=${METRICS_DEFAULT_METRICS:-}
@@ -376,6 +416,7 @@ services:
         reservations:
           memory: 512M
     stop_grace_period: 60s
+    logging: *logging
     restart: unless-stopped
 
   # The one door into the API, publishing exactly the address the host nginx
@@ -409,6 +450,7 @@ services:
       interval: 30s
       timeout: 3s
       retries: 3
+    logging: *logging
     restart: unless-stopped
 
 networks:

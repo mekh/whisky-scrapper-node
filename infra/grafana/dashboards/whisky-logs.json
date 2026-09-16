@@ -1,0 +1,716 @@
+{
+  "title": "Whisky — Logs",
+  "uid": "whisky-logs",
+  "tags": [
+    "whisky"
+  ],
+  "timezone": "browser",
+  "editable": false,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Pipeline",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Rows ingested",
+      "description": "Everything Vector has pushed in. Flat while the fleet is serving traffic means the pipeline has stopped, not that the host is quiet.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "rate(vl_rows_ingested_total[5m])",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "rows/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "id": 1
+    },
+    {
+      "type": "timeseries",
+      "title": "Events sent, by Vector sink",
+      "description": "The sending side of the same number. Having both is what tells \"nothing is arriving\" apart from \"nothing is being sent\".",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (component_id) (rate(vector_component_sent_events_total{component_kind=\"sink\"}[5m]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{component_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "id": 2
+    },
+    {
+      "type": "timeseries",
+      "title": "Rows DROPPED, by reason",
+      "description": "The silent-discard panel, and the reason it is second from the top. An insert outside retention is answered HTTP 200 with an empty body, so nothing else in this stack would ever mention it. too_small_timestamp = older than the retention period; too_big_timestamp = dated in the future, which is a clock or timezone mistake; too_many_fields = a record wider than the insert limit.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "increase(vl_rows_dropped_total[1h])",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 40,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "id": 3
+    },
+    {
+      "type": "timeseries",
+      "title": "Vector errors and discards",
+      "description": "A discard with intentional=\"false\" is a log line Vector gave up on. Both should sit at zero; a sustained sink error is usually VictoriaLogs refusing writes (see the read-only stat below).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (component_id, error_type) (rate(vector_component_errors_total[5m]))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "err {{component_id}} {{error_type}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (component_id) (rate(vector_component_discarded_events_total{intentional=\"false\"}[5m]))",
+          "refId": "B",
+          "format": "time_series",
+          "legendFormat": "discard {{component_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "id": 4
+    },
+    {
+      "type": "timeseries",
+      "title": "Streams created per day",
+      "description": "The cardinality panel. Read it against the stream count this deployment expects — roughly seven containers, two nginx files and one per store slug. NOTE THE DAILY STEP: VictoriaLogs registers every stream again in each new daily partition, so this legitimately equals the stream count once a day and is NOT expected to be flat at zero. A spike mid-day means a high-cardinality field reached VL-Stream-Fields in infra/vector/vector.yaml.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "increase(vl_streams_created_total[1d])",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "streams/day"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "id": 5
+    },
+    {
+      "type": "timeseries",
+      "title": "Lines skipped as too long",
+      "description": "The counterpart to max_line_bytes on Vector’s side: a line longer than the insert limit is skipped whole. Non-zero means a folded stack trace or a %o dump outgrew one of the two limits, and they should be sized against the same worst case.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "increase(vl_too_long_lines_skipped_total[1h])",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "lines/h"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 17
+      },
+      "id": 6
+    },
+    {
+      "type": "row",
+      "title": "Storage",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Data size on disk",
+      "description": "Compressed log data and the stream/field indexes, against the configured ceiling. Retention drops a whole per-day partition at a time, so this falls in steps.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "sum by (type) (vl_data_size_bytes)",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{type}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "vl_max_disk_space_usage_bytes",
+          "refId": "B",
+          "format": "time_series",
+          "legendFormat": "ceiling (VLOGS_RETENTION_SIZE)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "id": 7
+    },
+    {
+      "type": "stat",
+      "title": "Free disk",
+      "description": "The filesystem holding the log data — which is the same disk as pg_data, the Valkey AOF and the Prometheus TSDB. Below roughly 20 % free, VictoriaLogs stops accepting writes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "vl_free_disk_space_bytes",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 12,
+        "y": 26
+      },
+      "id": 8
+    },
+    {
+      "type": "stat",
+      "title": "Accepting writes?",
+      "description": "vl_storage_is_read_only. VictoriaLogs turns itself read-only rather than filling the disk the database is on. A 1 here means log lines are being refused, and the disk is the thing to look at.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "vl_storage_is_read_only",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "yes",
+                  "color": "green",
+                  "index": 0
+                },
+                "1": {
+                  "text": "READ-ONLY",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 16,
+        "y": 26
+      },
+      "id": 9
+    },
+    {
+      "type": "stat",
+      "title": "Retention window held",
+      "description": "How far back the oldest stored line actually goes, derived rather than assumed: it should sit at about VLOGS_RETENTION and never beyond it. Much shorter means the disk ceiling is the binding limit rather than the time one.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "whisky-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "whisky-prometheus"
+          },
+          "expr": "time() - vl_storage_log_min_timestamp_seconds",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 20,
+        "y": 26
+      },
+      "id": 10
+    },
+    {
+      "type": "row",
+      "title": "What the logs say",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Errors across the fleet",
+      "description": "Every source at once, which is only possible because all three normalise the same level vocabulary — pino says warn, Postgres and the sync writer say WARNING, and the transforms in infra/vector/vector.yaml fold them together. The window is the dashboard’s own time picker — the datasource applies it, so this query deliberately carries no _time: filter of its own to fight it with.",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "whisky-victorialogs"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "whisky-victorialogs"
+          },
+          "expr": "level:error",
+          "refId": "A",
+          "queryType": "instant"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      },
+      "id": 11
+    },
+    {
+      "type": "logs",
+      "title": "nginx 5xx and 429",
+      "description": "The reason this dashboard exists. These are requests the API’s own metrics structurally cannot see — refused at the edge, so no handler ever ran — and on 2026-08-30 a line of exactly this shape was the only surviving evidence of a 68-minute outage. The window is the dashboard’s own time picker — the datasource applies it, so this query deliberately carries no _time: filter of its own to fight it with.",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "whisky-victorialogs"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "whisky-victorialogs"
+          },
+          "expr": "source:nginx AND (status:>=500 OR status:=429)",
+          "refId": "A",
+          "queryType": "instant"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 45
+      },
+      "id": 12
+    },
+    {
+      "type": "logs",
+      "title": "Sync run failures",
+      "description": "The scrape logs, searchable across runs for the first time — the API serves one run’s file at a time and cannot answer \"which store has been failing this week\". The window is the dashboard’s own time picker — the datasource applies it, so this query deliberately carries no _time: filter of its own to fight it with.",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "whisky-victorialogs"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "whisky-victorialogs"
+          },
+          "expr": "source:sync AND level:error",
+          "refId": "A",
+          "queryType": "instant"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 45
+      },
+      "id": 13
+    }
+  ]
+}

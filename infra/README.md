@@ -7,12 +7,13 @@ that runs the monitoring stack.
 ```
 infra/
 ├── haproxy/haproxy.cfg          mounted by ../docker-compose.yaml (the `lb` service)
-├── nginx/nginx.conf             the host nginx server block; copied to the host by hand
+├── nginx/nginx.conf             the nginx server block; applied to the host by hand
 ├── docker-compose.monitoring.yaml
 ├── prometheus/                  scrape config + alert rules
 ├── alertmanager/                routing, and the Telegram receiver
 ├── postgres-exporter/           the extra queries the exporter runs
-└── grafana/                     provisioned datasource and dashboards
+├── vector/vector.yaml           what the log collector reads, and how it parses it
+└── grafana/                     provisioned datasources and dashboards
 ```
 
 ## The two edge configs
@@ -23,13 +24,34 @@ routing policy belongs to nginx, which already owns that job, and a rule here
 would be a second, divergent copy of it sitting next to the
 `X-Forwarded-For` contract that nothing may disturb.
 
-**`nginx/nginx.conf`** is a template. Nothing applies it automatically:
+**`nginx/nginx.conf`** is a template, and nothing applies it automatically.
+
+**nginx here is a CONTAINER, `nginx-proxy`, not a host service** (confirmed by
+the owner, 2026-09-16). Earlier revisions of this file said
+`sudo cp … /etc/nginx/conf.d/` and `systemctl reload nginx`; that was wrong,
+and it is the kind of stale instruction that costs an hour in the middle of an
+incident. The shape of the work is the same — edit the template here, put it
+where that container reads its config from, check it, reload — but every
+command is the container form:
 
 ```bash
-sudo cp infra/nginx/nginx.conf /etc/nginx/conf.d/whisky-web.conf
-# …adjust root / server_name / proxy_pass / TLS…
-sudo nginx -t && sudo systemctl reload nginx
+# Where it reads config and where it writes logs. Both are bind mounts, and
+# this is the command that says what the host paths actually are:
+docker inspect nginx-proxy --format '{{json .Mounts}}' | tr ',' '\n' | grep -iE 'conf|log'
+
+# …then copy the template to the host side of its config mount, adjust
+# root / server_name / proxy_pass / TLS, and:
+docker exec nginx-proxy nginx -t && docker exec nginx-proxy nginx -s reload
 ```
+
+**Two consequences for the log stack.** The container writes its access and
+error logs to _files_, not to stdout — `docker logs nginx-proxy` shows none of
+it (`docs/OUTAGE-2026-08-30-HANDOFF.md`) — which is why Vector tails files for
+this source rather than collecting it over the Docker API like the others.
+And `NGINX_LOG_DIR` in `infra/.env` must be the **host** side of that log
+mount. `/var/log/nginx` is the default and is what the outage runbook's
+`sudo grep -a … /var/log/nginx/access.log` implies, but the `docker inspect`
+above is what confirms it.
 
 It lives here rather than in `../web` because it is a deployment-topology
 document, and the topology is here — the compose project, the private-interface
@@ -181,6 +203,19 @@ docker run --rm --entrypoint /bin/amtool -v "$PWD/infra/alertmanager:/a:ro" \
 docker run --rm -v "$PWD/infra/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro" \
   haproxy:3.2-alpine haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
 
+# the log collector. TWO commands, and both earn their place. `validate`
+# compiles the VRL and does catch type errors — it rejected three in the
+# first draft of this file. What it cannot judge is whether a program that
+# compiles produces the RIGHT fields, so `test` runs the `tests:` block at
+# the foot of vector.yaml against real sample lines — including the sync-log
+# date-from-filename join and the midnight crossing, which are the only
+# things in that file that can produce a plausible-looking WRONG answer
+# rather than an obviously missing one.
+docker run --rm -v "$PWD/infra/vector:/etc/vector:ro" \
+  timberio/vector:0.58.0-debian validate --no-environment /etc/vector/vector.yaml
+docker run --rm -v "$PWD/infra/vector:/etc/vector:ro" \
+  timberio/vector:0.58.0-debian test /etc/vector/vector.yaml
+
 # the edge (needs the limit_req zone declared in an http{} context)
 sudo nginx -t
 ```
@@ -202,6 +237,165 @@ They are generated rather than hand-written, and every PromQL expression in
 them is checked by `promtool` against the metric names the application
 declares in `src/constants/metrics.constants.ts` — so a typo cannot ship as a
 silently empty panel.
+
+## Logs
+
+Two containers, added 2026-09-16: **VictoriaLogs** (`whisky-vlogs`) stores and
+queries, **Vector** (`whisky-vector`) collects. Why this and not Loki is
+argued in [`../docs/LOGS-PLAN.md`](../docs/LOGS-PLAN.md) §2; the short version
+is that Loki removed Promtail outright in 3.7.3, its replacement wants ten
+times the CPU of the alternatives on a host whose eight cores are already
+oversubscribed, and its cardinality model is a foot-gun this deployment does
+not need.
+
+Three sources, and each one is read a different way:
+
+| Source                                                           | How                                                                                                        | Stream field     |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------- |
+| Container stdout — the replicas, HAProxy, Postgres, both Valkeys | the Docker API, over the socket cAdvisor already uses                                                      | `container_name` |
+| nginx access and error logs                                      | the host side of the `nginx-proxy` container’s log mount, bind-mounted `:ro` — it writes files, not stdout | —                |
+| The per-sync scrape logs under `../log`                          | bind-mounted `:ro`; the date is read out of the **filename**                                               | `store`          |
+
+### Before the first deploy: the plugin download is a firewall question
+
+**On this host the answer is already known — the Grafana container does reach
+`grafana.com` (owner, 2026-09-16) — so the default download path in
+`docker-compose.monitoring.yaml` works as shipped, and the offline fallback
+below is documentation rather than a step.** The check is kept because it is
+the right procedure on any host that has not been asked, and because a
+whitelist can change under you.
+
+**Where it has not been confirmed: do this before touching the compose file,
+and do not "just try it and see".**
+
+The log datasource is a Grafana _plugin_, fetched from `grafana.com` when the
+container starts. `GF_ANALYTICS_CHECK_FOR_UPDATES` is already `false`, so that
+is a destination this container has **never** reached — exactly the position
+`bank.gov.ua` was in before the currency work
+([`../docs/CURRENCY-RATES-PROD.md`](../docs/CURRENCY-RATES-PROD.md) §1).
+`DOCKER-USER` here is a whitelist ending in `LOG` + `DROP`, and every dropped
+packet writes a kernel line `psad` reads as a port scan — the mechanism that
+took the API down for one to four hours a day between 2026-08-30 and 09-05.
+
+It is worse than a missing panel, because the install **blocks startup and
+retries**: a whitelist miss is a sustained stream of dropped packets rather
+than one.
+
+```bash
+sudo iptables -L DOCKER-USER -nv --line-numbers
+# Confirm outbound TCP 443 from the container subnets reaches arbitrary
+# destinations. If the whitelist is by DESTINATION, stop here and take the
+# offline path below.
+```
+
+If that says egress is open, one request — not a loop — confirms it:
+
+```bash
+docker compose -f infra/docker-compose.monitoring.yaml exec grafana \
+  wget -q -T 15 -O /dev/null https://grafana.com/api/plugins/victoriametrics-logs-datasource \
+  && echo reachable
+```
+
+A timeout is the tell, the same one this file documents for the node-exporter
+scrape: `DROP` times out where a `REJECT` would refuse.
+
+**The offline path**, which needs no egress from the container at all. Use the
+**official release zip** — it carries the `MANIFEST.txt` that makes the plugin
+signed, and a source build does not:
+
+```bash
+V=v0.32.0
+cd infra/grafana/plugins
+curl -fLO "https://github.com/VictoriaMetrics/victorialogs-datasource/releases/download/$V/victoriametrics-logs-datasource-$V.zip"
+curl -fLO "https://github.com/VictoriaMetrics/victorialogs-datasource/releases/download/$V/victoriametrics-logs-datasource-${V}_checksums_zip.txt"
+sha256sum -c "victoriametrics-logs-datasource-${V}_checksums_zip.txt"
+unzip -q "victoriametrics-logs-datasource-$V.zip" && rm -f ./*.zip ./*_checksums_zip.txt
+cd ../../..
+
+# Then stop Grafana reaching for the network even though the plugin is there:
+echo 'GRAFANA_PLUGINS_PREINSTALL=' >> infra/.env
+docker compose -f infra/docker-compose.monitoring.yaml --env-file infra/.env up -d grafana
+```
+
+`infra/grafana/plugins/` is git-ignored but for its `.gitkeep`. Either way
+**VictoriaLogs serves its own log-explorer UI** on `VLOGS_BIND_PORT`, so a
+plugin that cannot be installed is a degraded experience rather than no log
+search at all.
+
+### Checking it works
+
+Substitute the address from `infra/.env`:
+
+```bash
+V=http://192.168.180.1:10428
+```
+
+All three sources are arriving, named rather than assumed:
+
+```bash
+for s in docker nginx sync; do
+  printf '%-7s ' "$s"
+  curl -s "$V/select/logsql/query" \
+    --data-urlencode "query=_time:1h source:=$s | stats count() lines"
+done
+```
+
+**The cardinality check — the number that says whether the trap Loki was
+rejected for has actually been avoided:**
+
+```bash
+curl -s "$V/select/logsql/streams" \
+  --data-urlencode 'query=*' --data 'start=24h' --data 'end=now' \
+  | jq -r '.values[] | "\(.hits)\t\(.value)"' | sort -rn
+```
+
+Read it against three rules. **Tens of lines, not thousands** — about seven
+containers, two nginx files and one per store slug. **No line contains an IP
+address, a URL, a request id or a container id**; `grep -E
+'[0-9]{1,3}(\.[0-9]{1,3}){3}|/api/'` over that output must come back empty.
+And **every line has a meaningful hit count** — a stream with one hit is a
+field that should never have been a stream field. The list lives in
+`VL-Stream-Fields` in `vector/vector.yaml`, and adding anything per-request to
+it is what turns this into the problem it was chosen to avoid.
+
+Two counters nothing else surfaces:
+
+```bash
+curl -s "$V/metrics" | grep -E '^vl_rows_(ingested|dropped)_total|^vl_storage_is_read_only'
+```
+
+`vl_rows_dropped_total` is the **silent** failure. A line outside the
+retention period is dropped at ingestion and the insert is still answered
+`HTTP 200` with an empty body, so nothing else in this stack would ever
+mention it — `too_small_timestamp` means older than `VLOGS_RETENTION`,
+`too_big_timestamp` means dated in the future, which is a clock or timezone
+mistake. `vl_storage_is_read_only` at `1` means VictoriaLogs has stopped
+accepting writes to avoid filling the disk the database is on.
+
+And the one the whole change exists for — edge failures the API's own metrics
+structurally cannot see, because no handler ever ran:
+
+```bash
+curl -s "$V/select/logsql/query" \
+  --data-urlencode 'query=_time:24h source:=nginx AND status:>=500 | limit 20'
+```
+
+### Two things to know when operating it
+
+**Retention is two limits, and the disk one is not a wall.** `VLOGS_RETENTION`
+drops lines by age; `VLOGS_RETENTION_SIZE` drops whole per-day partitions,
+oldest first. The documented caveats are real: usage can exceed the ceiling
+between two checks, at least the last two days are kept whatever it says, and
+below roughly 20 % free disk VictoriaLogs turns itself read-only. So
+`WhiskyDiskFilling` stays the real guard, exactly as it is for
+`PROM_RETENTION_SIZE`.
+
+**A Vector restart loses container lines for the length of the gap.** The
+Docker API source keeps no read offset (`vectordotdev/vector#7358`), so it
+resumes from the moment Vector starts rather than from where it left off. The
+file sources do checkpoint, in the `vector_data` volume. What makes the gap
+acceptable is the `logging:` block added to `../docker-compose.yaml` in the
+same change: those json files are still on disk for `docker logs` across it.
 
 ## When something fires
 
@@ -236,12 +430,20 @@ This is the number the API's original ceiling was diagnosed by.
 
 ## Cost
 
-Eight containers, of which Prometheus is the only heavy one: 15 days of
-retention at these intervals is a few hundred megabytes, on the same disk as
-`pg_data` — which is why disk usage is itself alerted, and why
-`PROM_RETENTION_SIZE` is a second ceiling in case a cardinality mistake
-outruns the time-based one.
+Ten containers, of which two hold state. Prometheus keeps 15 days at these
+intervals — a few hundred megabytes — and VictoriaLogs keeps 30 days of this
+fleet's logs, which compresses to single-digit gigabytes. Both sit on the same
+disk as `pg_data`, which is why disk usage is itself alerted and why each has
+a size ceiling as well as a time one, in case a cardinality mistake outruns
+the time-based limit.
+
+Vector is ~150 MiB of RAM and a fraction of a core. It and VictoriaLogs are
+the only two containers here with memory limits — an inconsistency worth
+naming rather than hiding — and Vector alone has a CPU ceiling, because the
+one thing it does that can peg a core is its first read of a large file, on a
+host whose eight cores the load tests already named as the constraint.
 
 On the application side the cost is two hook callbacks and one histogram
 observation per request, against the ~8.5 ms of CPU a cached report page
-already spends.
+already spends. Logging got marginally _cheaper_: `LOG_JSON=true` means pino
+installs no `pino-pretty` transport at all.

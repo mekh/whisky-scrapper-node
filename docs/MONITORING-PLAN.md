@@ -518,8 +518,10 @@ age, offers in stock, and whether the last run was incomplete.
 - **On the host**: eight containers, of which Prometheus is the only heavy
   one. Retention is 15 days at these intervals — a few hundred megabytes on
   the same disk as `pg_data`, which is why disk usage is itself alerted.
-- **What this does not do**: no tracing, no log aggregation. Both are
-  defensible next steps and neither is in this scope.
+- **What this does not do**: no tracing. Log aggregation was also out of
+  scope here and has since been built — see
+  [`LOGS-PLAN.md`](LOGS-PLAN.md), which revisits §11's assumption and lands on
+  VictoriaLogs rather than the Loki named there.
 
 ## 10. Checkpoints
 
@@ -549,9 +551,14 @@ in particular changed no HAProxy directive at all.
 - **Tracing.** The request path is short and the interesting latency is
   already attributable to a route, a cache result and a query id. OpenTelemetry
   would be the way to do it and is its own project.
-- **Log aggregation.** Loki beside Grafana is the obvious pairing and the
-  per-sync log files under `./log` are the obvious first source. Out of scope,
-  and noted so it is a decision rather than an omission.
+- **Log aggregation.** ~~Loki beside Grafana is the obvious pairing~~ — done
+  on 2026-09-16, and **not with Loki**. The per-sync log files under `./log`
+  were indeed one of the three first sources. The pairing this document called
+  obvious did not survive contact with the evidence: Loki removed Promtail
+  outright in 3.7.3 and its replacement wants ten times the CPU of the
+  alternatives on a host already short of cores. See
+  [`LOGS-PLAN.md`](LOGS-PLAN.md) §2 for the argument and the operator reports
+  it rests on.
 - **Business metrics on the price data itself.** `/dashboard/*` already
   answers those questions with SQL against the real history, and duplicating
   them as Prometheus series would give worse answers with worse retention.

@@ -1,0 +1,590 @@
+# What Vector collects on this host, and what it does to each line before
+# VictoriaLogs stores it.
+#
+# Three sources with three different shapes (docs/LOGS-PLAN.md §4), one sink.
+# The rule that runs through every transform below: **an unparseable line is
+# kept, never dropped.** A pipeline that silently discards what it cannot
+# parse is the single most common complaint operators have about the
+# alternative to this stack, and it would be self-inflicted here.
+
+# Where the `file` sources keep their read offsets. Backed by a named volume
+# in infra/docker-compose.monitoring.yaml: with an empty checkpoint directory
+# Vector re-reads every file inside its `ignore_older_secs` window and ships
+# it a second time.
+data_dir: /var/lib/vector
+
+# Load-bearing, not decorative. `parse_timestamp` resolves a format carrying
+# no UTC offset in THIS timezone, and two of the three sources hand it exactly
+# that: the per-sync logs (a bare `HH:MM:SS`) and nginx's error log
+# (`2026/09/16 14:32:01`). Both are written by containers with no `TZ` set,
+# which is UTC, and the application treats UTC calendar days as canonical
+# everywhere else. Left unset this would follow the host's local time and
+# every such line would land at the wrong hour.
+timezone: UTC
+
+sources:
+  # ------------------------------------------------------------------ docker
+  # Read over the Docker API rather than by tailing
+  # /var/lib/docker/containers/*/*-json.log: those paths carry container ids
+  # only, so the labels would be useless without asking the API anyway, and
+  # then there would be two mechanisms instead of one.
+  docker:
+    type: docker_logs
+    # MATCHING IS BY PREFIX, on the name or the id. That is why each entry is
+    # spelled out instead of the one `whisky-` that would cover them all —
+    # `whisky-` also matches whisky-prom, whisky-grafana, whisky-alerts,
+    # whisky-cadvisor and the three exporters, and a collector that ships its
+    # own output is a feedback loop worth not having.
+    #
+    # `whisky-be` covers the replicas (whisky-be-1..N) and, deliberately,
+    # whisky-be-migrate — a failed migration is worth having in here.
+    #
+    # `whisky-cache` does not match whisky-cadvisor: the common prefix is
+    # `whisky-ca`, and this is the longer string.
+    include_containers:
+      - whisky-be
+      - whisky-lb
+      - whisky-db
+      - whisky-valkey
+      - whisky-cache
+      # The edge, and the one entry here that is not a `whisky-` container.
+      # It earns its place because it covers the failure the nginx FILE source
+      # structurally cannot: this container writes its access and error logs
+      # to files, so a config test that fails on reload, or a container that
+      # cannot start at all, appears on stdout and NOWHERE in those files.
+      # That is the "why is the site down" case.
+      #
+      # Its stdout therefore arrives as `source:docker` with
+      # `container_name:nginx-proxy`, while its request logs arrive as
+      # `source:nginx`. Two different questions, deliberately two answers:
+      # one is about the process, the other about the traffic.
+      - nginx-proxy
+    # Insurance, because exclusions win over inclusions: if the list above is
+    # ever widened to the one `whisky-` that would be tempting, this is what
+    # stops Vector ingesting its own output and VictoriaLogs' — a loop that
+    # adds a line on every pass.
+    exclude_containers:
+      - whisky-vector
+      - whisky-vlogs
+    # THE COST OF THIS SOURCE, STATED PLAINLY: `docker_logs` keeps no
+    # checkpoint (vectordotdev/vector#7358). It reads from Vector's own start
+    # time, so a Vector restart loses whatever these containers printed while
+    # it was down, and a container that starts before Vector loses its first
+    # lines. What makes that acceptable is the `logging:` block added to
+    # ../docker-compose.yaml in the same change: those json files are still on
+    # disk for `docker logs` across the gap.
+    #
+    # Docker splits any line over 16 KB into partial chunks, and a pino record
+    # carrying an `err.stack` crosses that. Merging them is the default; it is
+    # written down because it is what keeps such a record out of the
+    # `parse_error` branch below, and that count is a verification gate.
+    auto_partial_merge: true
+
+  # ------------------------------------------------------------------- nginx
+  # nginx here is a container (`nginx-proxy`) that writes files rather than
+  # stdout, so this reads the host directory it bind-mounts.
+  nginx:
+    type: file
+    include:
+      - /var/log/nginx/access.log
+      - /var/log/nginx/error.log
+    # From the END, and this is the one setting that keeps the first start
+    # sane: these files have not been rotated since March 2023 — 1.25 GB and
+    # 877 MB as of docs/OUTAGE-2026-08-30-HANDOFF.md — and back-filling them
+    # would spend hours of CPU and most of the disk ceiling on data nobody
+    # will query by label. The old content stays on disk and stays greppable.
+    read_from: end
+
+  # -------------------------------------------------------------------- sync
+  # The application's per-run scrape logs. From the BEGINNING, unlike nginx:
+  # a run writes its file and never touches it again, so `end` would mean a
+  # finished run is never ingested at all. The whole retained history is
+  # tens of kilobytes per day, so the first start reading all of it is the
+  # point rather than a cost — cross-run search is what this source is for.
+  sync:
+    type: file
+    include:
+      - /app/log/*.log
+    # Comfortably inside -retentionPeriod, not equal to it: a line older than
+    # VictoriaLogs' retention is dropped AT INGESTION and the insert is still
+    # answered 200 with an empty body, so replaying a 30-day-old file would
+    # silently store nothing. Seven days also means a Vector outage longer
+    # than a week loses the files it spans, which is the accepted cost.
+    #
+    # mtime is a meaningful age here, unlike for nginx: a run writes its file
+    # and never touches it again. The `*.log` glob is also what keeps the
+    # stray `gen-verify-inputs.ts` in that directory out of this source.
+    ignore_older_secs: 604800
+    fingerprint:
+      # `device_and_inode`, NOT the default checksum-of-the-first-line, and
+      # this one is load-bearing. The first line of one of these files is
+      # `15:41:33 INFO    === Sync started for silpo (…) ===` — a clock and a
+      # slug and nothing else. Two runs of the same store beginning at the
+      # same HH:MM:SS on different days therefore checksum identically, and
+      # Vector would treat the second file as one it had already read and skip
+      # it in silence.
+      #
+      # Raising `fingerprint.lines` is not the fix: Vector will not read a
+      # file with fewer lines than it needs to fingerprint, so a two-line
+      # failure log — the most interesting file in the directory — would never
+      # be ingested at all.
+      #
+      # The counter-risk, stated: the application's 30-day sweep unlinks these
+      # files and the filesystem may reuse an inode. That is the narrower of
+      # the two problems, and these files are written once and never rotated,
+      # which is exactly the case inode identity suits.
+      strategy: device_and_inode
+    # Oldest run first, so a backfill arrives in chronological order.
+    oldest_first: true
+    # The default of 102400 DISCARDS an event over the limit rather than
+    # truncating it, and the multiline block below deliberately produces one
+    # long event per failure — a folded stack trace.
+    max_line_bytes: 1048576
+    # A failure writes a multi-line stack trace whose frames carry no clock of
+    # their own. Folding them into the timestamped line they belong to makes
+    # the trace and its ERROR one event, instead of an ERROR followed by
+    # orphans that have to be placed by hand. The same pattern in both slots
+    # is the idiom for "every message begins with a timestamp"; the level is
+    # padded to seven characters, hence one space after WARNING and four
+    # after INFO.
+    multiline:
+      start_pattern: '^[0-9]{2}:[0-9]{2}:[0-9]{2} (INFO|DEBUG|WARNING|ERROR) '
+      condition_pattern: '^[0-9]{2}:[0-9]{2}:[0-9]{2} (INFO|DEBUG|WARNING|ERROR) '
+      mode: halt_before
+      timeout_ms: 1000
+
+  internal_metrics:
+    type: internal_metrics
+
+transforms:
+  # A log pipeline that has quietly stopped looks exactly like a quiet week,
+  # so every transform tags its own origin. `source` is one of three values
+  # and is the first of the three stream fields — see the sink.
+  docker_parsed:
+    type: remap
+    # Both pinned false, which is what makes the promise in this
+    # file's header true rather than merely stated: `drop_on_abort`
+    # DEFAULTS TO TRUE, and `string!()` aborts on a missing or
+    # wrongly-typed field. Without these a bug in a program below
+    # would silently delete log lines instead of passing them
+    # through unparsed.
+    drop_on_error: false
+    drop_on_abort: false
+    inputs: [docker]
+    source: |
+      .source = "docker"
+
+      # The API replicas write pino JSON (LOG_JSON=true, pinned in
+      # docker-compose.yaml). Postgres, Valkey and HAProxy write plain text on
+      # the same socket, so parse optimistically and keep the raw line when it
+      # is not JSON.
+      parsed, err = parse_json(to_string(.message) ?? "")
+      if err == null && is_object(parsed) {
+        # Flattened to the top level rather than nested under `message`, so a
+        # query reads `level:error` and not `message.level:error`. Merging
+        # keeps every field pino emitted, `err` and its stack above all —
+        # which is the content somebody will actually come here for.
+        . = merge(., object!(parsed))
+        # Only once the text has somewhere else to live. `.message` still
+        # holds the raw JSON at this point, and pino puts its text in `msg` —
+        # but a record that carried a `message` key of its own would have just
+        # been merged into this field, and deleting that would throw away the
+        # one thing the line was for.
+        if exists(.msg) {
+          del(.message)
+        }
+        # pino stamps these on every line and neither says anything the
+        # container name does not already say.
+        del(.pid)
+        del(.hostname)
+
+        # pino's `time` is when the application logged; Vector's own timestamp
+        # is when Docker handed the line over. Prefer the former.
+        if exists(.time) {
+          stamped, tserr = parse_timestamp(string!(.time), "%+")
+          if tserr == null {
+            .timestamp = stamped
+            del(.time)
+          }
+        }
+      }
+
+      # Docker attaches every compose label to every event, config-hash
+      # included. That hash is high-entropy, so unlike the other repeated
+      # fields here it does not compress away — it is bytes per line that
+      # answer nothing.
+      del(.label)
+
+      # Postgres writes `2026-09-16 12:00:00.123 UTC [412] ERROR:  …` —
+      # log_line_prefix is `%m [%p] ` at the default. Only the severity is
+      # lifted, because ERROR/FATAL against LOG is the entire reason to read
+      # this container, and it joins the one `level` vocabulary below. The
+      # timestamp is left to Docker's, which is the same instant to within a
+      # millisecond and needs no timezone assumption.
+      #
+      # HAProxy is deliberately left unparsed: `option dontlog-normal` in
+      # infra/haproxy/haproxy.cfg means a line from it is already a failure
+      # worth reading whole, and splitting `option httplog`'s positional
+      # fields here would be a second, divergent copy of the nginx parsing
+      # below.
+      if .container_name == "whisky-db" {
+        pg, pgErr = parse_regex(to_string(.message) ?? "", r'\[[0-9]+\] (?P<level>[A-Z]+):')
+        if pgErr == null {
+          .level = downcase(to_string(pg.level))
+        }
+      }
+
+      # One level vocabulary across all three sources, so a single Grafana
+      # filter covers the lot. pino already says warn; Postgres and the sync
+      # writer both say WARNING.
+      if .level == "warning" {
+        .level = "warn"
+      }
+
+  nginx_parsed:
+    type: remap
+    # Both pinned false, which is what makes the promise in this
+    # file's header true rather than merely stated: `drop_on_abort`
+    # DEFAULTS TO TRUE, and `string!()` aborts on a missing or
+    # wrongly-typed field. Without these a bug in a program below
+    # would silently delete log lines instead of passing them
+    # through unparsed.
+    drop_on_error: false
+    drop_on_abort: false
+    inputs: [nginx]
+    source: |
+      .source = "nginx"
+
+      # One source, two formats, told apart by the file they came from.
+      #
+      # The call is written out twice rather than once with the format in a
+      # variable, because `parse_nginx_log` requires that argument to be a
+      # LITERAL and rejects a variable at compile time. Worth knowing before
+      # anyone tidies this into the shorter-looking form.
+      #
+      # `combined` brings an absolute timestamp carrying an offset; `error`
+      # brings a naive one, resolved as UTC by the `timezone` at the top of
+      # this file. Either way merging it replaces Vector's ingest time with
+      # the time the request was actually served.
+      if ends_with(string!(.file), "error.log") {
+        .kind = "error"
+        parsed, err = parse_nginx_log(string!(.message), format: "error")
+        if err == null {
+          . = merge(., object(parsed))
+        }
+      } else {
+        .kind = "access"
+        parsed, err = parse_nginx_log(string!(.message), format: "combined")
+        if err == null {
+          . = merge(., object(parsed))
+        }
+      }
+
+      # `.message` is deliberately NOT deleted here. The `error` format
+      # returns a `message` field of its own, which the merge has just put in
+      # the right place; the `combined` format returns none, and there the raw
+      # line is the most readable thing to show beside the parsed fields.
+
+  sync_parsed:
+    type: remap
+    # Both pinned false, which is what makes the promise in this
+    # file's header true rather than merely stated: `drop_on_abort`
+    # DEFAULTS TO TRUE, and `string!()` aborts on a missing or
+    # wrongly-typed field. Without these a bug in a program below
+    # would silently delete log lines instead of passing them
+    # through unparsed.
+    drop_on_error: false
+    drop_on_abort: false
+    inputs: [sync]
+    source: |
+      .source = "sync"
+
+      # The hard part of this source: a line carries a clock and nothing else,
+      # and THE DATE EXISTS ONLY IN THE FILENAME —
+      # <YYYY-MM-DD>_<HH-MM-SS>_<slug>.log. So both have to be read and
+      # recombined. `SyncFileLogTime` writes both with getHours()/getDate(),
+      # i.e. the container's local time, which is UTC because no `TZ` is set
+      # on the `be` service; the `timezone` at the top of this file is the
+      # other half of that agreement. If `TZ` is ever set there, this
+      # transform and that utility drift apart and every line below lands at
+      # the wrong hour.
+      name, nameErr = parse_regex(
+        string!(.file),
+        r'(?P<day>\d{4}-\d{2}-\d{2})_(?P<start>\d{2}-\d{2}-\d{2})_(?P<store>[A-Za-z0-9_-]+)\.log$'
+      )
+
+      # `HH:MM:SS LEVEL   message`, the level padded to seven characters — so
+      # one space after WARNING and four after INFO.
+      line, lineErr = parse_regex(
+        string!(.message),
+        r'^(?P<clock>\d{2}:\d{2}:\d{2}) (?P<level>[A-Z]+) +(?P<text>.*)$'
+      )
+
+      if nameErr == null {
+        # The store slug, or `full-run` for the summary file. The third and
+        # last of the stream fields.
+        .store = name.store
+      }
+
+      if lineErr == null {
+        # WARNING becomes warn, so that one `level` vocabulary spans pino,
+        # Postgres and this writer and a single Grafana filter works over all
+        # three. This is the third dialect of the same word.
+        lvl = downcase(string!(line.level))
+        .level = if lvl == "warning" {
+          "warn"
+        } else {
+          lvl
+        }
+        .message = line.text
+      }
+
+      if nameErr == null {
+        day = string!(name.day)
+        start = replace(string!(name.start), "-", ":")
+
+        if lineErr == null {
+          clock = string!(line.clock)
+          stamped, tsErr = parse_timestamp(day + "T" + clock + "Z", "%Y-%m-%dT%H:%M:%SZ")
+          if tsErr == null {
+            # A clock with no date cannot express midnight. Lines only move
+            # forward, so one whose clock is EARLIER than the run's own start
+            # belongs to the next UTC day — a manual sync begun at 23:50 is
+            # the case. Compared as integers (154416 against 154133) to stay
+            # clear of string ordering.
+            lineAt = to_int(replace(clock, ":", "")) ?? 0
+            startAt = to_int(replace(string!(name.start), "-", "")) ?? 0
+            if lineAt < startAt {
+              shifted, shiftErr = from_unix_timestamp(to_unix_timestamp(stamped) + 86400)
+              if shiftErr == null {
+                .timestamp = shifted
+              } else {
+                .timestamp = stamped
+              }
+            } else {
+              .timestamp = stamped
+            }
+          }
+        } else {
+          # A continuation line — a stack trace, which is exactly what someone
+          # will search this source for — carries no clock at all. The run's
+          # start time is a far better answer than Vector's ingest time, which
+          # would pile a month of backfill onto the moment of first start.
+          stamped, tsErr = parse_timestamp(day + "T" + start + "Z", "%Y-%m-%dT%H:%M:%SZ")
+          if tsErr == null {
+            .timestamp = stamped
+          }
+        }
+      }
+
+sinks:
+  victorialogs:
+    type: elasticsearch
+    inputs:
+      - docker_parsed
+      - nginx_parsed
+      - sync_parsed
+    # VictoriaLogs implements the Elasticsearch bulk API, which is the path
+    # VictoriaMetrics documents for Vector. The `http` sink against
+    # /insert/jsonline is the alternative and buys nothing here.
+    endpoints:
+      - http://whisky-vlogs:9428/insert/elasticsearch/
+    mode: bulk
+    api_version: v8
+    compression: gzip
+    healthcheck:
+      # Not a preference. Vector's Elasticsearch healthcheck requests an
+      # endpoint VictoriaLogs does not implement, so leaving this enabled
+      # makes the sink refuse to start.
+      enabled: false
+    request:
+      headers:
+        # THE CARDINALITY DECISION, and the one line in this file that must
+        # not be got wrong — it is the same trap the alternative to this stack
+        # was rejected for. Three fields, every one of them drawn from a
+        # closed set: `source` has three values, `container_name` about seven,
+        # `store` about twenty.
+        #
+        # Everything else — request ids, client addresses, URLs, SKUs, levels,
+        # the message itself — stays an ordinary field. Ordinary fields are
+        # fully searchable in LogsQL; they simply do not multiply streams.
+        # Adding anything per-request here is what turns this into the problem
+        # it was chosen to avoid. docs/LOGS-PLAN.md §8 has the query that
+        # checks the stream count.
+        VL-Stream-Fields: source,container_name,store
+        VL-Time-Field: timestamp
+        # A candidate list, first match wins: pino lines carry `msg`, and
+        # everything else carries Vector's `message`.
+        VL-Msg-Field: msg,message
+
+  # Vector watching itself. This is the more valuable of the two Prometheus
+  # targets this change adds: a collector that has stopped collecting is
+  # indistinguishable from a quiet host unless something counts the events it
+  # forwards. Scraped at whisky-vector:9598 by infra/prometheus/prometheus.yml
+  # and not published to the host.
+  vector_metrics:
+    type: prometheus_exporter
+    inputs: [internal_metrics]
+    address: 0.0.0.0:9598
+
+# =============================================================================
+# Unit tests — and these, not `vector validate`, are the gate for this file.
+#
+# `validate` does NOT type-check VRL inside a transform
+# (vectordotdev/vector#15037), so a program that compiles and then produces
+# entirely the wrong fields passes it. These run the real transforms against
+# real sample lines taken from this deployment.
+#
+#   docker run --rm -v "$PWD/infra/vector:/etc/vector:ro" \
+#     timberio/vector:0.58.0-debian test /etc/vector/vector.yaml
+# =============================================================================
+
+tests:
+  - name: a pino record keeps its own ISO time and its string level
+    inputs:
+      - insert_at: docker_parsed
+        type: log
+        log_fields:
+          container_name: whisky-be-2
+          stream: stdout
+          message: '{"level":"warn","time":"2026-09-16T10:11:12.345Z","pid":1,"hostname":"7f3a","msg":"ReportService: cache generation bump failed"}'
+    outputs:
+      - extract_from: docker_parsed
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.source, "docker")
+              assert_eq!(.level, "warn")
+              assert_eq!(.msg, "ReportService: cache generation bump failed")
+              assert_eq!(.container_name, "whisky-be-2")
+              assert!(is_timestamp(.timestamp))
+              assert!(!exists(.message))
+              assert!(!exists(.pid))
+
+  - name: a non-JSON replica line is kept rather than dropped
+    inputs:
+      - insert_at: docker_parsed
+        type: log
+        log_fields:
+          container_name: whisky-be-1
+          message: 'INFO: something pino-pretty printed'
+    outputs:
+      - extract_from: docker_parsed
+        conditions:
+          - type: vrl
+            source: |
+              assert!(contains(string!(.message), "pino-pretty printed"))
+
+  - name: postgres severity is lifted into the shared level vocabulary
+    inputs:
+      - insert_at: docker_parsed
+        type: log
+        log_fields:
+          container_name: whisky-db
+          message: '2026-09-16 12:00:00.123 UTC [412] ERROR:  duplicate key value violates unique constraint'
+    outputs:
+      - extract_from: docker_parsed
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: nginx combined splits, and the client stays an ordinary field
+    inputs:
+      - insert_at: nginx_parsed
+        type: log
+        log_fields:
+          file: /var/log/nginx/access.log
+          message: '203.0.113.7 - - [16/Sep/2026:12:00:00 +0000] "GET /api/report/catalog?page=2 HTTP/1.1" 200 4931 "https://example.test/" "Mozilla/5.0"'
+    outputs:
+      - extract_from: nginx_parsed
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.source, "nginx")
+              assert_eq!(.kind, "access")
+              assert_eq!(.status, 200)
+              assert_eq!(.client, "203.0.113.7")
+              assert!(is_timestamp(.timestamp))
+
+  # THE TEST THAT MATTERS: the date comes from the PATH, the clock from the
+  # LINE, and the two are joined. Nothing else in this pipeline can produce a
+  # plausible-looking wrong answer.
+  - name: a sync line takes its date from the file name
+    inputs:
+      - insert_at: sync_parsed
+        type: log
+        log_fields:
+          file: /app/log/2026-08-22_15-41-33_silpo.log
+          message: '15:41:53 WARNING Stock dropped sharply: 227 in stock vs 805 stored.'
+    outputs:
+      - extract_from: sync_parsed
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.store, "silpo")
+              assert_eq!(.level, "warn")
+              assert_eq!(.message, "Stock dropped sharply: 227 in stock vs 805 stored.")
+              assert_eq!(.timestamp, t'2026-08-22T15:41:53Z')
+
+  - name: a padded INFO keeps its separator spaces out of the message
+    inputs:
+      - insert_at: sync_parsed
+        type: log
+        log_fields:
+          file: /app/log/2026-08-22_15-41-33_silpo.log
+          message: '15:41:33 INFO    === Sync started for silpo (tier 1, cron) ==='
+    outputs:
+      - extract_from: sync_parsed
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+              assert_eq!(.message, "=== Sync started for silpo (tier 1, cron) ===")
+
+  - name: the full-run summary is a store slug's peer
+    inputs:
+      - insert_at: sync_parsed
+        type: log
+        log_fields:
+          file: /app/log/2026-08-22_12-00-01_full-run.log
+          message: '12:00:01 INFO    === Full sync started: 22 stores, 12 tracks ==='
+    outputs:
+      - extract_from: sync_parsed
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.store, "full-run")
+              assert_eq!(.timestamp, t'2026-08-22T12:00:01Z')
+
+  # The midnight case: a manual sync begun before UTC midnight. The clock is
+  # EARLIER than the run's own start, so the line belongs to the next day.
+  - name: a line past midnight is placed on the following day
+    inputs:
+      - insert_at: sync_parsed
+        type: log
+        log_fields:
+          file: /app/log/2026-08-22_23-50-00_rozetka.log
+          message: '00:03:12 INFO    === Sync finished for rozetka in 13m ==='
+    outputs:
+      - extract_from: sync_parsed
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.timestamp, t'2026-08-23T00:03:12Z')
+
+  - name: an unparsed sync line is kept and anchored at the run start
+    inputs:
+      - insert_at: sync_parsed
+        type: log
+        log_fields:
+          file: /app/log/2026-08-22_15-41-33_silpo.log
+          message: '    at ScrapeService.collect (/app/dist/scrape/scrape.service.js:118:23)'
+    outputs:
+      - extract_from: sync_parsed
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.store, "silpo")
+              assert!(contains(string!(.message), "ScrapeService.collect"))
+              assert_eq!(.timestamp, t'2026-08-22T15:41:33Z')

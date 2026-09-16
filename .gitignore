@@ -38,3 +38,8 @@ infra/alertmanager/*.local.yaml
 # The monitoring project's own environment, which carries the Grafana admin
 # password and the database credentials its exporter uses.
 infra/.env
+
+# Unpacked Grafana plugins, for a host that cannot reach grafana.com.
+# The directory is mounted read-only; what lands in it is a release artifact.
+infra/grafana/plugins/*
+!infra/grafana/plugins/.gitkeep

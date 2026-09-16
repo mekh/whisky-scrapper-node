@@ -124,6 +124,57 @@ Two smaller notes for the same deploy:
   repository does not undo it — if the block was copied to the host, put the
   previous server block back by hand.
 
+## 0.3 One-time: the log stack deploy (2026-09-16)
+
+Two containers joined the **monitoring** compose project — VictoriaLogs and
+Vector — and that half is purely additive, exactly as §0.2 describes: `docker
+compose -f infra/docker-compose.monitoring.yaml down` touches nothing the
+application uses, and neither volume holds anything the application needs.
+
+**Two changes landed in the application's own `docker-compose.yaml`, and
+neither is a trap:**
+
+- **`logging:` blocks on all six services** (`json-file`, `max-size: 20m`,
+  `max-file: 3`). Purely additive and independently useful — it was an
+  outstanding item in three load-test documents before this. Rolling it back
+  restores unbounded log growth, which is the thing to _avoid_ rolling back.
+- **`LOG_JSON=false` became `true`.** Rolling the repository back restores
+  `false`, and **nothing breaks when it does.** The collector's Docker
+  transform parses optimistically and keeps the raw line when the parse fails,
+  so pino-pretty output arrives as plain text with its message intact — it
+  simply stops being filterable by `level` and `context`. That degradation is
+  by design; see `infra/vector/vector.yaml`.
+
+**The one thing to be careful with is `-v`**, and it is a nuisance rather than
+a loss:
+
+```bash
+# Fine — stops the log stack, keeps everything.
+docker compose -f infra/docker-compose.monitoring.yaml down
+
+# NOT this. It destroys `vector_data`, which holds the collector's read
+# offsets, so on the next start Vector re-reads every file inside its
+# ignore window and ships those lines a second time.
+docker compose -f infra/docker-compose.monitoring.yaml down -v
+```
+
+Duplicate lines, not missing ones — and `victorialogs_data` goes with it,
+which is the stored history. The same "never `-v`" rule §0.2 and
+`docker-compose.yaml` already state for the application's data volumes.
+
+Three smaller notes for the same deploy:
+
+- The Grafana plugin installs into the `grafana_data` volume, so rolling the
+  repository back removes the provisioned datasource file but leaves the
+  plugin in place. Harmless: an installed plugin with no datasource does
+  nothing.
+- `infra/.env` gains nine variables. A rollback leaves them set and unread,
+  which is also harmless — but if `GRAFANA_PLUGINS_PREINSTALL` was set to the
+  empty string for the offline path, remember that the plugin then lives in
+  `infra/grafana/plugins/`, which is git-ignored and survives a checkout.
+- Nothing in `src/` changed and no migration shipped, so there is no database
+  half to this deploy at all.
+
 ## 1. Pre-flight (mandatory, BEFORE the upgrade)
 
 Everything below is cheap; do all of it. It is what makes the rollback paths

@@ -65,14 +65,55 @@ services:
       - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://192.168.180.1:3000}
       - GF_ANALYTICS_REPORTING_ENABLED=false
       - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      # The VictoriaLogs datasource, and three deliberate choices in one line.
+      #
+      # NOT `GF_INSTALL_PLUGINS`: deprecated in Grafana 12.1.0, which is
+      # exactly the version above, and it carries a known bug where a newer
+      # plugin version is not upgraded unless the installed one is removed by
+      # hand.
+      #
+      # The `_SYNC` form and not the plain one, which is a correctness
+      # requirement rather than a preference: datasource provisioning runs
+      # during startup, so the asynchronous form races it and loses — Grafana
+      # finishes provisioning before the plugin exists, the datasource never
+      # registers, and every query answers `datasource not found` until
+      # somebody restarts the container.
+      #
+      # Pinned like every image tag here; bump it with the Grafana tag above.
+      # The plugin requires Grafana >= 10.4.0 and is signed, so no
+      # unsigned-plugin allowance is needed on either install path.
+      #
+      # A VARIABLE, because the value is where a deployment answers the
+      # firewall question: it is fetched from grafana.com at container start,
+      # `DOCKER-USER` on this host is a whitelist ending in LOG + DROP, and
+      # every dropped packet writes a kernel line `psad` reads as a port scan
+      # — the mechanism behind the 2026-08-30..09-05 outages. Worse than a
+      # missing panel, because `_SYNC` blocks startup and RETRIES, so a
+      # blocked download is a sustained stream of them rather than one packet.
+      # Set it EMPTY to take the offline path below; otherwise Grafana reaches
+      # for the network even with the plugin already mounted.
+      # infra/README.md has the pre-flight check.
+      - GF_PLUGINS_PREINSTALL_SYNC=${GRAFANA_PLUGINS_PREINSTALL:-victoriametrics-logs-datasource@0.32.0}
+      # A plugin directory of its own rather than the default
+      # /var/lib/grafana/plugins, so that the offline mount below is a plain
+      # bind and not a read-only bind nested inside the grafana_data volume.
+      - GF_PATHS_PLUGINS=/var/lib/grafana-plugins
     volumes:
       # Provisioned from files, so no dashboard exists only inside somebody's
       # browser and every change is a diff.
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
+      # The offline path for the plugin above. Empty in a deployment that
+      # downloads it; holding the unpacked OFFICIAL release zip in one that
+      # cannot reach grafana.com. Official, not a source build: the release
+      # carries the MANIFEST.txt that makes the plugin signed, and without it
+      # Grafana refuses to load it. See infra/README.md.
+      - ${GRAFANA_PLUGINS_DIR:-./grafana/plugins}:/var/lib/grafana-plugins:ro
     depends_on:
       prometheus:
+        condition: service_started
+      victorialogs:
         condition: service_started
     ports:
       - '${MON_BIND_IP:-192.168.180.1}:${GRAFANA_BIND_PORT:-3000}:3000'
@@ -106,6 +147,143 @@ services:
       - '${MON_BIND_IP:-192.168.180.1}:${ALERTMANAGER_BIND_PORT:-9093}:9093'
     networks:
       - whisky_monitoring
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------- logs
+  #
+  # The log half of this stack, added 2026-09-16. VictoriaLogs stores and
+  # queries; Vector collects. Why this and not Loki is argued in
+  # docs/LOGS-PLAN.md §2 — the short version is that Loki removed Promtail
+  # outright in 3.7.3 and its replacement wants ten times the CPU of the
+  # alternatives on a host whose eight cores are already oversubscribed, and
+  # that Loki's cardinality model is a foot-gun this project does not need.
+  victorialogs:
+    container_name: whisky-vlogs
+    # No `-victorialogs` tag suffix. That was the convention while the code
+    # lived in the VictoriaMetrics monorepo; the repository split in July 2025
+    # and the tags are plain `v1.52.0` now. Every older tutorial still shows
+    # the suffix, and such a tag does not exist.
+    image: victoriametrics/victoria-logs:v1.52.0
+    command:
+      - --storageDataPath=/victoria-logs-data
+      # Two ceilings, exactly as Prometheus has two, and for the same reason:
+      # this data shares a disk with `pg_data`, the session Valkey's AOF, the
+      # bind-mounted `./log` and the Prometheus TSDB, and the only guard on
+      # that disk is an 85 %-full alert.
+      #
+      # Thirty days matches SYNC_LOG_RETENTION_DAYS, so the searchable window
+      # and the on-disk sync files expire together.
+      - --retentionPeriod=${VLOGS_RETENTION:-30d}
+      # The second ceiling is by bytes rather than by percent because the two
+      # disk flags are MUTUALLY EXCLUSIVE — `-retention.maxDiskUsagePercent`
+      # refuses to start alongside this one — and an absolute number is the
+      # one that reads the same as PROM_RETENTION_SIZE beside it.
+      - --retention.maxDiskSpaceUsageBytes=${VLOGS_RETENTION_SIZE:-8GB}
+    volumes:
+      - victorialogs_data:/victoria-logs-data
+    ports:
+      # Published, unlike the exporters, and deliberately: VictoriaLogs ships
+      # its own log-explorer UI on this port, which is the whole answer if the
+      # Grafana datasource plugin cannot be downloaded on this host (see
+      # infra/README.md — grafana.com is a destination the DOCKER-USER
+      # whitelist has never been asked about). It is also what the
+      # verification queries in docs/LOGS-PLAN.md §8 address.
+      - '${MON_BIND_IP:-192.168.180.1}:${VLOGS_BIND_PORT:-10428}:9428'
+    networks:
+      # Its own network only. Vector, Grafana and Prometheus all reach it
+      # here; nothing on the application's networks talks to it.
+      - whisky_monitoring
+    # No healthcheck, which is the house pattern here — seven of the eight
+    # services above have none either. VictoriaLogs documents no health
+    # endpoint, and inventing a probe against `/metrics` would be a second,
+    # weaker answer to a question Prometheus already answers properly: the
+    # `victorialogs` scrape job reads `up`, and that is what alerts.
+    deploy:
+      resources:
+        limits:
+          # VictoriaMetrics products read the cgroup limit and size their
+          # caches to a share of it, so this is a working budget rather than
+          # only a backstop.
+          memory: ${VLOGS_MEMORY_LIMIT:-1024M}
+    # In-memory rows are flushed on a timer and on SIGTERM. Long enough for
+    # that flush to finish rather than being killed at the default ten
+    # seconds with rows still unwritten.
+    stop_grace_period: 60s
+    restart: unless-stopped
+
+  vector:
+    container_name: whisky-vector
+    image: timberio/vector:0.58.0-debian
+    # Debian rather than alpine or distroless: this container reads
+    # bind-mounted host files, and a shell is worth having the first time a
+    # permission question comes up.
+    #
+    # Vector rather than the lighter `vlagent` (28 MiB) or Fluent Bit
+    # (78 MiB), which on this host is a real argument and is overruled by one
+    # source: the per-sync scrape logs carry their date only in the FILENAME,
+    # so the collector has to lift a field out of the file path and combine it
+    # with a clock-only timestamp. VRL does that in a few readable lines;
+    # vlagent does no custom format parsing at all. See docs/LOGS-PLAN.md §4.3
+    # — if those files ever leave scope, vlagent becomes the obvious swap.
+    command:
+      - --config
+      - /etc/vector/vector.yaml
+    # Root, for two reasons that are both about reading rather than writing:
+    # the Docker socket, and nginx's log files, which are root-owned 0640.
+    # Vector's own documentation says the process must be able to run `docker`.
+    user: root
+    volumes:
+      - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
+      # The same socket cAdvisor already has, and justified the same way:
+      # terminates no public traffic, publishes nothing — the distinction from
+      # the Traefik case this socket was refused for.
+      #
+      # Said honestly, because the flag invites the wrong conclusion: `:ro`
+      # makes the SOCKET FILE unwritable and does NOT make the Docker API
+      # read-only. Whatever holds this socket is root on the host. What bounds
+      # the exposure is the rest of this service — read-only mounts, no
+      # published port, one network, nothing on the request path — and not
+      # this flag.
+      #
+      # NB: VictoriaMetrics' own reference compose also mounts
+      # /var/lib/docker, and that is NOT needed. Vector's `docker_logs` source
+      # streams from the Docker API over this socket; the data root buys
+      # nothing and is a needless second exposure.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # The application's per-run scrape logs. Read-only rather than
+      # read-write: Vector must never be able to disturb the files the
+      # 30-day retention sweep and `GET /store/:slug/sync-log/:id/file`
+      # depend on. Relative to this file, so `infra/../log`.
+      - ../log:/app/log:ro
+      # The nginx access and error logs. nginx here is a container
+      # (`nginx-proxy`) that writes files rather than stdout, so this is the
+      # host path it bind-mounts — confirm it with
+      # `docker inspect nginx-proxy --format '{{json .Mounts}}'` before the
+      # first deploy, which is why it is a variable and not a literal.
+      - ${NGINX_LOG_DIR:-/var/log/nginx}:/var/log/nginx:ro
+      # Vector's read checkpoints. A named volume rather than nothing: on a
+      # container recreate an empty checkpoint directory makes Vector re-read
+      # every file inside its `ignore_older_secs` window and ship it twice.
+      - vector_data:/var/lib/vector
+    depends_on:
+      victorialogs:
+        condition: service_started
+    networks:
+      - whisky_monitoring
+    deploy:
+      resources:
+        limits:
+          memory: ${VECTOR_MEMORY_LIMIT:-384M}
+          # A CPU ceiling, which nothing else in this file has, and the reason
+          # it is here rather than everywhere: the 2026-09-13 ladders named
+          # eight cores shared by three Node replicas, Postgres, two Valkeys
+          # and HAProxy as the constraint, and the one thing Vector does that
+          # can peg a core is exactly what happens on a first start — reading
+          # a large file and gzipping it.
+          cpus: '${VECTOR_CPU_LIMIT:-0.75}'
+    # Vector flushes its sinks on SIGTERM. Long enough for a batch in flight
+    # to drain rather than being killed with events still buffered.
+    stop_grace_period: 30s
     restart: unless-stopped
 
   node-exporter:
@@ -246,3 +424,5 @@ volumes:
   prometheus_data:
   grafana_data:
   alertmanager_data:
+  victorialogs_data:
+  vector_data:

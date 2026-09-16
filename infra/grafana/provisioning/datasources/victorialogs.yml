@@ -1,0 +1,33 @@
+# The log datasource, added 2026-09-16. A second file rather than a second
+# entry in `prometheus.yml`, so that a deployment which cannot install the
+# plugin (see below) can drop this one file and leave the metrics datasource
+# untouched.
+#
+# `type` here is a PLUGIN id, unlike the built-in `prometheus` next door, and
+# the plugin has to be present before Grafana can resolve it — otherwise the
+# datasource provisions but every query answers "datasource not found". The
+# plugin is installed by `GF_PLUGINS_PREINSTALL` on the grafana service in
+# infra/docker-compose.monitoring.yaml, which downloads it from grafana.com at
+# container start. On this host that is a firewall question, not a given:
+# `DOCKER-USER` is a whitelist ending in LOG + DROP, and grafana.com is a
+# destination this container has never been asked to reach. infra/README.md
+# has the pre-flight check and the offline fallback.
+#
+# VictoriaLogs also serves its own log-explorer UI on its published port, so
+# the plugin failing is a degraded experience rather than no log search at all.
+
+apiVersion: 1
+
+datasources:
+  - name: VictoriaLogs
+    type: victoriametrics-logs-datasource
+    access: proxy
+    # Reached over the compose network. Its published port is for a person
+    # with a browser and for the verification queries in docs/LOGS-PLAN.md §8.
+    url: http://whisky-vlogs:9428
+    # Prometheus keeps `isDefault`. A panel that forgot to name its datasource
+    # should still land on metrics, which is what every existing dashboard
+    # expects.
+    isDefault: false
+    uid: whisky-victorialogs
+    editable: false

@@ -3,6 +3,7 @@ import {
   Logger,
   OnApplicationBootstrap,
   OnModuleDestroy,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import type { Pool } from 'pg';
@@ -11,6 +12,7 @@ import { PostgresDriver } from 'typeorm/driver/postgres/PostgresDriver';
 
 import { MetricsConfig } from '~config';
 import { CoreCurrencyService } from '~core/currency';
+import { DependencyHealthService } from '~domain/health';
 import { StoreService } from '~domain/store';
 import { VersionedCacheService } from '~lib/cache';
 import {
@@ -29,8 +31,9 @@ import { ErrorUtils } from '~utils';
  * Prometheus — or two of them — put the database under load nobody asked
  * for, and the endpoint is deliberately outside the rate limiter.
  *
- * Its cost is one query the API already serves on `GET /store`, plus a read
- * of the currency lookup; the pool and cache figures are in memory.
+ * Its cost is one query the API already serves on `GET /store`, a read of
+ * the currency lookup and the three health probes; the pool and cache
+ * figures are in memory.
  */
 @Injectable()
 export class MetricsCollectorService
@@ -44,6 +47,7 @@ export class MetricsCollectorService
     private readonly config: MetricsConfig,
     private readonly stores: StoreService,
     private readonly currencies: CoreCurrencyService,
+    private readonly dependencies: DependencyHealthService,
     private readonly cache: VersionedCacheService,
     private readonly cacheMetrics: CacheMetricsService,
     private readonly catalogue: CatalogueMetricsService,
@@ -100,6 +104,7 @@ export class MetricsCollectorService
     await Promise.all([
       this.readStores(),
       this.readCurrencies(),
+      this.readDependencies(),
     ]);
   }
 
@@ -171,6 +176,30 @@ export class MetricsCollectorService
       });
     } catch (error: unknown) {
       this.logger.warn('Currency gauges skipped: %s', ErrorUtils.text(error));
+    }
+  }
+
+  /**
+   * Runs the dependency probes, whose gauges are a side effect of the check.
+   *
+   * Nothing else calls them in production — HAProxy probes `/health/live`,
+   * which names no dependency, and the edge answers 404 for the two routes
+   * that do.
+   *
+   * @returns Resolves once the probes have answered.
+   */
+  private async readDependencies(): Promise<void> {
+    try {
+      await this.dependencies.check();
+    } catch (error: unknown) {
+      if (error instanceof ServiceUnavailableException) {
+        return;
+      }
+
+      this.logger.warn(
+        'Dependency gauges skipped: %s',
+        ErrorUtils.text(error),
+      );
     }
   }
 }

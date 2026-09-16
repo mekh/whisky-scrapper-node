@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { ConfigModule } from '~config';
 import { CoreCurrencyModule } from '~core/currency';
+import { DomainHealthModule } from '~domain/health';
 import { DomainStoreModule } from '~domain/store';
 import { CacheModule } from '~lib/cache';
 
@@ -20,6 +21,7 @@ import { MetricsController } from './metrics.controller';
     ConfigModule,
     CacheModule,
     CoreCurrencyModule,
+    DomainHealthModule,
     DomainStoreModule,
   ],
   controllers: [

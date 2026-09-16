@@ -2576,8 +2576,8 @@ better.
 handler that ran SQL would let a misconfigured Prometheus — or two of them —
 put the database under load nobody asked for, on a route that is deliberately
 outside the rate limiter. Its cost is one query the API already serves on
-`GET /store`, plus a read of the currency lookup; the pool and cache figures
-are in memory.
+`GET /store`, a read of the currency lookup and the three health probes; the
+pool and cache figures are in memory.
 
 **Five metrics carry most of the value**, and each makes visible a state the
 application already models and nothing outside the process could see:
@@ -2606,6 +2606,17 @@ answers `GET /health`**, so the gauge and the endpoint can never disagree
 about whether Postgres is up; two independent probes eventually would. It
 reads the indicator's `reachable` field rather than its status, because the
 cache's status is always `up` by design (see "The health routes").
+
+**The periodic collector is what runs that check** — nothing else does. The
+gauge is a side effect of answering `/health`, and in production nobody asks:
+HAProxy probes `/health/live`, which names no dependency, and the host nginx
+404s the two routes that do. Until the collector drove it the series was never
+written at all, so both Runtime panels read `No data` and `WhiskyDependencyDown`
+could not fire — a metric nothing feeds, which is the exact defect this section
+claims to guard against. A 503 from the check is an answer rather than a
+failure there (the readings are published before it throws) and is swallowed;
+anything else is logged, because that is the case where nothing was
+published.
 
 Configuration: `METRICS_ENABLED` (true — the kill switch),
 `METRICS_DEFAULT_METRICS` (true — the Node runtime defaults, of which

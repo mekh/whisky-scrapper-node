@@ -137,7 +137,11 @@ services:
 
   cadvisor:
     container_name: whisky-cadvisor
-    image: gcr.io/cadvisor/cadvisor:v0.53.0
+    # `ghcr.io/google/cadvisor`, not the `gcr.io/cadvisor/cadvisor` every older
+    # example still shows: publishing moved to GHCR at exactly v0.53.0, so
+    # gcr.io stops at v0.55.1 and answers `not found` for anything from that
+    # release on — including the version this file first pinned.
+    image: ghcr.io/google/cadvisor:v0.60.5
     # It answers the question this host actually has: which of the eight
     # processes sharing eight cores spent them. The Docker socket is how it
     # resolves container names — without it the panels are labelled by cgroup

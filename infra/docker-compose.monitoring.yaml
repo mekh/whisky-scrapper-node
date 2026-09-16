@@ -12,6 +12,26 @@
 # else is on the compose network only.
 name: whisky-monitoring
 
+# Where every service's `logging:` points. The `json-file` driver ran with no
+# rotation at all here until 2026-09-16 — unbounded, on the disk that also
+# carries `pg_data`, the session Valkey's AOF, the Prometheus TSDB and
+# VictoriaLogs itself.
+#
+# The same numbers as ../docker-compose.yaml, for the opposite reason. There
+# these files are only the buffer `docker compose logs` reads, because Vector
+# ships every line on to VictoriaLogs. Here they ARE the archive: this stack's
+# own containers are deliberately absent from Vector's Docker source — a
+# collector that ships its own output is a feedback loop (docs/LOGS-PLAN.md
+# §11) — so `docker compose -f infra/docker-compose.monitoring.yaml logs` is
+# the only place a failed plugin download, a broken exporter or a Vector sink
+# error can be read at all. That argues against sizing this down; keeping one
+# number across both files argues against sizing it up.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '20m'
+    max-file: '3'
+
 services:
   prometheus:
     container_name: whisky-prom
@@ -49,6 +69,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    logging: *logging
     restart: unless-stopped
 
   grafana:
@@ -138,6 +159,7 @@ services:
       - '${MON_BIND_IP:-192.168.180.1}:${GRAFANA_BIND_PORT:-3000}:3000'
     networks:
       - whisky_monitoring
+    logging: *logging
     restart: unless-stopped
 
   alertmanager:
@@ -166,6 +188,7 @@ services:
       - '${MON_BIND_IP:-192.168.180.1}:${ALERTMANAGER_BIND_PORT:-9093}:9093'
     networks:
       - whisky_monitoring
+    logging: *logging
     restart: unless-stopped
 
   # ---------------------------------------------------------------- logs
@@ -228,6 +251,7 @@ services:
     # that flush to finish rather than being killed at the default ten
     # seconds with rows still unwritten.
     stop_grace_period: 60s
+    logging: *logging
     restart: unless-stopped
 
   vector:
@@ -247,9 +271,13 @@ services:
     command:
       - --config
       - /etc/vector/vector.yaml
-    # Root, for two reasons that are both about reading rather than writing:
-    # the Docker socket, and nginx's log files, which are root-owned 0640.
-    # Vector's own documentation says the process must be able to run `docker`.
+    # Root, and the Docker socket is the reason: it is root-owned and
+    # group-restricted, and this container is in no matching group. Vector's
+    # own documentation says the process must be able to run `docker`.
+    #
+    # nginx's log files are NOT a second reason, though this comment claimed
+    # so until 2026-09-16: they are root-owned 0644 under a 0755 directory,
+    # so any user can read them. The socket is the only constraint here.
     user: root
     volumes:
       - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
@@ -303,6 +331,7 @@ services:
     # Vector flushes its sinks on SIGTERM. Long enough for a batch in flight
     # to drain rather than being killed with events still buffered.
     stop_grace_period: 30s
+    logging: *logging
     restart: unless-stopped
 
   node-exporter:
@@ -330,6 +359,7 @@ services:
     # measured rather than the container's.
     network_mode: host
     pid: host
+    logging: *logging
     restart: unless-stopped
 
   cadvisor:
@@ -364,6 +394,7 @@ services:
       - /dev/kmsg
     networks:
       - whisky_monitoring
+    logging: *logging
     restart: unless-stopped
 
   postgres-exporter:
@@ -383,6 +414,7 @@ services:
     networks:
       - whisky_monitoring
       - whisky-db
+    logging: *logging
     restart: unless-stopped
 
   redis-exporter-session:
@@ -399,6 +431,7 @@ services:
     networks:
       - whisky_monitoring
       - whisky-valkey
+    logging: *logging
     restart: unless-stopped
 
   redis-exporter-cache:
@@ -416,6 +449,7 @@ services:
       - whisky_monitoring
       # The cache sits on the API's network, not on a Valkey one of its own.
       - whisky-be
+    logging: *logging
     restart: unless-stopped
 
 networks:

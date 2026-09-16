@@ -574,9 +574,15 @@ and the two questions in step 1 — which is the owner's and comes first.
   broken.
 - **The monitoring stack's own container logs.** Low value, and a collector
   that ships its own output is a feedback loop worth not having.
-- **Rotating or back-filling the existing ~2 GB of nginx history.** Rotation
-  belongs to whoever owns the `nginx-proxy` container; back-filling would spend
-  the disk ceiling on data nobody will query by label. §4.5.
+- **Back-filling the existing ~2 GB of nginx history.** It would spend the disk
+  ceiling on data nobody will query by label, and the old content stays on disk
+  and greppable either way. §4.5. **Rotation was the other half of this bullet
+  and has since landed** (2026-09-16): `infra/logrotate/whisky-nginx`, applied
+  to the host by hand like the two edge configs beside it — with the reopen
+  signal a containerised nginx needs, and a one-time archive step so that the
+  three-year history the 2026-08-30 runbook greps is moved aside rather than
+  compressed and then deleted a fortnight later. `infra/README.md` has the
+  procedure.
 - **Tracing.** Unchanged from `docs/MONITORING-PLAN.md` §11 — the request path
   is short and the interesting latency is already attributable. Still its own
   project.

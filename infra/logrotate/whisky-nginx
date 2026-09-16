@@ -1,0 +1,73 @@
+# Rotation for the nginx log files. Applied to the HOST by hand, exactly as
+# ../nginx/nginx.conf is — nothing in this repository installs it:
+#
+#   sudo install -m 0644 -o root -g root \
+#     infra/logrotate/whisky-nginx /etc/logrotate.d/whisky-nginx
+#
+# Ubuntu runs logrotate from `logrotate.timer`, once a day. See
+# infra/README.md ("Rotating the nginx log files") for the one-time step that
+# comes first: these files carry three years of history, and `rotate` below
+# would otherwise delete it a fortnight later.
+#
+# WHY THIS FILE EXISTS AT ALL. nginx here is the `nginx-proxy` CONTAINER, so
+# this host has no nginx package and therefore no /etc/logrotate.d/nginx —
+# that file ships with the package. Nothing had rotated these logs since
+# March 2023: 1.25 GB and 877 MB as of docs/OUTAGE-2026-08-30-HANDOFF.md, on
+# the disk that also carries pg_data, the session Valkey's AOF, the Prometheus
+# TSDB and VictoriaLogs, and whose only guard was the 85 %-full alert.
+#
+# THE ONE THING TO GET RIGHT: rotation renames the file, but the nginx master
+# goes on writing to the descriptor it already holds — so the rotated file
+# keeps growing, the new one stays empty, and the freed space is not freed at
+# all until nginx reopens. Its pid file lives inside the container, which is
+# why the package's own `kill -USR1 $(cat /run/nginx.pid)` could not have
+# worked here even if it were installed.
+#
+# AND THE ONE THING NOT TO "SIMPLIFY": `copytruncate` is not an alternative
+# here. Vector tails error.log and whisky.access.log, and it identifies a file
+# by a fingerprint of its first bytes. Truncating in place keeps the inode and
+# the fingerprint while resetting the size, which Vector reads as a file it
+# already knows starting over — so every line is shipped to VictoriaLogs a
+# second time. Renaming gives the new file a new identity and the problem
+# does not arise.
+
+/var/log/nginx/*.log {
+  # All three files: the shared access.log (every other vhost on this host,
+  # Grafana above all), the shared error.log, and this site's own
+  # whisky.access.log — ../nginx/nginx.conf says why that one is split out.
+  daily
+  # A second trigger for the day a flood arrives, since the timer alone would
+  # not notice until the next morning. Safe alongside `dateext` ONLY because
+  # the timer fires once a day: at most one rotation per run means the suffix
+  # below cannot collide with itself. An hourly timer would need
+  # `dateformat -%Y%m%d-%H`.
+  maxsize 200M
+  rotate 14
+  # whisky.access.log does not exist until ../nginx/nginx.conf is applied, and
+  # the two halves may be applied in either order.
+  missingok
+  notifempty
+  compress
+  # Vector may still be reading the file that was just renamed. Compressing it
+  # one cycle later rather than in the same run gives it a full day to finish.
+  delaycompress
+  dateext
+  dateformat -%Y%m%d
+  # Exactly what is on the host today (root:root 0644), and deliberately not
+  # tightened: Vector reads two of these files, and changing their mode is a
+  # separate decision from rotating them.
+  create 0644 root root
+  # One reopen for all three files rather than one per file.
+  sharedscripts
+  postrotate
+    # NOT `docker kill -s USR1 nginx-proxy`, which is the shorter form every
+    # tutorial shows: PID 1 in that image is the supervisor running nginx and
+    # docker-gen, not the nginx master, so the signal reaches the wrong
+    # process and silently does nothing.
+    #
+    # `|| true` because a stopped container — or a config that momentarily
+    # does not load — must not fail the whole logrotate run; this is one
+    # stanza among the host's others.
+    docker exec nginx-proxy nginx -s reopen > /dev/null 2>&1 || true
+  endscript
+}

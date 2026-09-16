@@ -8,6 +8,7 @@ that runs the monitoring stack.
 infra/
 ├── haproxy/haproxy.cfg          mounted by ../docker-compose.yaml (the `lb` service)
 ├── nginx/nginx.conf             the nginx server block; applied to the host by hand
+├── logrotate/whisky-nginx       rotation for the nginx logs; also by hand
 ├── docker-compose.monitoring.yaml
 ├── prometheus/                  scrape config + alert rules
 ├── alertmanager/                routing, and the Telegram receiver
@@ -363,6 +364,61 @@ Two consequences worth holding:
   applied the new path does not exist, and a Vector file source treats a
   missing path as nothing to read rather than an error. The worst case is a
   gap in nginx logs between the two steps, not a failure.
+
+### Rotating the nginx log files
+
+`logrotate/whisky-nginx` is the third thing in this directory the host applies
+by hand, and the only one with a step that has to come **first**. Installing it
+changes nothing until the timer next fires:
+
+```bash
+sudo install -m 0644 -o root -g root infra/logrotate/whisky-nginx /etc/logrotate.d/whisky-nginx
+```
+
+**These files carry three years of history, so decide where it goes before the
+first rotation.** Nothing has rotated them since March 2023 — 1.25 GB and
+877 MB — and `rotate 14` would compress that and then delete it a fortnight
+later. The runbook in `docs/OUTAGE-2026-08-30-HANDOFF.md` still greps them
+directly, so the recommendation is to move them aside once and let rotation
+start from empty files:
+
+```bash
+sudo mkdir -p /var/log/nginx/archive && sudo mv /var/log/nginx/access.log /var/log/nginx/error.log /var/log/nginx/archive/
+```
+
+```bash
+docker exec nginx-proxy nginx -s reopen
+```
+
+**The second command is not optional.** Without it nginx goes on writing into
+the files that were just moved — the same trap rotation itself has to avoid,
+and the whole reason that config carries a `postrotate` script. Note its form:
+`docker kill -s USR1 nginx-proxy` is the shorter one every tutorial shows and
+it is wrong here, because PID 1 in that image is the supervisor running nginx
+and docker-gen rather than the nginx master, so the signal reaches a process
+that does nothing with it.
+
+Then force one rotation. `logrotate -d` prints the `postrotate` script instead
+of running it, so it cannot answer the only question worth asking here:
+
+```bash
+sudo logrotate -fv /etc/logrotate.d/whisky-nginx
+```
+
+What good looks like: a datestamped file per log, and after the next request
+the **new** `whisky.access.log` growing rather than the datestamped one. Then
+look at Grafana — the `source:nginx` line should carry through the rotation
+with neither a gap nor a doubling. A doubling would mean the config had been
+changed to `copytruncate`, which keeps the inode and therefore Vector's
+fingerprint of the file, and so makes it ship the whole thing again.
+
+**The container log files are a different thing entirely, and are already
+bounded.** `/var/log/nginx/` is what nginx writes; `/var/lib/docker/containers/`
+is what Docker captures from stdout, and the `logging:` anchors in
+`../docker-compose.yaml` and `docker-compose.monitoring.yaml` cap that at
+60 MB per container. `nginx-proxy` is in neither file, since neither compose
+project owns it — capping it means a `log-driver` default in
+`/etc/docker/daemon.json`, which applies to newly created containers only.
 
 ### Where the logs actually are — and one place they are not
 

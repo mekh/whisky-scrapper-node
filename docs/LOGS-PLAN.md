@@ -344,8 +344,14 @@ that makes the container logs worth keeping.
    day between 2026-08-30 and 09-05. Worse than a missing panel, because the
    install blocks startup and **retries**. The offline fallback, where it is
    needed: fetch the plugin zip on the host, verify its checksum, unpack it
-   and mount it at `GF_PATHS_PLUGINS`; the plugin is signed either way, so no
-   unsigned-plugin allowance is needed. `infra/README.md` has both.
+   and bind it read-only over `/var/lib/grafana/plugins/<id>` — **and set
+   `GRAFANA_PLUGINS_PREINSTALL` to the empty string in the same breath**,
+   because the two are mutually exclusive. Installing a plugin is a write, so
+   a read-only bind at the directory the preinstall targets fails the boot
+   with `mkdir …: read-only file system`. That is not hypothetical: it is how
+   this shipped on 2026-09-16 and what the next commit fixed. The plugin is
+   signed on either path, so no unsigned-plugin allowance is needed.
+   `infra/README.md` has the procedure.
 2. **`GF_PLUGINS_PREINSTALL_SYNC`, not `GF_INSTALL_PLUGINS` — and not the
    asynchronous form either.** `GF_INSTALL_PLUGINS` was deprecated in Grafana
    **12.1.0** and this deployment runs **12.1.1**; it still works, but it warns

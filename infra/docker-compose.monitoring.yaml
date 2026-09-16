@@ -94,22 +94,25 @@ services:
       # for the network even with the plugin already mounted.
       # infra/README.md has the pre-flight check.
       - GF_PLUGINS_PREINSTALL_SYNC=${GRAFANA_PLUGINS_PREINSTALL:-victoriametrics-logs-datasource@0.32.0}
-      # A plugin directory of its own rather than the default
-      # /var/lib/grafana/plugins, so that the offline mount below is a plain
-      # bind and not a read-only bind nested inside the grafana_data volume.
-      - GF_PATHS_PLUGINS=/var/lib/grafana-plugins
     volumes:
       # Provisioned from files, so no dashboard exists only inside somebody's
       # browser and every change is a diff.
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
-      # The offline path for the plugin above. Empty in a deployment that
-      # downloads it; holding the unpacked OFFICIAL release zip in one that
-      # cannot reach grafana.com. Official, not a source build: the release
-      # carries the MANIFEST.txt that makes the plugin signed, and without it
-      # Grafana refuses to load it. See infra/README.md.
-      - ${GRAFANA_PLUGINS_DIR:-./grafana/plugins}:/var/lib/grafana-plugins:ro
+      # No plugin mount, and no GF_PATHS_PLUGINS above: the preinstall writes
+      # the plugin into /var/lib/grafana/plugins, which is inside the
+      # grafana_data volume and therefore writable and persistent. That is
+      # Grafana's own default and it needs no help.
+      #
+      # THE OFFLINE PATH IS MUTUALLY EXCLUSIVE WITH THE LINE ABOVE, and
+      # getting that wrong is how this was first written: a read-only bind at
+      # the plugin directory makes the preinstall fail with `mkdir …:
+      # read-only file system`, because installing IS a write. So a host that
+      # cannot reach grafana.com uncomments this AND sets
+      # `GRAFANA_PLUGINS_PREINSTALL=` to the empty string, so that nothing
+      # tries to write here. See infra/README.md.
+      # - ./grafana/plugins/victoriametrics-logs-datasource:/var/lib/grafana/plugins/victoriametrics-logs-datasource:ro
     depends_on:
       prometheus:
         condition: service_started

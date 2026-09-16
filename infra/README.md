@@ -299,9 +299,17 @@ docker compose -f infra/docker-compose.monitoring.yaml exec grafana \
 A timeout is the tell, the same one this file documents for the node-exporter
 scrape: `DROP` times out where a `REJECT` would refuse.
 
-**The offline path**, which needs no egress from the container at all. Use the
-**official release zip** — it carries the `MANIFEST.txt` that makes the plugin
-signed, and a source build does not:
+**The offline path**, which needs no egress from the container at all.
+
+**It is mutually exclusive with the download above, and that is not a style
+note.** Installing a plugin is a _write_, so a read-only bind at the directory
+the preinstall targets fails the boot outright with `mkdir …: read-only file
+system` — which is how this first shipped on 2026-09-16. So this path means
+_both_ mounting the plugin _and_ emptying `GRAFANA_PLUGINS_PREINSTALL`, never
+one without the other.
+
+Use the **official release zip** — it carries the `MANIFEST.txt` that makes
+the plugin signed, and a source build does not:
 
 ```bash
 V=v0.32.0
@@ -312,8 +320,14 @@ sha256sum -c "victoriametrics-logs-datasource-${V}_checksums_zip.txt"
 unzip -q "victoriametrics-logs-datasource-$V.zip" && rm -f ./*.zip ./*_checksums_zip.txt
 cd ../../..
 
-# Then stop Grafana reaching for the network even though the plugin is there:
+# Uncomment the plugin bind in infra/docker-compose.monitoring.yaml (it is
+# one commented line on the grafana service), then stop Grafana reaching for
+# the network — with the bind in place, a non-empty value here is the
+# read-only failure above rather than a wasted request:
 echo 'GRAFANA_PLUGINS_PREINSTALL=' >> infra/.env
+
+# `up -d`, never `restart`: a restart reuses the container and with it the
+# mounts it was created with, so the new bind would not exist.
 docker compose -f infra/docker-compose.monitoring.yaml --env-file infra/.env up -d grafana
 ```
 

@@ -94,6 +94,22 @@ services:
       # for the network even with the plugin already mounted.
       # infra/README.md has the pre-flight check.
       - GF_PLUGINS_PREINSTALL_SYNC=${GRAFANA_PLUGINS_PREINSTALL:-victoriametrics-logs-datasource@0.32.0}
+      # Grafana bundles four Drilldown apps and preinstalls them itself. Three
+      # of them need a backend this stack does not run — Loki, Tempo and
+      # Pyroscope — so all they can do is sit in the navigation offering to
+      # connect a data source that will never exist. `Drilldown -> Logs` is
+      # the Loki one, and it is easy to open expecting the `Whisky — Logs`
+      # dashboard and conclude the log stack is broken.
+      #
+      # `disable_plugins` avoids LOADING them and hides them from the catalog,
+      # which is what makes the navigation honest.
+      #
+      # grafana-metricsdrilldown-app is deliberately NOT in this list: it
+      # works against Prometheus, which this stack does run.
+      #
+      # NB `preinstall_disabled` would be the wrong knob entirely — it would
+      # also stop the VictoriaLogs datasource plugin above being installed.
+      - GF_PLUGINS_DISABLE_PLUGINS=${GRAFANA_DISABLED_PLUGINS:-grafana-lokiexplore-app,grafana-exploretraces-app,grafana-pyroscope-app}
     volumes:
       # Provisioned from files, so no dashboard exists only inside somebody's
       # browser and every change is a diff.

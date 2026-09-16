@@ -1,0 +1,16 @@
+# Intentionally provisions nothing. The file exists so that the directory
+# exists, and the directory exists so that Grafana stops logging
+#
+#   level=error msg="… can't read alerting provisioning files from directory"
+#         error="open /etc/grafana/provisioning/alerting: no such file or directory"
+#
+# on every single boot. Nothing was wrong — Grafana looks for four
+# provisioning directories and this deployment only ever needed two — but it
+# says so at ERROR level, and since 2026-09-16 those logs are collected and
+# searched. A permanent false error is worse than no error: the logs
+# dashboard's first panel is `level:error`, and two guaranteed entries per
+# Grafana restart train whoever reads it to scroll past the category.
+#
+# A .gitkeep does not work here: Grafana warns about any file whose suffix is
+# not .yaml, .yml or .json. So this is a valid, empty provisioning file.
+apiVersion: 1

@@ -337,6 +337,28 @@ docker compose -f infra/docker-compose.monitoring.yaml --env-file infra/.env up 
 plugin that cannot be installed is a degraded experience rather than no log
 search at all.
 
+### Where the logs actually are — and one place they are not
+
+The dashboard is **`Whisky — Logs`** in the `Whisky` folder (`/d/whisky-logs`),
+and for anything ad-hoc the answer is **Explore** with the `VictoriaLogs`
+datasource, because searching logs is a one-off act rather than a panel.
+VictoriaLogs also serves its own explorer on `VLOGS_BIND_PORT`.
+
+**`Drilldown -> Logs` in the left navigation is NOT this**, and it is an easy
+half-hour to lose: that is Grafana's bundled `grafana-lokiexplore-app`, it
+works only with Loki, and it greets you by offering to connect a data source
+— which reads exactly like the log stack being unconfigured. Together with
+two sibling apps needing Tempo and Pyroscope, it is now disabled outright via
+`GF_PLUGINS_DISABLE_PLUGINS`, so the navigation stops offering backends this
+deployment does not run. `grafana-metricsdrilldown-app` is deliberately kept:
+it works against Prometheus.
+
+**A datasource is never added through the UI here.** It is provisioned from
+`grafana/provisioning/datasources/`, and the dashboard's panels address it by
+`uid: whisky-victorialogs` — so one created by hand gets a random uid and
+leaves every panel reading `Datasource not found` even when the datasource
+itself works perfectly.
+
 ### Checking it works
 
 Substitute the address from `infra/.env`:

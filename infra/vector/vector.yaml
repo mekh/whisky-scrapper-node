@@ -104,7 +104,23 @@ sources:
   sync:
     type: file
     include:
-      - /app/log/*.log
+      # The DATE PREFIX is load-bearing, and `*.log` was a bug: that directory
+      # is not only sync runs. `scripts/db-backup.sh` appends to
+      # `db_backup.log` in the same place, and a checkout also carries a
+      # stray `gen-verify-inputs.ts` — so the looser glob handed this source
+      # 155 backup lines, which the filename regex below then correctly
+      # refused. They arrived labelled `source:sync` with no `store`, and,
+      # worse, stamped with Vector's read time although every one of them
+      # carries its own ISO timestamp. Found by the stream listing:
+      # `{source="sync"}` with no store field and a four-figure hit count is
+      # what that looks like from outside.
+      #
+      # `SyncFileLogService.buildFileName` always produces
+      # `<YYYY-MM-DD>_<HH-MM-SS>_<slug>.log`, so this matches exactly what it
+      # writes and nothing else. The backup log gets its own source below;
+      # anything else in that directory is now ignored rather than
+      # mislabelled.
+      - /app/log/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_*.log
     # Comfortably inside -retentionPeriod, not equal to it: a line older than
     # VictoriaLogs' retention is dropped AT INGESTION and the insert is still
     # answered 200 with an empty body, so replaying a 30-day-old file would
@@ -150,6 +166,33 @@ sources:
     multiline:
       start_pattern: '^[0-9]{2}:[0-9]{2}:[0-9]{2} (INFO|DEBUG|WARNING|ERROR) '
       condition_pattern: '^[0-9]{2}:[0-9]{2}:[0-9]{2} (INFO|DEBUG|WARNING|ERROR) '
+      mode: halt_before
+      timeout_ms: 1000
+
+  # ------------------------------------------------------------------ backup
+  # `scripts/db-backup.sh`, which the host cron runs nightly and which appends
+  # here. Collected rather than merely excluded from the source above,
+  # because a backup that has quietly stopped is exactly the thing worth being
+  # able to ask about, and the file is already in hand — the mount is the same
+  # one.
+  #
+  # Unlike the sync logs, every interesting line carries a full ISO timestamp
+  # of its own, so nothing has to be reconstructed from the filename.
+  backup:
+    type: file
+    include:
+      - /app/log/db_backup.log
+    # From the beginning: ~10 lines a night, so the whole history is a few
+    # thousand lines. Lines older than -retentionPeriod are dropped at
+    # ingestion, which is the correct outcome now that they carry their real
+    # date rather than the moment Vector read them.
+    read_from: beginning
+    # The `sftp>` progress lines carry no timestamp of their own. Folding them
+    # into the timestamped line above puts each backup's whole transcript in
+    # one event, the same treatment the sync stack traces get.
+    multiline:
+      start_pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z '
+      condition_pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z '
       mode: halt_before
       timeout_ms: 1000
 
@@ -377,6 +420,32 @@ transforms:
         }
       }
 
+  backup_parsed:
+    type: remap
+    drop_on_error: false
+    drop_on_abort: false
+    inputs: [backup]
+    source: |
+      .source = "backup"
+
+      # `2026-09-13T10:00:01Z [db-backup] dump OK: whisky_….dump (23M)`
+      # The `(?s)` matters: multiline has already glued the `sftp>` transcript
+      # onto this line, and without it the pattern stops at the first newline
+      # and the rest of the transcript is lost from the message.
+      line, lineErr = parse_regex(
+        to_string(.message) ?? "",
+        r'(?s)^(?P<stamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z) \[(?P<tag>[a-z0-9-]+)\] (?P<text>.*)'
+      )
+
+      if lineErr == null {
+        stamped, tsErr = parse_timestamp(string!(line.stamp), "%Y-%m-%dT%H:%M:%SZ")
+        if tsErr == null {
+          .timestamp = stamped
+        }
+        .tag = line.tag
+        .message = line.text
+      }
+
 sinks:
   victorialogs:
     type: elasticsearch
@@ -384,6 +453,7 @@ sinks:
       - docker_parsed
       - nginx_parsed
       - sync_parsed
+      - backup_parsed
     # VictoriaLogs implements the Elasticsearch bulk API, which is the path
     # VictoriaMetrics documents for Vector. The `http` sink against
     # /insert/jsonline is the alternative and buys nothing here.
@@ -588,3 +658,38 @@ tests:
               assert_eq!(.store, "silpo")
               assert!(contains(string!(.message), "ScrapeService.collect"))
               assert_eq!(.timestamp, t'2026-08-22T15:41:33Z')
+
+  # The two cases the `*.log` glob got wrong in production, pinned so the
+  # narrowing cannot be undone silently.
+  - name: a db-backup line keeps its own ISO timestamp and is not sync
+    inputs:
+      - insert_at: backup_parsed
+        type: log
+        log_fields:
+          file: /app/log/db_backup.log
+          message: '2026-09-13T10:00:05Z [db-backup] dump OK: whisky_20260913_100001Z.dump (23M)'
+    outputs:
+      - extract_from: backup_parsed
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.source, "backup")
+              assert_eq!(.tag, "db-backup")
+              assert_eq!(.message, "dump OK: whisky_20260913_100001Z.dump (23M)")
+              assert_eq!(.timestamp, t'2026-09-13T10:00:05Z')
+              assert!(!exists(.store))
+
+  - name: a folded sftp transcript stays with the line it belongs to
+    inputs:
+      - insert_at: backup_parsed
+        type: log
+        log_fields:
+          file: /app/log/db_backup.log
+          message: "2026-09-13T10:00:05Z [db-backup] uploading to sbox:backup/pg/whisky_db/ ...\nsftp> put \"/tmp/x.dump\" \"backup/pg/x.dump.partial\"\nsftp> rename \"a\" \"b\""
+    outputs:
+      - extract_from: backup_parsed
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.timestamp, t'2026-09-13T10:00:05Z')
+              assert!(contains(string!(.message), "sftp> rename"))

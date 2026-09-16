@@ -255,6 +255,7 @@ Three sources, and each one is read a different way:
 | Container stdout — the replicas, HAProxy, Postgres, both Valkeys | the Docker API, over the socket cAdvisor already uses                                                      | `container_name` |
 | nginx access and error logs                                      | the host side of the `nginx-proxy` container’s log mount, bind-mounted `:ro` — it writes files, not stdout | —                |
 | The per-sync scrape logs under `../log`                          | bind-mounted `:ro`; the date is read out of the **filename**                                               | `store`          |
+| `db_backup.log`, in that same directory                          | the nightly `scripts/db-backup.sh`; its lines carry their own ISO timestamp                                | —                |
 
 ### Before the first deploy: the plugin download is a firewall question
 
@@ -355,7 +356,12 @@ done
 ```
 
 **The cardinality check — the number that says whether the trap Loki was
-rejected for has actually been avoided:**
+rejected for has actually been avoided, and the one that has already earned
+itself.** On the first production run it showed `{source="sync"}` with 155
+hits and **no `store` field**, which is what a source reading files it should
+not is shaped like: the glob was `*.log` and swallowed `db_backup.log`. Read
+the _absence_ of an expected stream field as carefully as the presence of an
+unexpected one.
 
 ```bash
 curl -s "$V/select/logsql/streams" \

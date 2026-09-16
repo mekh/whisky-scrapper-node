@@ -305,6 +305,21 @@ The format is `HH:MM:SS LEVEL message`, `LEVEL` padded to seven characters, and
    multi-line and are precisely what somebody will search for; dropping
    unparseable lines would discard the most valuable content in the file.
 
+**The glob is the date prefix, and `*.log` was a bug** — found on the first
+production run rather than in review. That directory is not only sync runs:
+`scripts/db-backup.sh` appends to `db_backup.log` beside them, and a checkout
+also carries a stray `gen-verify-inputs.ts`. The looser glob handed this
+source 155 backup lines, which the filename regex then correctly refused — so
+they arrived as `source:sync` with **no `store`**, and, worse, stamped with
+Vector's read time although every one of them carries its own ISO timestamp.
+The stream listing is what surfaced it: a stream missing a field it should
+have is as much a signal as one carrying a field it should not.
+
+`db_backup.log` now has a source of its own (`source:backup`, its timestamp
+parsed from the line) rather than merely being excluded — a backup that has
+quietly stopped is exactly the thing worth being able to ask about, and the
+file was already in hand. Two `tests:` cases pin both halves.
+
 Two mechanics: the files are `chmod 777` and written by uid 10001 while
 Vector's container runs as root, so reading them is fine; and Vector's
 checkpoint directory must be a **named volume**, or every restart re-reads

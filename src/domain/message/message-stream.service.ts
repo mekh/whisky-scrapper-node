@@ -19,7 +19,7 @@ import { ErrorUtils } from '~utils';
  */
 const STREAM_HEADERS = {
   'Cache-Control': 'private, no-cache, no-store, no-transform',
-  'Connection': 'keep-alive',
+  Connection: 'keep-alive',
   'Content-Type': 'text/event-stream; charset=utf-8',
   'X-Accel-Buffering': 'no',
 };

@@ -5,9 +5,9 @@ import { PUSH_MAX_PREVIOUS_GAP_DAYS } from '~constants';
 import { CoreMessageService } from '~core/message';
 import { CorePriceSnapshotService } from '~core/price-snapshot';
 import { CorePushService } from '~core/push';
+import { MessageStreamService } from '~domain/message';
 import { MessageKind } from '~enums';
 import { PlatformMetricsService } from '~lib/metrics';
-import { MessageStreamService } from '~domain/message';
 import { WebPushService } from '~lib/web-push';
 import {
   ID,

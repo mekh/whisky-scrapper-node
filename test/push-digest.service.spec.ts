@@ -1,8 +1,8 @@
 import type { PushConfig } from '~config';
 import type { CoreMessageService } from '~core/message';
-import type { MessageStreamService } from '~domain/message';
 import type { CorePriceSnapshotService } from '~core/price-snapshot';
 import type { CorePushService } from '~core/push';
+import type { MessageStreamService } from '~domain/message';
 import type { PlatformMetricsService } from '~lib/metrics';
 import type { WebPushService } from '~lib/web-push';
 import type {

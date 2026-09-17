@@ -1,7 +1,8 @@
 import { TypeormRepository } from '@toxicoder/nestjs-typeorm-repository';
 
+import { PRODUCER_PAGE_SIZE } from '~constants';
 import { BaseRepository } from '~core/_common';
-import { KbStatus } from '~enums';
+import { KbStatus, PeatProfile, SortOrder } from '~enums';
 import {
   ID,
   KbAliasEntry,
@@ -9,7 +10,12 @@ import {
   KbPeatFlavorIds,
   KbProducerFacts,
   KbProducerFlavor,
+  ProducerAliasRow,
   ProducerChildRow,
+  ProducerCreateInput,
+  ProducerListQuery,
+  ProducerOptionRow,
+  ProducerOwnerRow,
   ProducerReviewRow,
   ProducerRuleInput,
   ProducerRuleRow,
@@ -121,6 +127,125 @@ const RULES_SQL = `
  * is compared. `KbKeyUtils` strips the same set; the two must stay in step.
  */
 const APOSTROPHES = "'\u2019\u02bc\u0060";
+
+/**
+ * The producer row every screen reads, from the review queue to the producer
+ * card. One projection because a second copy is what let the review listing
+ * and the detail read drift apart in the first place.
+ */
+const REVIEW_ROW_SQL = `
+  SELECT p.id, p.slug, p.name, p.kind, p.region, p."legalRegion",
+         p.owner, p."defaultTypeName", p."peatProfile", p.status,
+         p.confidence, p."sourceUrls", p.note, p."verifiedAt", p."createdAt",
+         c.code AS "countryCode", c."nameUa" AS "countryName",
+         c.icon AS "countryIcon",
+         par.slug AS "parentSlug", par.id AS "parentId",
+         par.name AS "parentName",
+         bot.slug AS "bottlerSlug", bot.id AS "bottlerId",
+         bot.name AS "bottlerName",
+         (SELECT count(*)::int FROM product pr
+          WHERE pr."producerId" = p.id) AS "productCount",
+         NULL::int AS "potentialReach"
+  FROM producer p
+  LEFT JOIN country c ON c.id = p."countryId"
+  LEFT JOIN producer par ON par.id = p."parentId"
+  LEFT JOIN producer bot ON bot.id = p."bottlerId"
+`;
+
+/**
+ * What the producers listing filters on, shared by its page read and its
+ * count so the two can never disagree about what a filter means.
+ */
+const LIST_WHERE_SQL = `
+  ($1::text IS NULL OR p.kind = $1)
+  AND ($2::text IS NULL OR p.status = $2)
+  AND ($3::text IS NULL
+       OR p.name ILIKE '%' || $3 || '%'
+       OR p.slug ILIKE '%' || $3 || '%')
+`;
+
+/**
+ * The expression each sortable column orders by, keyed by the enum member the
+ * request names. A closed map rather than an interpolated column, since the
+ * value reaches an `ORDER BY`.
+ */
+const LIST_SORT_SQL: Record<string, string> = {
+  countryName: 'c."nameUa"',
+  createdAt: 'p."createdAt"',
+  defaultTypeName: 'p."defaultTypeName"',
+  kind: 'p.kind',
+  name: 'p.name',
+  peatProfile: `array_position(ARRAY['unknown','none','light','medium','heavy'],
+                p."peatProfile")`,
+  productCount: '(SELECT count(*) FROM product pr'
+    + ' WHERE pr."producerId" = p.id)',
+  status: 'p.status',
+};
+
+/**
+ * The listing's own order when no column is chosen — the third sort state.
+ * Biggest reach first, which is the order the work is worth doing in.
+ */
+const LIST_DEFAULT_ORDER_SQL = '(SELECT count(*) FROM product pr'
+  + ' WHERE pr."producerId" = p.id) DESC, p.slug';
+
+/**
+ * One producer's spellings, longest key first — the order the resolver reads
+ * them in, so the card lists them the way they are matched.
+ */
+const ALIAS_ROWS_SQL = `
+  SELECT a.id, a.key, a.scope, a.note, a."createdAt"
+  FROM producer_alias a
+  WHERE a."producerId" = $1
+  ORDER BY length(a.key) DESC, a.key
+`;
+
+/**
+ * Distinct owning companies, for the owner field's autocomplete.
+ *
+ * `GROUP BY` rather than `DISTINCT` for the reason {@link SEARCH_SQL} gives:
+ * `SELECT DISTINCT` cannot order by an expression it does not select, and the
+ * prefix ranking needs one.
+ *
+ * Both sides are lower-cased, so the match is case-insensitive and a company
+ * typed `diageo` finds the stored `Diageo`. A blank term answers the head of
+ * the list, which is what makes an untouched field useful — the owners already
+ * in the catalogue are exactly what a person is about to retype.
+ */
+const OWNER_SEARCH_SQL = `
+  SELECT p.owner AS name
+  FROM producer p
+  WHERE p.owner IS NOT NULL
+    AND btrim(p.owner) <> ''
+    AND ($1::text IS NULL OR lower(p.owner) LIKE '%' || lower($1) || '%')
+  GROUP BY p.owner
+  ORDER BY (lower(p.owner) LIKE lower($1) || '%') DESC NULLS LAST,
+           length(p.owner), p.owner
+  LIMIT $2
+`;
+
+/**
+ * The picker read behind the parent, bottler and link fields.
+ *
+ * Unlike {@link SEARCH_SQL} it answers ids and offers every status but
+ * `rejected`: a reviewer linking a brand to its distillery has to be able to
+ * pick a distillery nobody has confirmed yet, which is most of them.
+ */
+const OPTION_SEARCH_SQL = `
+  SELECT p.id, p.slug, p.name, p.kind, p.status, c.icon AS "countryIcon"
+  FROM producer p
+  LEFT JOIN country c ON c.id = p."countryId"
+  WHERE p.status <> 'rejected'
+    AND ($2::text IS NULL OR p.kind = $2)
+    AND ($1::text IS NULL
+         OR p.name ILIKE '%' || $1 || '%'
+         OR p.slug ILIKE '%' || $1 || '%'
+         OR EXISTS (SELECT 1 FROM producer_alias a
+                    WHERE a."producerId" = p.id
+                      AND a.key ILIKE '%' || $1 || '%'))
+  ORDER BY (p.name ILIKE $1 || '%') DESC, length(p.name), p.name
+  LIMIT $3
+`;
 
 @TypeormRepository(ProducerEntity)
 export class ProducerRepository extends BaseRepository<ProducerEntity> {
@@ -378,6 +503,10 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
          owner = CASE WHEN $14 THEN NULL ELSE COALESCE($7, owner) END,
          "defaultTypeName" = CASE WHEN $15 THEN NULL
            ELSE COALESCE($8, "defaultTypeName") END,
+         "parentId" = CASE WHEN $17 THEN NULL
+           ELSE COALESCE($18, "parentId") END,
+         "bottlerId" = CASE WHEN $19 THEN NULL
+           ELSE COALESCE($20, "bottlerId") END,
          "peatProfile" = COALESCE($9, "peatProfile"),
          status = COALESCE($10, status),
          "sourceUrls" = COALESCE($11, "sourceUrls"),
@@ -403,6 +532,10 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
         patch.clearOwner ?? false,
         patch.clearDefaultTypeName ?? false,
         patch.note ?? null,
+        patch.clearParent ?? false,
+        patch.parentId ?? null,
+        patch.clearBottler ?? false,
+        patch.bottlerId ?? null,
       ],
     ) as { id: ID }[];
 
@@ -417,19 +550,7 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
    */
   public async findOneForReview(id: ID): Promise<ProducerReviewRow | null> {
     const rows = await this.query(
-      `SELECT p.id, p.slug, p.name, p.kind, p.region, p."legalRegion",
-              p.owner, p."defaultTypeName", p."peatProfile", p.status,
-              p.confidence, p."sourceUrls", p.note, p."verifiedAt",
-              c.code AS "countryCode", c."nameUa" AS "countryName",
-              c.icon AS "countryIcon",
-              par.slug AS "parentSlug", bot.slug AS "bottlerSlug",
-              (SELECT count(*)::int FROM product pr
-               WHERE pr."producerId" = p.id) AS "productCount",
-              NULL::int AS "potentialReach"
-       FROM producer p
-       LEFT JOIN country c ON c.id = p."countryId"
-       LEFT JOIN producer par ON par.id = p."parentId"
-       LEFT JOIN producer bot ON bot.id = p."bottlerId"
+      `${REVIEW_ROW_SQL}
        WHERE p.id = $1`,
       [id],
     ) as ProducerReviewRow[];
@@ -562,19 +683,7 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
     search?: string,
   ): Promise<{ rows: ProducerReviewRow[]; total: number }> {
     const rows = await this.query(
-      `SELECT p.id, p.slug, p.name, p.kind, p.region, p."legalRegion",
-              p.owner, p."defaultTypeName", p."peatProfile", p.status,
-              p.confidence, p."sourceUrls", p.note, p."verifiedAt",
-              c.code AS "countryCode", c."nameUa" AS "countryName",
-              c.icon AS "countryIcon",
-              par.slug AS "parentSlug", bot.slug AS "bottlerSlug",
-              (SELECT count(*)::int FROM product pr
-               WHERE pr."producerId" = p.id) AS "productCount",
-              NULL::int AS "potentialReach"
-       FROM producer p
-       LEFT JOIN country c ON c.id = p."countryId"
-       LEFT JOIN producer par ON par.id = p."parentId"
-       LEFT JOIN producer bot ON bot.id = p."bottlerId"
+      `${REVIEW_ROW_SQL}
        WHERE ($1::text IS NULL OR p.status = $1)
          AND ($4::text IS NULL
               OR p.name ILIKE '%' || $4 || '%'
@@ -713,6 +822,241 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
     ) as { id: ID; name: string }[];
 
     return new Map(rows.map((row) => [row.name, row.id]));
+  }
+
+  /**
+   * Lists producers for the CRUD section, with the caller's own ordering.
+   *
+   * Separate from {@link findForReview} because the two answer different
+   * questions: that one is a work queue ranked by reach, this is a catalogue a
+   * person sorts by whichever column they are looking at.
+   *
+   * @param query - Kind, status and name filters plus sort and paging.
+   * @returns The page's rows and the total matching count.
+   */
+  public async findPage(
+    query: ProducerListQuery,
+  ): Promise<{ rows: ProducerReviewRow[]; total: number }> {
+    const order = LIST_SORT_SQL[query.sort ?? ''];
+    const direction = query.order === SortOrder.DESC ? 'DESC' : 'ASC';
+    const limit = query.perPage ?? PRODUCER_PAGE_SIZE;
+    const offset = ((query.page ?? 1) - 1) * limit;
+
+    const rows = await this.query(
+      `${REVIEW_ROW_SQL}
+       WHERE ${LIST_WHERE_SQL}
+       ORDER BY ${
+        order
+          ? `${order} ${direction} NULLS LAST, p.slug`
+          : LIST_DEFAULT_ORDER_SQL
+      }
+       LIMIT $4 OFFSET $5`,
+      [
+        query.kind ?? null,
+        query.status ?? null,
+        query.name ?? null,
+        limit,
+        offset,
+      ],
+    ) as ProducerReviewRow[];
+
+    const counted = await this.query(
+      `SELECT count(*)::int AS total FROM producer p
+       WHERE ${LIST_WHERE_SQL}`,
+      [query.kind ?? null, query.status ?? null, query.name ?? null],
+    ) as { total: number }[];
+
+    return { rows, total: counted[0]?.total ?? 0 };
+  }
+
+  /**
+   * Creates one producer.
+   *
+   * The country is resolved through a sub-select, so an unknown code leaves
+   * the column null rather than failing the insert — the same stance
+   * {@link saveResearched} takes.
+   *
+   * `verifiedAt` is decided here rather than by a `CASE` over the status
+   * parameter: reading one parameter as both a `varchar` column value and a
+   * `text` comparand makes Postgres refuse the statement outright (42P08).
+   *
+   * @param input - The producer to create.
+   * @param slug - The slug to store, already derived and normalized.
+   * @returns The new row's id, or null when the slug is taken.
+   */
+  public async insertProducer(
+    input: ProducerCreateInput,
+    slug: string,
+  ): Promise<ID | null> {
+    const status = input.status ?? KbStatus.VERIFIED;
+
+    const rows = await this.query(
+      `INSERT INTO producer (
+         slug, name, kind, "countryId", region, "legalRegion", owner,
+         "parentId", "bottlerId", "defaultTypeName", "peatProfile", status,
+         "sourceUrls", note, "verifiedAt"
+       )
+       SELECT $1, $2, $3,
+              (SELECT c.id FROM country c WHERE c.code = $4),
+              $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+       ON CONFLICT (slug) DO NOTHING
+       RETURNING id`,
+      [
+        slug,
+        input.name,
+        input.kind,
+        input.countryCode ?? null,
+        input.region ?? null,
+        input.legalRegion ?? null,
+        input.owner ?? null,
+        input.parentId ?? null,
+        input.bottlerId ?? null,
+        input.defaultTypeName ?? null,
+        input.peatProfile ?? PeatProfile.UNKNOWN,
+        status,
+        input.sourceUrls ?? null,
+        input.note ?? null,
+        status === KbStatus.VERIFIED ? new Date() : null,
+      ],
+    ) as { id: ID }[];
+
+    return rows[0]?.id ?? null;
+  }
+
+  /**
+   * Lists one producer's spellings.
+   *
+   * @param id - The producer.
+   * @returns Its aliases, longest key first.
+   */
+  public async findAliases(id: ID): Promise<ProducerAliasRow[]> {
+    return this.query(ALIAS_ROWS_SQL, [id]) as Promise<ProducerAliasRow[]>;
+  }
+
+  /**
+   * Points one normalized spelling at a producer.
+   *
+   * A key already claimed by another producer is left alone rather than moved:
+   * `producer_alias.key` is unique across every producer precisely so one
+   * spelling cannot resolve two ways, and silently stealing it would change
+   * what an unrelated maker resolves to.
+   *
+   * @param key - The normalized alias key.
+   * @param producerId - The producer it must reach.
+   * @param scope - Where the alias may be matched.
+   * @param note - Why it exists, or null.
+   * @returns True when the alias was written, false when the key was taken.
+   */
+  public async insertAlias(
+    key: string,
+    producerId: ID,
+    scope: string,
+    note: string | null = null,
+  ): Promise<boolean> {
+    const rows = await this.query(
+      `INSERT INTO producer_alias (key, "producerId", scope, note)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (key) DO NOTHING
+       RETURNING id`,
+      [key, producerId, scope, note],
+    ) as { id: ID }[];
+
+    return rows.length > 0;
+  }
+
+  /**
+   * Deletes one alias, scoped to its producer so a stray id cannot remove
+   * another maker's spelling.
+   *
+   * @param aliasId - The alias to delete.
+   * @param producerId - The producer it must belong to.
+   * @returns How many rows were deleted.
+   */
+  public async deleteAlias(aliasId: ID, producerId: ID): Promise<number> {
+    const result = await this.query(
+      `DELETE FROM producer_alias
+       WHERE id = $1 AND "producerId" = $2`,
+      [aliasId, producerId],
+    ) as [unknown[], number];
+
+    return result[1] ?? 0;
+  }
+
+  /**
+   * Finds which producer a normalized key already resolves to.
+   *
+   * @param key - The normalized alias key.
+   * @returns The producer's id and name, or null when nothing claims the key.
+   */
+  public async findAliasOwner(
+    key: string,
+  ): Promise<{ producerId: ID; name: string } | null> {
+    const rows = await this.query(
+      `SELECT a."producerId", p.name
+       FROM producer_alias a
+       JOIN producer p ON p.id = a."producerId"
+       WHERE a.key = $1`,
+      [key],
+    ) as { producerId: ID; name: string }[];
+
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Autocomplete for the parent, bottler and link pickers.
+   *
+   * @param term - Substring of a name, slug or alias; null offers the first
+   *   rows of the whole list, which is what an empty picker shows.
+   * @param kind - Restrict to one kind, or null for all.
+   * @param limit - Rows to return at most.
+   * @returns Matching producers, prefix matches first, then shortest.
+   */
+  public async searchOptions(
+    term: string | null,
+    kind: string | null,
+    limit: number,
+  ): Promise<ProducerOptionRow[]> {
+    return this.query(
+      OPTION_SEARCH_SQL,
+      [term, kind, limit],
+    ) as Promise<ProducerOptionRow[]>;
+  }
+
+  /**
+   * Lists the distinct owning companies matching a term.
+   *
+   * @param term - Substring of the company name, matched case-insensitively;
+   *   null answers the head of the whole list.
+   * @param limit - Rows to return at most.
+   * @returns Distinct owners, prefix matches first, then shortest.
+   */
+  public async findOwners(
+    term: string | null,
+    limit: number,
+  ): Promise<ProducerOwnerRow[]> {
+    return this.query(
+      OWNER_SEARCH_SQL,
+      [term, limit],
+    ) as Promise<ProducerOwnerRow[]>;
+  }
+
+  /**
+   * Whether a producer exists at all, without loading it.
+   *
+   * @param ids - The ids to check; blanks are ignored.
+   * @returns The subset that exists.
+   */
+  public async findExistingIds(ids: ID[]): Promise<Set<ID>> {
+    if (!ids.length) {
+      return new Set();
+    }
+
+    const rows = await this.query(
+      'SELECT id FROM producer WHERE id = ANY($1::uuid[])',
+      [ids],
+    ) as { id: ID }[];
+
+    return new Set(rows.map((row) => row.id));
   }
 
   /**

@@ -236,3 +236,18 @@ export enum ProducerAliasScope {
  * value they are unambiguous, matched as a substring they are not.
  */
 export const KB_NAME_ALIAS_MIN_LENGTH = 5;
+
+/**
+ * The columns the producers listing may be ordered by. A closed vocabulary
+ * because the value reaches an `ORDER BY`, which no free string may.
+ */
+export enum ProducerSortField {
+  COUNTRY_NAME = 'countryName',
+  CREATED_AT = 'createdAt',
+  DEFAULT_TYPE_NAME = 'defaultTypeName',
+  KIND = 'kind',
+  NAME = 'name',
+  PEAT_PROFILE = 'peatProfile',
+  PRODUCT_COUNT = 'productCount',
+  STATUS = 'status',
+}

@@ -3,6 +3,7 @@ import type {
   KbFlavorEffect,
   KbStatus,
   PeatProfile,
+  ProducerAliasScope,
   ProducerKind,
   ProductReviewStatus,
   ScotlandLegalRegion,
@@ -266,6 +267,26 @@ export interface ProducerPatchInput {
   clearDefaultTypeName?: boolean;
 
   /**
+   * The distillery or brand this row belongs to.
+   */
+  parentId?: ID;
+
+  /**
+   * Clear the parent link.
+   */
+  clearParent?: boolean;
+
+  /**
+   * The independent bottler whose range this row is.
+   */
+  bottlerId?: ID;
+
+  /**
+   * Clear the bottler link.
+   */
+  clearBottler?: boolean;
+
+  /**
    * The peat band — the field the screen mostly exists for.
    */
   peatProfile?: PeatProfile;
@@ -282,6 +303,27 @@ export interface ProducerPatchInput {
 
   /**
    * Free text: what was uncertain, what was decided and why.
+   */
+  note?: string;
+}
+
+/**
+ * One spelling to point at a producer.
+ */
+export interface ProducerAliasInput {
+  /**
+   * The brand as a shop spells it. Normalized by `KbKeyUtils.key` before it
+   * is stored, so a reviewer may paste the raw value.
+   */
+  brand: string;
+
+  /**
+   * Where the alias may be matched. Defaults to `any`.
+   */
+  scope?: ProducerAliasScope;
+
+  /**
+   * Why the alias exists.
    */
   note?: string;
 }

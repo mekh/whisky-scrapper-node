@@ -1,4 +1,7 @@
 export { ConflictResolveDto } from './conflict-resolve.dto';
+export { ProducerAliasDto } from './producer-alias.dto';
+export { ProducerCreateDto } from './producer-create.dto';
+export { ProducerListQueryDto } from './producer-list.query.dto';
 export { ProducerPatchDto } from './producer-patch.dto';
 export { ProducerRuleCreateDto } from './producer-rule-create.dto';
 export { ProductRelinkDto } from './product-relink.dto';

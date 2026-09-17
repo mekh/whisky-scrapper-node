@@ -33,6 +33,29 @@ export const WHISKY_TYPE_NAME_MAX_LENGTH = 64;
 export const FLAVOR_NAME_MAX_LENGTH = 64;
 export const FLAVOR_SOURCE_MAX_LENGTH = 16;
 
+/**
+ * Default page size of the producers listing. It matches the review screen's
+ * own page size, so a person moving between the two screens keeps their place
+ * in the same-sized pages.
+ */
+export const PRODUCER_PAGE_SIZE = 50;
+
+/**
+ * Largest page the producers listing may be asked for. It is a screen a person
+ * reads, not an export.
+ */
+export const PRODUCER_MAX_PAGE_SIZE = 200;
+
+/**
+ * How many rows a producer picker offers at once.
+ */
+export const PRODUCER_OPTION_LIMIT = 20;
+
+/**
+ * How many spellings one create request may attach to the new producer.
+ */
+export const PRODUCER_ALIASES_MAX_PER_REQUEST = 20;
+
 export const PRODUCER_SLUG_MAX_LENGTH = 64;
 export const PRODUCER_NAME_MAX_LENGTH = 128;
 export const PRODUCER_OWNER_MAX_LENGTH = 128;

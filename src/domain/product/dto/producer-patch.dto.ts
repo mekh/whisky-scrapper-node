@@ -3,6 +3,7 @@ import {
   IsEnum,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
 } from 'class-validator';
 
@@ -13,6 +14,7 @@ import {
   ScotlandLegalRegion,
   ScotlandRegion,
 } from '~enums';
+import type { ID } from '~types';
 
 import type { ProducerPatchInput } from '../product-review.interfaces';
 
@@ -69,6 +71,22 @@ export class ProducerPatchDto implements ProducerPatchInput {
   @IsOptional()
   @IsBoolean()
   public clearDefaultTypeName?: boolean;
+
+  @IsOptional()
+  @IsUUID()
+  public parentId?: ID;
+
+  @IsOptional()
+  @IsBoolean()
+  public clearParent?: boolean;
+
+  @IsOptional()
+  @IsUUID()
+  public bottlerId?: ID;
+
+  @IsOptional()
+  @IsBoolean()
+  public clearBottler?: boolean;
 
   @IsOptional()
   @IsEnum(PeatProfile)

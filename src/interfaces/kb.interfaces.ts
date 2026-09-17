@@ -7,8 +7,10 @@ import type {
   PeatProfile,
   ProducerAliasScope,
   ProducerKind,
+  ProducerSortField,
   ScotlandLegalRegion,
   ScotlandRegion,
+  SortOrder,
 } from '~enums';
 
 import type { ID } from './entity.interfaces';
@@ -628,9 +630,34 @@ export interface ProducerReviewRow {
   parentSlug: string | null;
 
   /**
+   * The parent's id, the handle the link editor writes back.
+   */
+  parentId: ID | null;
+
+  /**
+   * The parent's display name, so a link reads without a second request.
+   */
+  parentName: string | null;
+
+  /**
    * The owning bottler's slug, for a bottler's own range.
    */
   bottlerSlug: string | null;
+
+  /**
+   * The bottler's id, the handle the link editor writes back.
+   */
+  bottlerId: ID | null;
+
+  /**
+   * The bottler's display name.
+   */
+  bottlerName: string | null;
+
+  /**
+   * When the row was created — the listing's «Додано» column.
+   */
+  createdAt: Date;
 
   /**
    * How many bottlings resolve to this producer **today**. Structurally zero
@@ -846,6 +873,12 @@ export interface ProductFactReviewRow {
    * The brand as the catalogue spells it.
    */
   brand: string | null;
+
+  /**
+   * The shop's own brand spelling, kept on the bottling. It is the key an
+   * alias is minted from when a reviewer links this row to a producer.
+   */
+  brandOrig: string | null;
 
   /**
    * The stored whisky type.
@@ -1283,6 +1316,92 @@ export interface ProducerDetail {
    * The global peat rules, which apply to every producer. Read-only context.
    */
   globalPeatRules: ProducerRuleRow[];
+
+  /**
+   * Every spelling that resolves to this producer, longest key first.
+   */
+  aliases: ProducerAliasRow[];
+}
+
+/**
+ * One spelling that resolves to a producer, as the producer card lists it.
+ */
+export interface ProducerAliasRow {
+  /**
+   * The alias id — the handle a delete uses.
+   */
+  id: ID;
+
+  /**
+   * The normalized key the resolver matches on.
+   */
+  key: string;
+
+  /**
+   * Where the alias may be matched: a brand value, a product name, or both.
+   */
+  scope: ProducerAliasScope;
+
+  /**
+   * Why the alias exists, when somebody wrote it down.
+   */
+  note: string | null;
+
+  /**
+   * When the alias was added.
+   */
+  createdAt: Date;
+}
+
+/**
+ * One owning company, as the owner field's autocomplete offers it.
+ *
+ * An object rather than a bare string so the response can gain a hint — how
+ * many producers that company owns, say — without a breaking change, which is
+ * the reason `TypeBrand` has the same shape.
+ */
+export interface ProducerOwnerRow {
+  /**
+   * The company exactly as `producer.owner` stores it. The field stays free
+   * text, so this is a suggestion, never a closed vocabulary.
+   */
+  name: string;
+}
+
+/**
+ * One producer as a picker offers it — the parent, bottler and link pickers.
+ */
+export interface ProducerOptionRow {
+  /**
+   * The producer's id, which the picker writes back.
+   */
+  id: ID;
+
+  /**
+   * Its stable kebab-case key, shown beside the name so two makers spelled
+   * alike are told apart.
+   */
+  slug: string;
+
+  /**
+   * Its display name.
+   */
+  name: string;
+
+  /**
+   * What kind of producer it is.
+   */
+  kind: ProducerKind;
+
+  /**
+   * Its review status, so a picker can mark a withheld row.
+   */
+  status: KbStatus;
+
+  /**
+   * The country's flag emoji, or null.
+   */
+  countryIcon: string | null;
 }
 
 /**
@@ -1496,4 +1615,130 @@ export interface ResearchedProducer {
    * makes a withheld answer worth storing rather than discarding.
    */
   note: string;
+}
+
+/**
+ * Which producers a listing page returns, in which order.
+ */
+export interface ProducerListQuery {
+  /**
+   * Restrict to one kind — the distilleries, the brands, the blends or the
+   * bottlers. Omit for all four.
+   */
+  kind?: ProducerKind;
+
+  /**
+   * Restrict to one review status. Omit for all.
+   */
+  status?: KbStatus;
+
+  /**
+   * Case-insensitive substring of the name or the slug.
+   */
+  name?: string;
+
+  /**
+   * The column to order by. Absent is the third sort state — the listing's
+   * own default order, which no column header can express.
+   */
+  sort?: ProducerSortField;
+
+  /**
+   * Which way to order. Ignored without `sort`.
+   */
+  order?: SortOrder;
+
+  /**
+   * 1-based page number.
+   */
+  page?: number;
+
+  /**
+   * Page size.
+   */
+  perPage?: number;
+}
+
+/**
+ * A new producer, as the create form states it.
+ */
+export interface ProducerCreateInput {
+  /**
+   * Display name. The slug is derived from it when none is given.
+   */
+  name: string;
+
+  /**
+   * The kind of producer.
+   */
+  kind: ProducerKind;
+
+  /**
+   * Stable kebab-case key. Derived from the name when absent; a collision is
+   * a 409, never a silently suffixed second row.
+   */
+  slug?: string;
+
+  /**
+   * ISO country code, resolved against the `country` table.
+   */
+  countryCode?: string;
+
+  /**
+   * Common region, `islands` included.
+   */
+  region?: ScotlandRegion;
+
+  /**
+   * The protected SWA region; never `islands`.
+   */
+  legalRegion?: ScotlandLegalRegion;
+
+  /**
+   * Owning company.
+   */
+  owner?: string;
+
+  /**
+   * The distillery or brand this row belongs to.
+   */
+  parentId?: ID;
+
+  /**
+   * The independent bottler whose range this row is.
+   */
+  bottlerId?: ID;
+
+  /**
+   * The type every bottling of this producer is.
+   */
+  defaultTypeName?: string;
+
+  /**
+   * The peat band. Defaults to `unknown`, which removes tags rather than
+   * asserting any.
+   */
+  peatProfile?: PeatProfile;
+
+  /**
+   * Review status. Defaults to `verified` — a person typed this row, which is
+   * exactly what the status means.
+   */
+  status?: KbStatus;
+
+  /**
+   * Space-separated citations.
+   */
+  sourceUrls?: string;
+
+  /**
+   * Free text: what was decided and why.
+   */
+  note?: string;
+
+  /**
+   * Spellings that must resolve to the new row. The name itself is always
+   * added, so this is for the shop spellings that differ from it.
+   */
+  aliases?: string[];
 }

@@ -78,7 +78,26 @@ export class ProducerReviewType implements ProducerReviewRow {
 
   @IsOptional()
   @IsString()
+  public parentId!: ID | null;
+
+  @IsOptional()
+  @IsString()
+  public parentName!: string | null;
+
+  @IsOptional()
+  @IsString()
   public bottlerSlug!: string | null;
+
+  @IsOptional()
+  @IsString()
+  public bottlerId!: ID | null;
+
+  @IsOptional()
+  @IsString()
+  public bottlerName!: string | null;
+
+  @IsDate()
+  public createdAt!: Date;
 
   @IsInt()
   public productCount!: number;

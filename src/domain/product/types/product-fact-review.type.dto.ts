@@ -29,6 +29,10 @@ export class ProductFactReviewType implements ProductFactReviewRow {
 
   @IsOptional()
   @IsString()
+  public brandOrig!: string | null;
+
+  @IsOptional()
+  @IsString()
   public type!: string | null;
 
   @IsOptional()

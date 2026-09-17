@@ -9,7 +9,11 @@ import {
   KbIndex,
   KbPeatFlavorIds,
   KbProducerFlavor,
+  ProducerCreateInput,
   ProducerDetail,
+  ProducerListQuery,
+  ProducerOptionRow,
+  ProducerOwnerRow,
   ProducerReviewRow,
   ProducerRuleInput,
   ResearchedProducer,
@@ -183,9 +187,10 @@ export class CoreProducerService extends CoreBaseService<ProducerEntity> {
       return null;
     }
 
-    const [children, rules] = await Promise.all([
+    const [children, rules, aliases] = await Promise.all([
       this.repo.findChildren(id),
       this.repo.findRulesForReview(id),
+      this.repo.findAliases(id),
     ]);
 
     return {
@@ -193,7 +198,123 @@ export class CoreProducerService extends CoreBaseService<ProducerEntity> {
       children,
       rules: rules.rules,
       globalPeatRules: rules.globalPeatRules,
+      aliases,
     };
+  }
+
+  /**
+   * Lists producers for the CRUD section, with the caller's own ordering.
+   *
+   * @param query - Kind, status and name filters plus sort and paging.
+   * @returns The page's rows and the total matching count.
+   */
+  public async listPage(
+    query: ProducerListQuery,
+  ): Promise<{ rows: ProducerReviewRow[]; total: number }> {
+    return this.repo.findPage(query);
+  }
+
+  /**
+   * Creates one producer.
+   *
+   * @param input - The producer to create.
+   * @param slug - The slug to store, already derived and normalized.
+   * @returns The created row, or null when the slug is taken.
+   */
+  public async createProducer(
+    input: ProducerCreateInput,
+    slug: string,
+  ): Promise<ProducerReviewRow | null> {
+    const id = await this.repo.insertProducer(input, slug);
+
+    if (!id) {
+      return null;
+    }
+
+    return this.repo.findOneForReview(id);
+  }
+
+  /**
+   * Points one normalized spelling at a producer.
+   *
+   * @param key - The normalized alias key.
+   * @param producerId - The producer it must reach.
+   * @param scope - Where the alias may be matched.
+   * @param note - Why it exists, or null.
+   * @returns True when the alias was written, false when the key was taken.
+   */
+  public async addAlias(
+    key: string,
+    producerId: ID,
+    scope: string,
+    note: string | null = null,
+  ): Promise<boolean> {
+    return this.repo.insertAlias(key, producerId, scope, note);
+  }
+
+  /**
+   * Deletes one alias, scoped to its producer.
+   *
+   * @param aliasId - The alias to delete.
+   * @param producerId - The producer it must belong to.
+   * @returns How many rows were deleted.
+   */
+  public async removeAlias(aliasId: ID, producerId: ID): Promise<number> {
+    return this.repo.deleteAlias(aliasId, producerId);
+  }
+
+  /**
+   * Finds which producer a normalized key already resolves to.
+   *
+   * @param key - The normalized alias key.
+   * @returns The owner's id and name, or null when nothing claims the key.
+   */
+  public async findAliasOwner(
+    key: string,
+  ): Promise<{ producerId: ID; name: string } | null> {
+    return this.repo.findAliasOwner(key);
+  }
+
+  /**
+   * Autocomplete for the parent, bottler and link pickers.
+   *
+   * @param term - Substring of a name, slug or alias; null offers the head of
+   *   the whole list.
+   * @param kind - Restrict to one kind, or null for all.
+   * @param limit - Rows to return at most.
+   * @returns Matching producers, prefix matches first.
+   */
+  public async searchOptions(
+    term: string | null,
+    kind: string | null,
+    limit: number,
+  ): Promise<ProducerOptionRow[]> {
+    return this.repo.searchOptions(term, kind, limit);
+  }
+
+  /**
+   * Lists the distinct owning companies matching a term.
+   *
+   * @param term - Substring of the company name, matched case-insensitively;
+   *   null answers the head of the list.
+   * @param limit - Rows to return at most.
+   * @returns Distinct owners, prefix matches first.
+   */
+  public async searchOwners(
+    term: string | null,
+    limit: number,
+  ): Promise<ProducerOwnerRow[]> {
+    return this.repo.findOwners(term, limit);
+  }
+
+  /**
+   * Narrows a set of ids to the ones that exist.
+   *
+   * @param ids - The ids to check.
+   * @returns The subset that exists.
+   */
+  public async findExistingIds(ids: ID[]): Promise<Set<ID>> {
+    return this.repo.findExistingIds(ids);
   }
 
   /**

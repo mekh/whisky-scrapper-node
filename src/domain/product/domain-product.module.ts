@@ -6,6 +6,7 @@ import { ScrapeModule } from '~scrape/scrape.module';
 
 import { ProducerReachService } from './producer-reach.service';
 import { ProducerController } from './producer.controller';
+import { ProducerService } from './producer.service';
 import { ProductReviewController } from './product-review.controller';
 import { ProductReviewService } from './product-review.service';
 import { ProductController } from './product.controller';
@@ -26,6 +27,7 @@ import { ProductService } from './product.service';
     ProductService,
     ProductReviewService,
     ProducerReachService,
+    ProducerService,
   ],
 })
 export class DomainProductModule {}

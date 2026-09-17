@@ -1,6 +1,9 @@
 export { KbReconcileSummaryType } from './kb-reconcile-summary.type.dto';
+export { ProducerAliasType } from './producer-alias.type.dto';
 export { ProducerChildType } from './producer-child.type.dto';
 export { ProducerDetailType } from './producer-detail.type.dto';
+export { ProducerOptionType } from './producer-option.type.dto';
+export { ProducerOwnerType } from './producer-owner.type.dto';
 export { ProducerPatchResultType } from './producer-patch-result.type.dto';
 export { ProducerProductType } from './producer-product.type.dto';
 export { ProducerReviewType } from './producer-review.type.dto';

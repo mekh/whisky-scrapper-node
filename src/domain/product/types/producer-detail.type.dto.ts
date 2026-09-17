@@ -3,6 +3,7 @@ import { IsArray, ValidateNested } from 'class-validator';
 
 import type { ProducerDetail } from '~types';
 
+import { ProducerAliasType } from './producer-alias.type.dto';
 import { ProducerChildType } from './producer-child.type.dto';
 import { ProducerReviewType } from './producer-review.type.dto';
 import { ProducerRuleType } from './producer-rule.type.dto';
@@ -26,4 +27,9 @@ export class ProducerDetailType implements ProducerDetail {
   @ValidateNested({ each: true })
   @Type(() => ProducerRuleType)
   public globalPeatRules!: ProducerRuleType[];
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProducerAliasType)
+  public aliases!: ProducerAliasType[];
 }

@@ -23,6 +23,7 @@ export {
   PeatProfile,
   ProducerAliasScope,
   ProducerKind,
+  ProducerSortField,
   ScotlandLegalRegion,
   ScotlandRegion,
 } from './kb.enum';

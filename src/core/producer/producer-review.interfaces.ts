@@ -5,6 +5,7 @@ import type {
   ScotlandLegalRegion,
   ScotlandRegion,
 } from '~enums';
+import type { ID } from '~types';
 
 /**
  * A reviewer's edit as the repository takes it.
@@ -70,6 +71,28 @@ export interface ProducerReviewPatch {
    * Clear the default type, for a range that spans several.
    */
   clearDefaultTypeName?: boolean;
+
+  /**
+   * The distillery or brand this row belongs to. A `brand` whose parent is set
+   * is how `Ledaig` states that its liquid is Tobermory's while its peat band
+   * is its own — the resolver never inherits facts across the link.
+   */
+  parentId?: ID;
+
+  /**
+   * Clear the parent link.
+   */
+  clearParent?: boolean;
+
+  /**
+   * The independent bottler whose range this row is.
+   */
+  bottlerId?: ID;
+
+  /**
+   * Clear the bottler link.
+   */
+  clearBottler?: boolean;
 
   /**
    * The peat band — the field the screen mostly exists for.

@@ -1819,6 +1819,7 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
 
     const rows = await this.query(
       `SELECT p.id, p.name, COALESCE(pr.name, bo.name) AS brand,
+              p."brandOrig",
               t.name AS type, p."typeSource",
               c.code AS "countryCode", c."nameUa" AS "countryName",
               c.icon AS "countryIcon", p."countrySource",

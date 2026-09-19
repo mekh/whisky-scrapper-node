@@ -1,7 +1,7 @@
 import { IsEnum, IsOptional, IsString } from 'class-validator';
 
 import { ReviewIssueCode, ReviewIssueSeverity } from '~enums';
-import type { ReviewIssue } from '~types';
+import type { ID, ReviewIssue } from '~types';
 
 export class ReviewIssueType implements ReviewIssue {
   @IsEnum(ReviewIssueCode)
@@ -17,4 +17,8 @@ export class ReviewIssueType implements ReviewIssue {
   @IsOptional()
   @IsString()
   public detail?: string;
+
+  @IsOptional()
+  @IsString()
+  public producerId?: ID;
 }

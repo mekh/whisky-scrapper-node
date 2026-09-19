@@ -18,6 +18,7 @@ import {
   KbProducerFlavor,
   ProducerAliasRow,
   ProducerChildRow,
+  ProducerConflict,
   ProducerCreateInput,
   ProducerListQuery,
   ProducerOptionRow,
@@ -1230,6 +1231,23 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
     ) as [unknown[], number];
 
     return result[1] ?? 0;
+  }
+
+  /**
+   * Finds which producer already holds a slug.
+   *
+   * @param slug - The slug a create asked for.
+   * @returns The holder, or null when the slug is free.
+   */
+  public async findSlugOwner(slug: string): Promise<ProducerConflict | null> {
+    const rows = await this.query(
+      `SELECT p.id, p.slug, p.name, p.status, p.note
+       FROM producer p
+       WHERE p.slug = $1`,
+      [slug],
+    ) as ProducerConflict[];
+
+    return rows[0] ?? null;
   }
 
   /**

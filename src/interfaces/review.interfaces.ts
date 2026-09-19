@@ -94,6 +94,12 @@ export interface ReviewIssue {
    * type a name states, the producer an inert row would claim.
    */
   detail?: string;
+
+  /**
+   * The producer `detail` names, for the two codes whose answer is a row a
+   * reviewer has to open rather than a word.
+   */
+  producerId?: ID;
 }
 
 /**

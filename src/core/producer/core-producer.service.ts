@@ -17,6 +17,7 @@ import {
   KbPeatFlavorIds,
   KbProducerFlavor,
   ProducerAliasWrite,
+  ProducerConflict,
   ProducerDetail,
   ProducerListQuery,
   ProducerOptionRow,
@@ -294,6 +295,16 @@ export class CoreProducerService extends CoreBaseService<ProducerEntity> {
    */
   public async removeAlias(aliasId: ID, producerId: ID): Promise<number> {
     return this.repo.deleteAlias(aliasId, producerId);
+  }
+
+  /**
+   * Finds which producer already holds a slug.
+   *
+   * @param slug - The slug a create asked for.
+   * @returns The holder, or null when the slug is free.
+   */
+  public async findSlugOwner(slug: string): Promise<ProducerConflict | null> {
+    return this.repo.findSlugOwner(slug);
   }
 
   /**

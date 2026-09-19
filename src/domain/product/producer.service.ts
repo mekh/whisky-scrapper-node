@@ -213,7 +213,7 @@ export class ProducerService {
     });
 
     if (!created) {
-      throw new DuplicateError(`Producer ${slug} already exists`);
+      throw await this.slugTakenError(slug);
     }
 
     const run = await this.reconcile.run();
@@ -356,6 +356,30 @@ export class ProducerService {
     if (bottlerId && !existing.has(bottlerId)) {
       throw new BadRequestError('Bottler producer not found');
     }
+  }
+
+  /**
+   * Names the producer a taken slug belongs to.
+   *
+   * The holder is usually a `rejected` row, which no picker offers, so the
+   * refusal carries it: without it the create fails on a name the screen
+   * cannot show and nothing says why.
+   *
+   * @param slug - The slug the create asked for.
+   * @returns The refusal, carrying the holder when it can still be read.
+   */
+  private async slugTakenError(slug: string): Promise<DuplicateError> {
+    const owner = await this.producers.findSlugOwner(slug);
+
+    if (!owner) {
+      return new DuplicateError(`Producer ${slug} already exists`);
+    }
+
+    return new DuplicateError(
+      `Producer ${slug} already exists`,
+      { producer: owner },
+      true,
+    );
   }
 
   /**

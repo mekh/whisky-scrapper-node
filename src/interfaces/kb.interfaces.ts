@@ -700,6 +700,40 @@ export interface ProducerReviewRow {
 }
 
 /**
+ * The producer already holding a slug a create asked for.
+ *
+ * It rides on the refusal because a taken slug is usually a `rejected` row,
+ * which no picker offers — so without it the name is unusable and nothing on
+ * screen says why.
+ */
+export interface ProducerConflict {
+  /**
+   * The producer holding the slug.
+   */
+  id: ID;
+
+  /**
+   * The slug both rows claim.
+   */
+  slug: string;
+
+  /**
+   * Its display name.
+   */
+  name: string;
+
+  /**
+   * Its review status; `rejected` is the case worth stating.
+   */
+  status: KbStatus;
+
+  /**
+   * Why it was ruled out, when somebody wrote it down.
+   */
+  note: string | null;
+}
+
+/**
  * One display name behind a producer row on the review screen — what expanding
  * the row lists. For a live producer these are the bottlings that resolve to
  * it today; for a withheld one, the bottlings that **would** resolve if it

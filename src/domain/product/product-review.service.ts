@@ -458,7 +458,9 @@ export class ProductReviewService {
     const issues = row.issues.map((issue) => {
       const producer = named[issue.code];
 
-      return producer ? { ...issue, detail: producer.name } : issue;
+      return producer
+        ? { ...issue, detail: producer.name, producerId: producer.id }
+        : issue;
     });
 
     return { ...row, issues };

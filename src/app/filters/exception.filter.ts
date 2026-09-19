@@ -95,13 +95,24 @@ export class ExceptionFilter implements IExceptionFilter {
     reply.header(HEADER_RATE_LIMIT_RETRY_MS, retryAfterMs);
   }
 
+  /**
+   * Builds the body of a refusal.
+   *
+   * An error that marked its `data` exposed answers as JSON, which is what
+   * lets a client act on the refusal rather than only print it.
+   *
+   * @param error - The error being answered.
+   * @returns The bare message, or the message with the exposed data.
+   */
   private getResponse(error: unknown): string | object {
     if (error instanceof HttpException) {
       return error.getResponse();
     }
 
     if (error instanceof ErrorBase) {
-      return error.message;
+      return error.expose && error.data !== undefined
+        ? { message: error.message, data: error.data }
+        : error.message;
     }
 
     return 'Internal Server Error';

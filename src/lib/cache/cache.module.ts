@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
+import type { OnModuleDestroy } from '@nestjs/common';
 import {
   ValkeyModule as ValkeyBaseModule,
   ValkeyOptions,
+  ValkeyService,
 } from '@toxicoder/nestjs-valkey';
 
 import { CacheConfig, ConfigModule } from '~config';
@@ -101,4 +103,16 @@ const cacheValkey = ValkeyBaseModule.forRootAsync({
     VersionedCacheService,
   ],
 })
-export class CacheModule {}
+export class CacheModule implements OnModuleDestroy {
+  public constructor(private readonly valkey: ValkeyService) {}
+
+  /**
+   * Closes the cache's own connection on shutdown — see the same hook on
+   * `ValkeyModule` for why the wrapper leaves it open and what that costs.
+   * This module resolves `ValkeyService` from its own scope, so this is the
+   * cache client and not the session one.
+   */
+  public onModuleDestroy(): void {
+    this.valkey.disconnect();
+  }
+}

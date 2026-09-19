@@ -16,6 +16,8 @@ import {
 import { ConfigModule, DbConfig } from '~config';
 import { CoreWhiskyModule } from '~core/core-whisky.module';
 import { FactSource } from '~enums';
+import { CacheModule } from '~lib/cache';
+import { ValkeyModule } from '~lib/valkey';
 import { KbApplyService } from '~scrape/kb/kb-apply.service';
 import { KbReconcileService } from '~scrape/kb/kb-reconcile.service';
 import { KbResolverService } from '~scrape/kb/kb-resolver.service';
@@ -59,6 +61,8 @@ const PEAT_TAGS = ['peated', 'smoky'];
           ?? addTransactionalDataSource(new DataSource(options));
       },
     }),
+    CacheModule,
+    ValkeyModule,
     CoreWhiskyModule,
   ],
   providers: [

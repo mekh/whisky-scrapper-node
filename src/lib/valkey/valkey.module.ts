@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
+import type { OnModuleDestroy } from '@nestjs/common';
 import {
   ValkeyModule as ValkeyBaseModule,
   ValkeyOptions,
+  ValkeyService,
 } from '@toxicoder/nestjs-valkey';
 
 import { ConfigModule, ValkeyConfig } from '~config';
@@ -64,4 +66,20 @@ const valkey = ValkeyBaseModule.forRootAsync({
     ValkeyPubSubService,
   ],
 })
-export class ValkeyModule {}
+export class ValkeyModule implements OnModuleDestroy {
+  public constructor(private readonly valkey: ValkeyService) {}
+
+  /**
+   * Closes the connection when the application shuts down.
+   *
+   * **The wrapper package does not do this**, and an open client keeps the
+   * event loop alive: a standalone script finishes its work and then hangs
+   * forever, and a container answers `SIGTERM` by lingering until its grace
+   * period runs out and it is killed. `ValkeyPubSubService` already closes
+   * the connection it duplicates for the same reason; this is the primary
+   * one, which nothing was closing.
+   */
+  public onModuleDestroy(): void {
+    this.valkey.disconnect();
+  }
+}

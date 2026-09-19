@@ -42,6 +42,13 @@ export interface MetaCountry {
   nameUa: string;
 
   /**
+   * English country name (display). Falls back to the Ukrainian one for a
+   * country seeded after the name list was written, which is what the client
+   * renders rather than an empty cell.
+   */
+  nameEn: string;
+
+  /**
    * Country flag emoji, when set.
    */
   icon: string | null;

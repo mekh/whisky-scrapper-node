@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import {
   CACHE_GENERATION_CATALOGUE,
+  CACHE_META_SHAPE,
   CACHE_SCOPE_META,
   DEFAULT_PER_PAGE,
   PERIOD_WINDOWS,
@@ -37,11 +38,16 @@ export class MetaService {
    * costs a recomputation of five small queries whenever a report is
    * invalidated, which is not worth a second counter to avoid.
    *
+   * The key's suffix is `CACHE_META_SHAPE`, which the generation cannot
+   * stand in for: it says which *shape* of this payload an entry holds, so a
+   * deploy that adds a field is not handed the blob the previous build wrote
+   * under the same, unchanged generation.
+   *
    * @returns The aggregated filter metadata.
    */
   public async build(): Promise<Meta> {
     return this.cache.getOrCompute(
-      { scope: CACHE_SCOPE_META, suffix: '' },
+      { scope: CACHE_SCOPE_META, suffix: CACHE_META_SHAPE },
       CACHE_GENERATION_CATALOGUE,
       () => this.load(),
     );
@@ -83,6 +89,7 @@ export class MetaService {
       allCountries: allCountries.map((country): MetaCountry => ({
         code: country.code,
         nameUa: country.nameUa,
+        nameEn: country.nameEn,
         icon: country.icon ?? null,
       })),
       windows: [...PERIOD_WINDOWS],

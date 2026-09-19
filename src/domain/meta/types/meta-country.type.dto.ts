@@ -9,6 +9,9 @@ export class MetaCountryType implements MetaCountry {
   @IsString()
   public nameUa!: string;
 
+  @IsString()
+  public nameEn!: string;
+
   @IsOptional()
   @IsString()
   public icon!: string | null;

@@ -524,7 +524,7 @@ export class StoreProductRepository extends BaseRepository<StoreProductEntity> {
    */
   public async distinctCountries(): Promise<MetaCountry[]> {
     return this.query(
-      `SELECT c.code, c."nameUa", c.icon
+      `SELECT c.code, c."nameUa", c."nameEn", c.icon
        FROM country c
        WHERE EXISTS (
          SELECT 1 FROM store_product sp

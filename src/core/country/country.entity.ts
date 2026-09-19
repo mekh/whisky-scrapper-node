@@ -24,6 +24,11 @@ export class CountryEntity extends BaseRichEntity implements EntityCountry {
   public nameUa!: string;
 
   @IsString()
+  @MaxLength(COUNTRY_NAME_MAX_LENGTH)
+  @Column({ length: COUNTRY_NAME_MAX_LENGTH })
+  public nameEn!: string;
+
+  @IsString()
   @IsOptional()
   @MaxLength(COUNTRY_ICON_MAX_LENGTH)
   @Column({ length: COUNTRY_ICON_MAX_LENGTH, nullable: true })

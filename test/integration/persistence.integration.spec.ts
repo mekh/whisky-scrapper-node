@@ -114,8 +114,8 @@ describe('persistence write path (integration)', () => {
     );
 
     const countryRows = await dataSource.query(
-      `INSERT INTO country (code, "nameUa")
-       VALUES ('it', 'IT Country')
+      `INSERT INTO country (code, "nameUa", "nameEn")
+       VALUES ('it', 'IT Country', 'IT Country')
        ON CONFLICT (code) DO UPDATE SET "nameUa" = EXCLUDED."nameUa"
        RETURNING id`,
     ) as { id: ID }[];

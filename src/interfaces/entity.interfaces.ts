@@ -67,6 +67,7 @@ export interface EntityPermission extends EntityBaseRich {
 export interface EntityCountry extends EntityBaseRich {
   code: string;
   nameUa: string;
+  nameEn: string;
   icon?: string;
 }
 

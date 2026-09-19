@@ -499,8 +499,10 @@ later and are documented in their own sections:
   structurally, the middle one is a documented no-op — undoing it would put
   one whisky back under several identities.
 - Lookups (dedup targets, unique `name`/`code`): `country` (`code`, `nameUa`,
-  `icon`), `type` (`name`, whisky type), `flavor` (`name`). There is no
-  `brand` lookup any more.
+  `nameEn`, `icon`), `type` (`name`, whisky type), `flavor` (`name`). There is
+  no `brand` lookup any more. A country carries both names because the client
+  cannot translate a value the backend grows; the scrape path still resolves
+  by `nameUa` alone (`resolveByNameUa`), which is what shop pages print.
 - `store` (`slug` unique, `name`, `baseUrl`, `color?`, `active`) and
   `store-config` (1:1 → store via `storeId` unique + `fk_store_config_store`;
   `tier`, `delayFrom`/`delayTo` reals, `needsBrowser`, `retailChain?`,
@@ -4001,10 +4003,21 @@ separately and hide neither properly.
 Filter options and fixed client constants in one payload: `stores[]`
 (`slug`, `name`, `color`, `active`, `needsBrowser`), `types` (the `type`
 table, plus `unknown` for typeless products), `flavors` (the `flavor` table),
-`countries[]` (`code`, `nameUa`, `icon` — only the countries products
-actually reference), `allCountries[]` (every country, for the edit
+`countries[]` (`code`, `nameUa`, `nameEn`, `icon` — only the countries
+products actually reference), `allCountries[]` (every country, for the edit
 dropdowns — a superset of `countries`), `perPageOptions`, `defaultPerPage`
 and `windows`.
+
+Both country names travel together and the client picks one: this is the
+catalogue every screen names a country from, keyed by `code`, so the rows
+elsewhere keep sending only the Ukrainian `countryName` as a fallback.
+
+The cache key carries `CACHE_META_SHAPE` as its suffix. The generation
+counter says whether the _data_ changed and cannot say whether the _code_
+did, so without it a deploy that adds a field here is handed the blob the
+previous build wrote and answers 500 (outgoing validation) until an unrelated
+catalogue write bumps the counter. Bump the constant with any change to
+`MetaType`'s shape.
 
 ### Store detail (`GET /store/:slug`)
 

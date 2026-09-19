@@ -37,6 +37,22 @@ export const CACHE_SCOPE_REPORT = 'report';
 export const CACHE_SCOPE_META = 'meta';
 
 /**
+ * Which *shape* of the `/meta` payload the entry under a key holds.
+ *
+ * The generation counter answers "has the data changed"; it cannot answer
+ * "has the code changed", and a deploy that adds a field to this payload
+ * leaves the pre-deploy blob addressable under the unchanged generation.
+ * Outgoing validation then rejects it and `/meta` answers 500 for everyone
+ * until an unrelated catalogue write happens to bump the counter — which on
+ * a quiet day is the next nightly sync. `v2` added the countries' `nameEn`.
+ *
+ * Bump this whenever a field is added to or removed from `MetaType`. The old
+ * entry is not deleted, merely never addressed again, which is the same
+ * mechanism the generation itself uses.
+ */
+export const CACHE_META_SHAPE = 'v2';
+
+/**
  * Below this many bytes a payload is stored uncompressed.
  *
  * Compression pays for itself many times over on a report page (this JSON

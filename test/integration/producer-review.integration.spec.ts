@@ -488,8 +488,8 @@ async function countLinked(dataSource: DataSource): Promise<number> {
 async function seedKnowledgeBase(dataSource: DataSource): Promise<void> {
   const countryId = await scalar<ID>(
     dataSource,
-    `INSERT INTO country (code, "nameUa")
-     VALUES ('${TAG.toUpperCase()}', '${TAG} country')
+    `INSERT INTO country (code, "nameUa", "nameEn")
+     VALUES ('${TAG.toUpperCase()}', '${TAG} country', '${TAG} country')
      RETURNING id`,
   );
 

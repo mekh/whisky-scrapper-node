@@ -23,6 +23,7 @@ export * from './quick-filter.interfaces';
 export * from './rate-limit.interfaces';
 export * from './report.interfaces';
 export * from './rest.interfaces';
+export * from './review.interfaces';
 export * from './scrape.interfaces';
 export * from './search.interfaces';
 export * from './session.interfaces';

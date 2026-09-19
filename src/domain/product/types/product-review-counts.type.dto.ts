@@ -3,12 +3,10 @@ import { IsInt } from 'class-validator';
 import type { ProductReviewStatusCounts } from '~types';
 
 /**
- * How the catalogue is distributed across the new-product queue.
+ * The catalogue counted by its place in the curation queue.
  *
- * A class rather than the flat inline object `producers` uses on the summary,
- * because this shape is served in two places — inside the summary and as the
- * answer to the review mutation — and the whole point of the second is that a
- * client can redraw its badges without a follow-up read.
+ * The four statuses sum to the whole `product` table, which is also the
+ * invariant that says null is the only fourth state.
  */
 export class ProductReviewCountsType implements ProductReviewStatusCounts {
   @IsInt()
@@ -21,10 +19,15 @@ export class ProductReviewCountsType implements ProductReviewStatusCounts {
   public rejected!: number;
 
   /**
-   * Bottlings that predate the queue and were deliberately not enrolled. Not
-   * work — it is the share of the catalogue nobody has ever looked at, and the
-   * number a retro-enqueue decision is made on.
+   * Predates the queue and was deliberately not enrolled in it — the number a
+   * retro-enqueue decision would be made on.
    */
   @IsInt()
   public legacy!: number;
+
+  /**
+   * How many were verified since midnight.
+   */
+  @IsInt()
+  public verifiedToday!: number;
 }

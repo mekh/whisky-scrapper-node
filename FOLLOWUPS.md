@@ -311,3 +311,74 @@ since a shop occasionally reuses a code (`Clan Denny Islay`/`Speyside`,
 person; the differing-name ones are mostly spellings (`Whyte & Mackay` vs
 `Whyte&Mackey`, `Faunder's` vs `Founder's`, a Cyrillic `Dewar's Спешел
 Резерв`) that the edit-then-merge flow now settles in one rename each.
+
+## 9. `push-digest.integration.spec.ts` reads the shared development catalogue
+
+**Status**: open (2026-09-17). **Blocked by**: nothing — found while running
+the suite for the curation-screen rebuild, and pre-existing: it reproduces on
+a pristine checkout with none of that work applied.
+
+`claims a drop once and returns it fully resolved` expects `claimDrops` to
+return exactly the one drop the fixture seeded, and gets two — the second is a
+real bottling of the development dump (`Kavalan Dastillery Select №1` at
+`Космос`), belonging to a real user's favourites. The suite seeds its own rows
+but never empties the catalogue, so whatever the dump happens to hold on the
+day counts as well.
+
+It began failing when the inbox work removed the `push_subscription EXISTS`
+clause from `CLAIM_DROPS_SQL` — correctly, since a favouriting user who never
+granted notification permission must still have their drops claimed for the
+inbox — which widened what the claim returns to every user with a favourite.
+Nothing about the digest is wrong; the test's fixture is.
+
+**Fix**: the same shape every other suite here already uses —
+`withRolledBackFixture` plus `clearCatalogue`, so the suite owns every row it
+asserts on and the shared database is left exactly as it was. The
+`producer-review` suite's own comment records why that convention exists: a
+test that reads whatever the development database holds is a test of one
+machine's history rather than of the code.
+
+## 10. `brandOrig` is never backfilled, so a `ТМ` alias reaches nothing older
+
+**Status**: open (2026-09-18). **Blocked by**: nothing — a decision, not a
+defect, and worth taking deliberately.
+
+`BrandHintUtils.fromRawName` lifts the `(Країна, ТМ Brand)` token a shop
+writes inside a listing name into `snap.brand`, so it reaches
+`product.brandOrig` and whole-string brand matching. But `brandOrig` is
+written on insert and filled only when null, and nothing re-derives it — so
+every bottling scraped **before** that shipped still has `brandOrig = NULL`.
+
+What that costs is visible on the curation screen and was measured there
+during the acceptance: `Export Bourbon Cask` and `Export Reserve` both carry
+`ТМ Cotswold` in their raw names, the screen's suggestions offer `Cotswold`
+as a candidate (the suggestions read the raw name directly), and the impact
+preview correctly answers **0 frees for every alias scope** — because the
+resolver reads `brandOrig`, which is null, and neither name contains the word.
+So the alias is useless for exactly the rows it was invented for, and each one
+has to be pinned by hand.
+
+**Fix**: one of two, and they differ in blast radius. Either a script that
+re-reads `store_product.nameOrig` and fills `product.brandOrig` where it is
+null (cheap, no scraping, reversible — the column is an observation and
+nothing ranks it), or `ReviewCommitService` writing `brandOrig` from the token
+when a person pins a producer whose spelling the raw name states. The first
+fixes the catalogue, the second fixes it one decision at a time.
+
+## 11. `pnpm reconcile-flavors` could not boot
+
+**Status**: fixed (2026-09-18), recorded because the class of defect recurs.
+
+`ReconcileModule` — the script's own tiny Nest module — listed
+`CoreWhiskyModule` and the three KB services, but not `CacheModule` or
+`ValkeyModule`. `KbReconcileService` injects `VersionedCacheService` (to bump
+the catalogue cache) and, since the curation work, `ValkeyService` (to stamp
+when the knowledge base was last applied), so the script failed at bootstrap
+with `UnknownDependenciesException` and never ran. It reproduced on a pristine
+checkout for the cache half, so the command had been broken before this work
+and the second dependency merely added a line to the same error.
+
+The lesson is the one the scripts keep teaching: a script builds its own
+module by hand, so a service gaining a dependency breaks every script that
+constructs it without the provider. Nothing type-checks that — the failure is
+at runtime, on a command nobody runs in CI.

@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ValidateNested } from 'class-validator';
+import { IsArray, IsOptional, IsString, ValidateNested } from 'class-validator';
 
 import type { ProducerPatchResult } from '~types';
 
@@ -14,4 +14,14 @@ export class ProducerPatchResultType implements ProducerPatchResult {
   @ValidateNested()
   @Type(() => KbReconcileSummaryType)
   public applied!: KbReconcileSummaryType;
+
+  /**
+   * Spellings another producer already claims, skipped rather than dropped in
+   * silence — a spelling that quietly did not take is a producer that quietly
+   * does not resolve.
+   */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  public skippedAliases?: string[];
 }

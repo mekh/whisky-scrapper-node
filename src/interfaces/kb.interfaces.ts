@@ -157,6 +157,11 @@ export interface KbIndex {
    */
   aliases: KbAliasEntry[];
   /**
+   * Every live producer's facts by id, for the lookups an alias cannot
+   * answer — a range's owner holds no spelling of its own.
+   */
+  producers: Map<ID, KbProducerFacts>;
+  /**
    * Every rule, both global and producer-scoped.
    */
   rules: KbFlavorRule[];
@@ -427,6 +432,22 @@ export interface KbReconcileRow {
    * Every flavor link the bottling carries today.
    */
   flavors: KbReconcileFlavor[];
+  /**
+   * Where the producer link came from. A `manual` link is never moved by a
+   * pass, so a what-if diff has to leave it out of the reach it reports.
+   */
+  producerSource: string | null;
+
+  /**
+   * Pack size in millilitres, so an impact list can name the bottling the way
+   * the catalogue does.
+   */
+  volumeMl: number | null;
+
+  /**
+   * Age statement in years, likewise.
+   */
+  age: number | null;
 }
 
 /**
@@ -722,83 +743,6 @@ export interface UnresolvedBrandRow {
 }
 
 /**
- * What the review screen's tabs badge themselves with.
- */
-export interface ProductReviewSummary {
-  /**
-   * Producers by review status.
-   */
-  producers: {
-    /**
-     * Confirmed by a person.
-     */
-    verified: number;
-
-    /**
-     * Live on the auto-gate's own judgement.
-     */
-    auto: number;
-
-    /**
-     * Stored and ignored until somebody looks.
-     */
-    unverified: number;
-
-    /**
-     * Ruled out by a person as not a whisky producer at all. Never resolves,
-     * never returns to the queue unless somebody puts it back.
-     */
-    rejected: number;
-  };
-
-  /**
-   * Bottlings whose whisky type the filters no longer trust.
-   */
-  untrustedTypes: number;
-
-  /**
-   * Bottlings whose country the filters no longer trust.
-   */
-  untrustedCountries: number;
-
-  /**
-   * Bottlings with **either** fact untrusted — the size of the actual queue.
-   *
-   * Deliberately not derivable on the client: `untrustedTypes +
-   * untrustedCountries` double-counts every bottling whose type and country
-   * are both untrusted, which is 892 of them, and a badge that says 2400 over
-   * a list of 1508 rows is a badge nobody can trust.
-   */
-  untrustedFacts: number;
-
-  /**
-   * Of those, how many resolve to no producer at all.
-   *
-   * The queue's two halves need different work, and this number is what lets
-   * the screen say so: the unresolved half is a **symptom** of the
-   * unresolved-producer problem and is cured a producer at a time, while the
-   * remainder is the part only a person can settle.
-   */
-  untrustedFactsUnresolved: number;
-
-  /**
-   * Unresolved cross-shop contradictions.
-   */
-  openConflicts: number;
-
-  /**
-   * Whether any brand key resolves to no producer at all — 1 when the queue is
-   * non-empty, since the full list is a separate read.
-   */
-  unresolvedBrands: number;
-
-  /**
-   * Bottlings by their place in the new-product queue.
-   */
-  products: ProductReviewStatusCounts;
-}
-
-/**
  * What a reviewer's verdict wrote, plus the queue counters as they now stand.
  *
  * The counters ride along because they are exactly what changes on the
@@ -848,279 +792,12 @@ export interface ProductReviewStatusCounts {
    * a separate decision with its own window.
    */
   legacy: number;
-}
-
-/**
- * One bottling whose type or country the filters distrust.
- */
-export interface ProductFactReviewRow {
-  /**
-   * Canonical product id — what `POST /product/update` takes.
-   */
-  id: ID;
 
   /**
-   * The bottling's canonical name.
+   * How many were verified since midnight — the "you have done this much"
+   * number the curation screen's header shows.
    */
-  name: string | null;
-
-  /**
-   * A raw listing name, so an unnamed bottling is still recognisable.
-   */
-  nameOrig: string | null;
-
-  /**
-   * The brand as the catalogue spells it.
-   */
-  brand: string | null;
-
-  /**
-   * The shop's own brand spelling, kept on the bottling. It is the key an
-   * alias is minted from when a reviewer links this row to a producer.
-   */
-  brandOrig: string | null;
-
-  /**
-   * The stored whisky type.
-   */
-  type: string | null;
-
-  /**
-   * Where that type came from.
-   */
-  typeSource: string | null;
-
-  /**
-   * The stored country code.
-   */
-  countryCode: string | null;
-
-  /**
-   * The country's Ukrainian name, for the flag's tooltip.
-   */
-  countryName: string | null;
-
-  /**
-   * The country's flag emoji. Null for a country that has none, in which case
-   * the label is shown on its own — never a tooltip with no trigger.
-   */
-  countryIcon: string | null;
-
-  /**
-   * Where that country came from.
-   */
-  countrySource: string | null;
-
-  /**
-   * The resolved producer's slug, or null when nothing resolved.
-   *
-   * This is the column that says **what to do about the row**, and it splits
-   * the queue almost cleanly in two. A bottling with no producer has no
-   * authority behind either fact, and the cure is to resolve the producer —
-   * one promotion fixes every bottling that producer makes, where editing the
-   * bottling fixes one. A bottling *with* a producer is here because the
-   * knowledge base has already said all it can (a producer whose range spans
-   * several types states no `defaultTypeName`), so a person deciding is the
-   * last resort rather than the first.
-   *
-   * Measured when this was added: 1395 of the 1508 rows had no producer.
-   */
-  producerSlug: string | null;
-
-  /**
-   * How many shops carry the bottling — the reason to prioritise it.
-   */
-  storeCount: number;
-
-  /**
-   * A few of the shops' own pages for this bottling, in-stock first. Capped:
-   * a bottling can be listed by nineteen shops and the row still has to be
-   * readable.
-   */
-  stores: ReviewStoreLink[];
-}
-
-/**
- * One shop's own page for a bottling under review.
- */
-export interface ReviewStoreLink {
-  /**
-   * The shop's slug, for its monogram.
-   */
-  slug: string;
-
-  /**
-   * The shop's display name.
-   */
-  name: string;
-
-  /**
-   * The listing's URL, as the shop published it.
-   */
-  url: string;
-
-  /**
-   * Whether the shop still lists it. An out-of-stock page is still worth
-   * reading, so it is offered rather than hidden — just marked.
-   */
-  inStock: boolean;
-}
-
-/**
- * One bottling in the new-product queue.
- *
- * The field set is chosen so a parse error is visible without opening
- * anything: `name` beside `nameOrig` is the comparison the whole screen is
- * for, and the specs beside them are what the cleaner lifted out of that raw
- * name.
- */
-export interface ProductReviewQueueRow {
-  /**
-   * Canonical product id — what the review mutation and `POST /product/update`
-   * both take.
-   */
-  id: ID;
-
-  /**
-   * The bottling's canonical name, as the cleaner left it.
-   */
-  name: string | null;
-
-  /**
-   * The longest raw listing name behind it. Read together with `name`, this
-   * pair *is* the review: everything the cleaner dropped is the difference
-   * between them, and everything it dropped wrongly is the defect.
-   */
-  nameOrig: string | null;
-
-  /**
-   * The frozen match key.
-   *
-   * On screen nowhere else, and it belongs here because the key is derived
-   * once and never re-derived: a listing keyed wrongly is a duplicate that
-   * costs a manual merge later, and this is the only moment it is cheap to
-   * notice. Null means the row can never be matched automatically.
-   */
-  matchKey: string | null;
-
-  /**
-   * Age statement in years.
-   *
-   * Age and volume are **components of the frozen key**, so a wrong one is
-   * not a cosmetic error — it decides which listings land on this row. A
-   * Cyrillic `уо` the reader once did not know collapsed four Dalmore ages
-   * onto one bottling.
-   */
-  age: number | null;
-
-  /**
-   * Where the age came from.
-   */
-  ageSource: string | null;
-
-  /**
-   * Strength.
-   */
-  abv: number | null;
-
-  /**
-   * Where the strength came from.
-   */
-  abvSource: string | null;
-
-  /**
-   * Pack size in millilitres — the sum of a gift set's bottles.
-   */
-  volumeMl: number | null;
-
-  /**
-   * Where the volume came from.
-   */
-  volumeSource: string | null;
-
-  /**
-   * The stored whisky type.
-   */
-  type: string | null;
-
-  /**
-   * Where that type came from.
-   */
-  typeSource: string | null;
-
-  /**
-   * The stored country code.
-   */
-  countryCode: string | null;
-
-  /**
-   * The country's Ukrainian name, for the flag's tooltip.
-   */
-  countryName: string | null;
-
-  /**
-   * The country's flag emoji, or null for a country that has none.
-   */
-  countryIcon: string | null;
-
-  /**
-   * Where that country came from.
-   */
-  countrySource: string | null;
-
-  /**
-   * The label a report would print — the resolved producer's name, falling
-   * back to the bottler's.
-   */
-  brand: string | null;
-
-  /**
-   * The resolved producer's slug, or null when nothing resolved.
-   */
-  producerSlug: string | null;
-
-  /**
-   * The spelling a shop used.
-   *
-   * Worth a column here rather than anywhere else: a null `producerSlug`
-   * beside a non-null `brandOrig` is the signal "the knowledge base does not
-   * know this maker yet", and on a brand-new bottling that is the commonest
-   * real defect.
-   */
-  brandOrig: string | null;
-
-  /**
-   * The bottling's flavour tags. The LLM pass answers for new products, so a
-   * wrong tag is a parse error like any other.
-   */
-  flavors: string[];
-
-  /**
-   * How many shops carry it in stock.
-   */
-  storeCount: number;
-
-  /**
-   * A few of the shops' own pages, in-stock first — the fastest way to check
-   * what the listing actually said.
-   */
-  stores: ReviewStoreLink[];
-
-  /**
-   * Where the row sits in the queue. Echoed so one row renderer serves all
-   * three buckets.
-   */
-  reviewStatus: string | null;
-
-  /**
-   * When a person last decided about it. Null while it is still `pending`.
-   */
-  reviewedAt: Date | null;
-
-  /**
-   * When a sync first created the row.
-   */
-  createdAt: Date;
+  verifiedToday: number;
 }
 
 /**
@@ -1141,6 +818,17 @@ export interface ProducerPatchResult {
    * What re-resolving the catalogue against the edit wrote.
    */
   applied: KbReconcileSummary;
+
+  /**
+   * Spellings the create asked for that another producer already claims, and
+   * which were therefore skipped.
+   *
+   * Reported rather than dropped in silence: the row is written either way,
+   * so refusing the create over one duplicate would leave the person with
+   * nothing — but a spelling that quietly did not take is a producer that
+   * quietly does not resolve.
+   */
+  skippedAliases?: string[];
 }
 
 /**
@@ -1286,6 +974,59 @@ export interface ProducerRuleInput {
 }
 
 /**
+ * A reviewer's new name-pattern rule, as the request states it. Exactly one of
+ * `peatProfile` or the `flavorName`/`effect` pair must be set — the XOR the
+ * table's CHECK constraint enforces, validated in the domain layer so it
+ * answers 400 rather than 500.
+ */
+export interface ProducerRuleCreateInput {
+  /**
+   * The pattern, in whatever spelling the reviewer typed; normalized to a
+   * `KbKeyUtils.key` before it is stored.
+   */
+  pattern: string;
+
+  /**
+   * `word` (default) or `prefix` — the latter exists for Ukrainian
+   * inflection.
+   */
+  matchMode?: FlavorRuleMatchMode;
+
+  /**
+   * The peat band, for a peat rule. Never `unknown`.
+   */
+  peatProfile?: PeatProfile;
+
+  /**
+   * The flavour tag name, for a tag rule. Resolved against the `flavor`
+   * table; an unknown name is rejected rather than coined.
+   */
+  flavorName?: string;
+
+  /**
+   * `require` or `forbid`. Never `baseline`, which belongs to the house
+   * style.
+   */
+  effect?: KbFlavorEffect;
+
+  /**
+   * Higher wins; defaults to 60, the producer-scoped convention.
+   */
+  priority?: number;
+
+  /**
+   * Why the rule exists.
+   */
+  note?: string;
+}
+
+/**
+ * A validated rule whose producer does not exist yet, because the row it
+ * belongs to is written in the same transaction.
+ */
+export type ProducerRuleDraft = Omit<ProducerRuleInput, 'producerId'>;
+
+/**
  * Everything a reviewer needs to judge one producer.
  *
  * The three extra lists are not decoration: `producer.peatProfile` means the
@@ -1402,86 +1143,6 @@ export interface ProducerOptionRow {
    * The country's flag emoji, or null.
    */
   countryIcon: string | null;
-}
-
-/**
- * The counts behind the review screen's facts badge.
- */
-export interface UntrustedFactCounts {
-  /**
-   * Bottlings whose type is untrusted.
-   */
-  type: number;
-
-  /**
-   * Bottlings whose country is untrusted.
-   */
-  country: number;
-
-  /**
-   * Bottlings with either — the distinct total, always at most the sum.
-   */
-  either: number;
-
-  /**
-   * Of `either`, how many resolve to no producer.
-   */
-  eitherUnresolved: number;
-}
-
-/**
- * One unresolved cross-shop contradiction, resolved to readable labels.
- */
-export interface ReviewConflictRow {
-  /**
-   * The bottling whose stored fact is contradicted.
-   */
-  productId: ID;
-
-  /**
-   * The bottling's name.
-   */
-  productName: string | null;
-
-  /**
-   * The shop making the claim.
-   */
-  storeId: ID;
-
-  /**
-   * That shop's slug.
-   */
-  storeSlug: string;
-
-  /**
-   * Which fact is disputed.
-   */
-  attribute: string;
-
-  /**
-   * The catalogue's value, as a name or code rather than an id.
-   */
-  storedValue: string | null;
-
-  /**
-   * The shop's value, likewise.
-   */
-  claimedValue: string | null;
-
-  /**
-   * Where the catalogue's value came from.
-   */
-  storedSource: string | null;
-
-  /**
-   * How many syncs have seen the claim.
-   */
-  seenCount: number;
-
-  /**
-   * When it was last seen.
-   */
-  lastSeenAt: Date;
 }
 
 /**
@@ -1741,4 +1402,68 @@ export interface ProducerCreateInput {
    * added, so this is for the shop spellings that differ from it.
    */
   aliases?: string[];
+
+  /**
+   * Name-pattern rules stored with the row, in the same transaction: a rule
+   * is scoped to a producer id, which exists only once the row is written.
+   */
+  rules?: ProducerRuleCreateInput[];
+}
+
+/**
+ * One spelling as a create writes it — normalized, with the scope it is
+ * matched under.
+ */
+export interface ProducerAliasWrite {
+  /**
+   * The normalized alias key.
+   */
+  key: string;
+
+  /**
+   * Where the alias may be matched.
+   */
+  scope: ProducerAliasScope;
+}
+
+/**
+ * Everything one create writes, validated and normalized by the domain layer
+ * so the transaction that writes it can only fail on the database's own
+ * constraints.
+ */
+export interface ProducerCreateWrite {
+  /**
+   * The producer's own columns.
+   */
+  producer: ProducerCreateInput;
+
+  /**
+   * The slug to store, already derived from the name.
+   */
+  slug: string;
+
+  /**
+   * The spellings to point at the new row, the name's own included.
+   */
+  aliases: ProducerAliasWrite[];
+
+  /**
+   * The rules to store; each is stamped with the new row's id.
+   */
+  rules: ProducerRuleDraft[];
+}
+
+/**
+ * What one create wrote.
+ */
+export interface ProducerCreateResult {
+  /**
+   * The row as it was written.
+   */
+  producer: ProducerReviewRow;
+
+  /**
+   * Spellings another producer already claims, which were skipped.
+   */
+  skippedAliases: string[];
 }

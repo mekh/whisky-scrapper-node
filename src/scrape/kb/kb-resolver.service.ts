@@ -8,7 +8,6 @@ import {
 } from '~enums';
 import {
   ID,
-  KbAliasEntry,
   KbFlavorRule,
   KbIndex,
   KbPeatReason,
@@ -102,7 +101,7 @@ export class KbResolverService {
     const nameKey = KbKeyUtils.normalize(input.name ?? '');
     const brandKey = input.brand ? KbKeyUtils.key(input.brand) : null;
 
-    const match = this.matchProducer(nameKey, brandKey, index.aliases);
+    const match = this.matchProducer(nameKey, brandKey, index);
     const peat = this.resolvePeat(nameKey, match.producer, index.rules);
     const tags = this.resolveTags(nameKey, match.producer, index);
 
@@ -130,27 +129,27 @@ export class KbResolverService {
    *
    * @param nameKey - The normalized, space-wrapped product name.
    * @param brandKey - The normalized brand value, or null.
-   * @param aliases - The alias index, longest key first.
+   * @param index - The loaded knowledge base.
    * @returns The chosen producer and bottler, either of which may be null.
    */
   private matchProducer(
     nameKey: string,
     brandKey: string | null,
-    aliases: KbAliasEntry[],
+    index: KbIndex,
   ): KbProducerMatch {
-    const byBrand = KbAliasUtils.matchByBrand(brandKey, aliases)?.producer
-      ?? null;
+    const byBrand = KbAliasUtils.matchByBrand(brandKey, index.aliases)
+      ?.producer ?? null;
     const isBottlerBrand = byBrand?.kind === ProducerKind.BOTTLER;
     const inName = KbAliasUtils.matchInName(
       nameKey,
-      aliases,
+      index.aliases,
       byBrand?.id ?? null,
     )?.producer ?? null;
     const chosen = isBottlerBrand
       ? inName
       : this.arbitrate(byBrand, inName);
 
-    const bottler = this.bottlerOf(chosen, inName, byBrand);
+    const bottler = this.bottlerOf(chosen, inName, byBrand, index.producers);
 
     /**
      * A bottler never made the whisky it bottles, so it may never end up in
@@ -205,23 +204,33 @@ export class KbResolverService {
   }
 
   /**
-   * Finds the bottler for a non-bottler brand match.
+   * Finds the bottler that released a bottling.
    *
-   * Two ways one is found: the product name names a bottler outright, or the
-   * resolved producer is a range a bottler owns — which is how `Big Peat`
-   * reports Douglas Laing without the company appearing in the title at all.
+   * The resolved producer's recorded owner decides first: a range belongs to
+   * the bottler that owns it, while a second bottler in the title is more
+   * often the retailer that commissioned the cask.
    *
    * @param producer - The chosen producer, or null.
    * @param inName - The in-name match, which may itself be a bottler.
    * @param byBrand - The brand match.
-   * @returns The bottler as facts, or null. Only the id is knowable here for a
-   *   range's owner, so that case returns a minimal record.
+   * @param producers - Every live producer's facts by id, since a range's
+   *   owner is named by no alias the bottling carries.
+   * @returns The bottler as facts, or null.
    */
   private bottlerOf(
     producer: KbProducerFacts | null,
     inName: KbProducerFacts | null,
     byBrand: KbProducerFacts | null,
+    producers: Map<ID, KbProducerFacts>,
   ): KbProducerFacts | null {
+    const owner = producer?.bottlerId
+      ? producers.get(producer.bottlerId) ?? null
+      : null;
+
+    if (owner && owner.id !== producer?.id) {
+      return owner;
+    }
+
     const named = [inName, byBrand]
       .find((candidate) => candidate?.kind === ProducerKind.BOTTLER);
 

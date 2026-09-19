@@ -225,6 +225,17 @@ export enum ProducerAliasScope {
    */
   NAME = 'name',
   /**
+   * Matched at the **start** of a product name, and as a whole brand value.
+   *
+   * Exempt from {@link KB_NAME_ALIAS_MIN_LENGTH}, which is what it exists for:
+   * `hyde` is four letters, so brand scope is the only place it could live,
+   * and eleven bottlings of a shop that states no brand were therefore
+   * unreachable. Shops write names brand-first, so anchoring at position 0 is
+   * safe where `any` is not — `blue` anywhere in a name takes every
+   * `Johnnie Walker Blue Label`, at the start it takes two.
+   */
+  LEAD = 'lead',
+  /**
    * Matched both ways.
    */
   ANY = 'any',

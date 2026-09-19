@@ -4,8 +4,15 @@ import { DataSource } from 'typeorm';
 import { CoreFlavorService } from '~core/flavor';
 import { CoreProducerService } from '~core/producer';
 import { CoreProductService } from '~core/product';
-import { KbStatus, PeatProfile, ProducerKind } from '~enums';
+import {
+  KbStatus,
+  PeatProfile,
+  ProducerIssueCode,
+  ProducerKind,
+  ReviewIssueSeverity,
+} from '~enums';
 import { VersionedCacheService } from '~lib/cache';
+import { ValkeyService } from '~lib/valkey';
 import {
   KbApplyService,
   KbReconcileService,
@@ -15,17 +22,19 @@ import type {
   ID,
   KbAliasEntry,
   ProducerDetail,
+  ProducerQueueRow,
   ProducerReviewRow,
-  ProductFactReviewRow,
-  ProductReviewSummary,
+  ReviewProducerSummary,
   TypePaginated,
-  UntrustedFactCounts,
 } from '~types';
 
 import type { KbReconcileRun } from '../../src/scrape/kb/kb.interfaces';
 
 import { ProducerReachService } from '../../src/domain/product/producer-reach.service';
-import { ProductReviewService } from '../../src/domain/product/product-review.service';
+import {
+  ProducerReviewService,
+} from '../../src/domain/product/producer-review.service';
+import { ProducerRuleFactory } from '../../src/domain/product/producer-rule.factory';
 
 import {
   clearCatalogue,
@@ -69,17 +78,17 @@ interface ReviewFixture {
   /**
    * The withheld queue, ranked.
    */
-  withheldPage: TypePaginated<ProducerReviewRow>;
+  withheldPage: TypePaginated<ProducerQueueRow>;
 
   /**
    * The `auto` tab.
    */
-  autoPage: TypePaginated<ProducerReviewRow>;
+  autoPage: TypePaginated<ProducerQueueRow>;
 
   /**
    * The `verified` tab.
    */
-  verifiedPage: TypePaginated<ProducerReviewRow>;
+  verifiedPage: TypePaginated<ProducerQueueRow>;
 
   /**
    * Every withheld row, unpaged, as the listing returns it.
@@ -87,9 +96,14 @@ interface ReviewFixture {
   fullUnverified: { rows: ProducerReviewRow[]; total: number };
 
   /**
-   * The tab counters.
+   * The rejected producers' own count, read straight from SQL.
    */
-  summary: ProductReviewSummary;
+  rejectedCount: number;
+
+  /**
+   * The producers queue's counters.
+   */
+  summary: ReviewProducerSummary;
 
   /**
    * Ids of the producers the fixture rejected.
@@ -102,29 +116,9 @@ interface ReviewFixture {
   aliasIndex: KbAliasEntry[];
 
   /**
-   * The untrusted-fact queue, both halves.
+   * The producers queue, every status.
    */
-  factsPage: { rows: ProductFactReviewRow[]; total: number };
-
-  /**
-   * The untrusted-fact queue restricted to bottlings that resolve.
-   */
-  resolvedFacts: { rows: ProductFactReviewRow[]; total: number };
-
-  /**
-   * The untrusted-fact queue restricted to bottlings that do not.
-   */
-  unresolvedFacts: { rows: ProductFactReviewRow[]; total: number };
-
-  /**
-   * The badge counters behind the facts tab.
-   */
-  factCounts: UntrustedFactCounts;
-
-  /**
-   * The same `either` count, taken straight from SQL.
-   */
-  directEither: number;
+  queuePage: TypePaginated<ProducerQueueRow>;
 
   /**
    * Bottlings linked to a producer before the dry run.
@@ -184,17 +178,22 @@ describe('producer review (integration)', () => {
       {
         bumpAfterCommit: (): void => undefined,
       } as unknown as VersionedCacheService,
+      {
+        getClient: () => ({
+          get: async (): Promise<string | null> => null,
+          set: async (): Promise<void> => undefined,
+        }),
+      } as unknown as ValkeyService,
     );
 
-    const review = new ProductReviewService(
+    const review = new ProducerReviewService(
       producers,
       products,
-      moduleRef.get(CoreFlavorService, { strict: false }),
+      new ProducerRuleFactory(
+        moduleRef.get(CoreFlavorService, { strict: false }),
+      ),
       new ProducerReachService(producers, products, resolver),
       reconcile,
-      {
-        bumpAfterCommit: (): void => undefined,
-      } as unknown as VersionedCacheService,
     );
 
     fixture = await withRolledBackFixture(async () => {
@@ -218,17 +217,18 @@ describe('producer review (integration)', () => {
 
       return {
         detail: await review.producerDetail(parent),
-        withheldPage: await review.producersPage({
+        queuePage: await review.queue({ page: 1, perPage: 50 }),
+        withheldPage: await review.queue({
           status: KbStatus.UNVERIFIED,
           page: 1,
           perPage: 20,
         }),
-        autoPage: await review.producersPage({
+        autoPage: await review.queue({
           status: KbStatus.AUTO,
           page: 1,
           perPage: 20,
         }),
-        verifiedPage: await review.producersPage({
+        verifiedPage: await review.queue({
           status: KbStatus.VERIFIED,
           page: 1,
           perPage: 20,
@@ -240,22 +240,8 @@ describe('producer review (integration)', () => {
         ),
         summary: await review.summary(),
         rejectedIds: rejected.map((row) => row.id),
+        rejectedCount: rejected.length,
         aliasIndex: await producers.loadAliasIndex(),
-        factsPage: await products.findUntrustedFacts(undefined, 50, 0),
-        resolvedFacts: await products.findUntrustedFacts(
-          undefined,
-          50,
-          0,
-          'resolved',
-        ),
-        unresolvedFacts: await products.findUntrustedFacts(
-          undefined,
-          50,
-          0,
-          'unresolved',
-        ),
-        factCounts: await products.countUntrustedFacts(),
-        directEither: await countUntrustedDirectly(dataSource),
         linkedBefore,
         linkedAfter,
         dryRun,
@@ -336,13 +322,16 @@ describe('producer review (integration)', () => {
   });
 
   /**
-   * Null is the contract for "this tab shows a real count instead" — a
-   * `verified`/`auto` row's `productCount` is already a fact, so nothing
-   * computes a second, redundant ranking number for it.
+   * A live producer is queued only for a reason. The `auto` slice holds
+   * exactly the row with no alias — the one `${TAG}-auto`, complete in every
+   * field, is absent, which is the difference between this and the old
+   * screen's first tab, a listing of every row by status. `potentialReach` is
+   * null on the live slices for the same reason it exists on the withheld
+   * one: there `productCount` is already a real answer.
    */
-  it('leaves potentialReach null once a producer has a real count', () => {
+  it('queues a live producer only when a detector fires', () => {
     expect(fixture.autoPage.data.map((row) => row.slug))
-      .toEqual([`${TAG}-auto`]);
+      .toEqual([`${TAG}-no-alias`]);
 
     expect(fixture.verifiedPage.data.map((row) => row.slug).sort())
       .toEqual([`${TAG}-child-a`, `${TAG}-child-b`, `${TAG}-parent`]);
@@ -360,7 +349,10 @@ describe('producer review (integration)', () => {
    */
   it('keeps a rejected producer out of the queue and the resolver', () => {
     expect(fixture.rejectedIds).toHaveLength(1);
-    expect(fixture.summary.producers.rejected).toBe(1);
+    expect(fixture.rejectedCount).toBe(1);
+
+    expect(fixture.queuePage.data.map((row) => row.id))
+      .not.toContain(fixture.rejectedIds[0]);
 
     expect(fixture.fullUnverified.rows.map((row) => row.slug).sort())
       .toEqual([
@@ -379,65 +371,50 @@ describe('producer review (integration)', () => {
   });
 
   /**
-   * The actual regression this pins: the client used to sum the two
-   * per-field counts, which double-counts every bottling untrusted on both
-   * fields at once. The fixture plants exactly one such bottling, so `either`
-   * is strictly below the sum rather than merely not above it.
+   * The producers queue exists because nothing listed a producer with a real
+   * problem: 0 rows are `unverified` today, so the old screen's first tab was
+   * empty while the 18 with no alias and the 8 whose every spelling is
+   * unreachable were invisible. The fixture plants one of each.
    */
-  it('counts the facts badge distinctly instead of summing the fields', () => {
-    expect(fixture.factCounts.either).toBe(fixture.directEither);
-    expect(fixture.factCounts.type).toBe(2);
-    expect(fixture.factCounts.country).toBe(2);
-    expect(fixture.factCounts.either).toBe(3);
-  });
-
-  /**
-   * The queue's two halves are two different jobs — a bottling that resolves
-   * to nothing is cured a producer at a time, one that resolves is a call
-   * only a person can make — so the split has to be a real filter and the
-   * halves have to add up.
-   */
-  it('splits the facts queue by whether the bottling resolves', () => {
-    expect(fixture.resolvedFacts.total + fixture.unresolvedFacts.total)
-      .toBe(fixture.factsPage.total);
-
-    fixture.resolvedFacts.rows.forEach((row) => {
-      expect(row.producerSlug).not.toBeNull();
-    });
-
-    fixture.unresolvedFacts.rows.forEach((row) => {
-      expect(row.producerSlug).toBeNull();
-    });
-
-    expect(fixture.factCounts.eitherUnresolved)
-      .toBe(fixture.unresolvedFacts.total);
-  });
-
-  /**
-   * `stores` is capped at five and deduped per shop (`DISTINCT ON`) — a shop
-   * that lists the same bottling under two SKUs (boxed and plain) used to
-   * take two of the five slots instead of one. The fixture lists one bottling
-   * in six shops, one of them twice, which is the only arrangement that fails
-   * on either bug.
-   */
-  it('dedupes and caps the store links on a facts row', () => {
-    const widely = fixture.factsPage.rows.find(
-      (row) => row.name === `${TAG} Widely Carried`,
+  it('queues a producer nothing can ever resolve to', () => {
+    const noAlias = fixture.queuePage.data.find(
+      (row) => row.slug === `${TAG}-no-alias`,
     );
 
-    expect(widely).toBeDefined();
-    expect(widely?.storeCount).toBe(SHOPS);
-    expect(widely?.stores).toHaveLength(5);
+    expect(noAlias).toBeDefined();
+    expect(noAlias?.aliasCount).toBe(0);
+    expect(noAlias?.issues.map((issue) => issue.code))
+      .toContain(ProducerIssueCode.NO_ALIAS);
+  });
 
-    const slugs = widely?.stores.map((store) => store.slug) ?? [];
+  /**
+   * Every code the queue reports carries the severity the client colours its
+   * chips by, from the one map both sides read.
+   */
+  it('explains every code with a severity', () => {
+    const codes = fixture.queuePage.data.flatMap((row) => row.issues);
 
-    expect(new Set(slugs).size).toBe(slugs.length);
+    expect(codes.length).toBeGreaterThan(0);
 
-    fixture.factsPage.rows.forEach((row) => {
-      row.stores.forEach((store) => {
-        expect(store.url.length).toBeGreaterThan(0);
-      });
+    codes.forEach((issue) => {
+      expect(Object.values(ReviewIssueSeverity)).toContain(issue.severity);
     });
+  });
+
+  /**
+   * The counters and the page have to be the same statement's answer, or a
+   * chip opens a page that contradicts the number on it.
+   */
+  it('counts the queue exactly as the page lists it', () => {
+    expect(fixture.summary.open).toBe(fixture.queuePage.total);
+
+    const tallied = fixture.queuePage.data
+      .filter((row) =>
+        row.issues.some((issue) => issue.code === ProducerIssueCode.NO_ALIAS)
+      ).length;
+
+    expect(fixture.summary.byIssue[ProducerIssueCode.NO_ALIAS])
+      .toBe(tallied);
   });
 
   /**
@@ -501,24 +478,6 @@ async function countLinked(dataSource: DataSource): Promise<number> {
 }
 
 /**
- * Counts the untrusted-fact queue straight from SQL, as the check the
- * repository's own `either` count is measured against.
- *
- * @param dataSource - The suite's data source.
- * @returns How many bottlings carry an untrusted type or country.
- */
-async function countUntrustedDirectly(
-  dataSource: DataSource,
-): Promise<number> {
-  return scalar<number>(
-    dataSource,
-    `SELECT count(*)::int FROM product p
-     WHERE (p."typeId" IS NOT NULL AND p."typeSource" = 'llm')
-        OR (p."countryId" IS NOT NULL AND p."countrySource" = 'legacy')`,
-  );
-}
-
-/**
  * Installs the suite's own knowledge base: a parent with two peated child
  * lines, one `auto` row, three withheld rows, one `rejected` row, an alias
  * for each, and the two global peat rules.
@@ -555,7 +514,10 @@ async function seedKnowledgeBase(dataSource: DataSource): Promise<void> {
         NULL, NULL, '${PeatProfile.HEAVY}', '${KbStatus.UNVERIFIED}'),
        ('${TAG}-withheld-3', '${TAG} Withheld Three',
         '${ProducerKind.BRAND}', NULL, NULL, '${PeatProfile.HEAVY}',
-        '${KbStatus.UNVERIFIED}')
+        '${KbStatus.UNVERIFIED}'),
+       ('${TAG}-no-alias', '${TAG} No Alias', '${ProducerKind.DISTILLERY}',
+        'speyside', 'single malt', '${PeatProfile.NONE}',
+        '${KbStatus.AUTO}')
      ) AS v(slug, name, kind, region, type, peat, status)`,
     [countryId],
   );
@@ -576,7 +538,8 @@ async function seedKnowledgeBase(dataSource: DataSource): Promise<void> {
   await dataSource.query(
     `INSERT INTO producer_alias (key, "producerId", scope)
      SELECT replace(d.slug, '-', ' '), d.id, 'any'
-     FROM producer d WHERE d.slug LIKE '${TAG}-%'`,
+     FROM producer d
+     WHERE d.slug LIKE '${TAG}-%' AND d.slug <> '${TAG}-no-alias'`,
   );
 
   await dataSource.query(

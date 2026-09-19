@@ -1,6 +1,8 @@
 import { TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 
+import { ProductReviewStatus } from '~enums';
+
 import { CorePriceSnapshotService } from '~core/price-snapshot';
 import { CoreProductService } from '~core/product';
 import { CoreStoreProductService } from '~core/store-product';
@@ -153,8 +155,21 @@ describe('current-rows SQL equivalence (integration)', () => {
     let currentLatest: string | null;
 
     beforeAll(async () => {
+      /*
+        `findCurrentRows` appends two predicates of its own at the call site,
+        and the reference has to carry both or the comparison stops being
+        about the rewrite. The rejected filter was added to the read *after*
+        the window form was retired, so a reference without it agreed only
+        while nothing in the catalogue had been rejected — which held until
+        the curation screen rejected its first bottling.
+      */
       const legacy = await dataSource.query(
-        `${LEGACY_CURRENT_SQL} AND sp."inStock"`,
+        `${LEGACY_CURRENT_SQL}
+           AND sp."inStock"
+           AND (
+             SELECT pr."reviewStatus" FROM product pr
+             WHERE pr.id = sp."productId"
+           ) IS DISTINCT FROM '${ProductReviewStatus.REJECTED}'`,
       ) as ReportCurrentRow[];
 
       const rewritten = await offers.findCurrentRows({});

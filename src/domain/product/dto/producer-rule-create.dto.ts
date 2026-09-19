@@ -14,7 +14,7 @@ import {
 import { FLAVOR_RULE_PATTERN_MAX_LENGTH } from '~constants';
 import { FlavorRuleMatchMode, KbFlavorEffect, PeatProfile } from '~enums';
 
-import type { ProducerRuleCreateInput } from '../product-review.interfaces';
+import type { ProducerRuleCreateInput } from '~types';
 
 /**
  * The effects a reviewer's tag rule may state. `baseline` is deliberately

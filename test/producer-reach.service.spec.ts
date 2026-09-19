@@ -84,6 +84,9 @@ function row(
     typeSource: null,
     producerId: null,
     bottlerId: null,
+    producerSource: null,
+    volumeMl: null,
+    age: null,
     flavorsCuratedAt: null,
     flavors: [],
     ...over,
@@ -101,6 +104,9 @@ function row(
 function liveIndex(aliases: KbAliasEntry[]): KbIndex {
   return {
     aliases,
+    producers: new Map(
+      aliases.map((alias) => [alias.producer.id, alias.producer]),
+    ),
     rules: [],
     producerFlavors: new Map(),
     peatFlavorIds: { peated: null, smoky: null },

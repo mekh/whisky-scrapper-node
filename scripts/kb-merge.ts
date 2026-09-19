@@ -544,8 +544,13 @@ function mergeAliases(
       ? row.scope as ProducerAliasScope
       : ProducerAliasScope.BRAND;
 
+    /**
+     * `lead` is exempt from the floor by design — it anchors at the start of
+     * a name, which is what makes a four-letter key safe there.
+     */
     if (
       scope !== ProducerAliasScope.BRAND
+      && scope !== ProducerAliasScope.LEAD
       && key.length < KB_NAME_ALIAS_MIN_LENGTH
     ) {
       report.downgraded.push(`alias '${key}' -> brand scope (too short)`);

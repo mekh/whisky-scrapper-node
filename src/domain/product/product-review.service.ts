@@ -1,79 +1,83 @@
 import { Injectable } from '@nestjs/common';
 
-import { CACHE_GENERATION_CATALOGUE } from '~constants';
-import { CoreFlavorService } from '~core/flavor';
+import {
+  CACHE_GENERATION_CATALOGUE,
+  REVIEW_PAGE_SIZE,
+  REVIEW_SUGGESTION_LIMIT,
+} from '~constants';
 import { CoreProducerService } from '~core/producer';
 import { CoreProductService } from '~core/product';
-import { FlavorRuleMatchMode, KbStatus, ProductReviewStatus } from '~enums';
-import { BadRequestError, DuplicateError, NotFoundError } from '~errors';
+import { KbStatus, ReviewIssueCode } from '~enums';
+import { NotFoundError } from '~errors';
 import { VersionedCacheService } from '~lib/cache';
 import type {
   ID,
+  KbAliasEntry,
+  KbProducerFacts,
   KbReconcileSummary,
-  ProducerDetail,
-  ProducerPatchResult,
-  ProducerProductRow,
-  ProducerReviewRow,
-  ProducerRuleInput,
-  ProductFactReviewRow,
-  ProductReviewQueueRow,
   ProductReviewStatusResult,
-  ProductReviewSummary,
-  ReviewConflictRow,
+  ProductSiblingFactRow,
+  ProductSuggestionSourceRow,
+  ReviewCandidateVia,
+  ReviewInertHitIds,
+  ReviewInertHits,
+  ReviewProducerCandidate,
+  ReviewQueueQuery,
+  ReviewQueueRow,
+  ReviewSiblings,
+  ReviewSuggestions,
+  ReviewSummary,
   TypePaginated,
 } from '~types';
-import { KbKeyUtils } from '~utils';
+import { BrandHintUtils, KbAliasUtils, KbKeyUtils } from '~utils';
 
 import { KbReconcileService } from '~scrape/kb';
 
 import { ProducerReachService } from './producer-reach.service';
+import { ProducerReviewService } from './producer-review.service';
 
-import type {
-  ProducerPatchInput,
-  ProducerRuleCreateInput,
-  ProductReviewStatusInput,
-  ReviewConflictQuery,
-  ReviewFactQuery,
-  ReviewProducerQuery,
-  ReviewQueueQuery,
-} from './product-review.interfaces';
+import type { ProductReviewStatusInput } from './product-review.interfaces';
 
 /**
- * Default page size for every review listing.
+ * How good each kind of producer evidence is, best first. A maker a shop
+ * stated outright beats one merely named in a title.
  */
-const PAGE_SIZE = 50;
+const CANDIDATE_RANK: Readonly<Record<ReviewCandidateVia, number>> = {
+  brandOrig: 0,
+  'tm-token': 1,
+  'unreachable-alias': 2,
+  'name-word': 3,
+  similar: 4,
+};
 
 /**
- * Default priority of a reviewer's rule — the producer-scoped convention the
- * seeds use. Negations sit at 100 and beat it.
+ * Shortest word a listing URL's slug may contribute as a hint. Below this it
+ * is a volume, a size or a stray letter.
  */
-const DEFAULT_RULE_PRIORITY = 60;
+const URL_HINT_MIN_LENGTH = 3;
 
 /**
- * Postgres unique-violation error code, mapped to a 409.
- */
-const UNIQUE_VIOLATION = '23505';
-
-/**
- * The read and write side of the curation screen.
+ * The bottlings half of the curation screen: one queue of whiskies that need a
+ * person, every reason each is in it, and the verdict that takes it out.
  *
- * It exists because the knowledge base ships mostly **withheld**: the auto-gate
- * requires a positive peat claim to carry independent corroboration, so roughly
- * three producers in five are stored and ignored until a person looks at them.
- * Without somewhere to look, that research is simply lost, and the catalogue
- * keeps the honest-but-thin answer forever.
+ * The screen exists because nothing else puts a new row in front of anybody. A
+ * sync mints a bottling from whatever a shop printed and the name cleaner, the
+ * age reader and the flavour passes all guess; a truncated name, an age read
+ * out of prose, a gift set recorded as one bottle or a bag of drink ice filed
+ * under whisky sat in the reports until somebody tripped over it.
  *
- * The same screen carries the two other things nobody could otherwise see: the
- * facts still sourced `llm` or `legacy`, which the filters now distrust, and
- * the cross-shop contradictions the scrape logs but nothing surfaces.
+ * Membership is the union of the detectors: a bottling is queued when it is
+ * neither `verified` nor `rejected` **and** something fires. The detectors
+ * themselves live in one SQL fragment, so the chip on a row and the chip in
+ * the filter are the same object.
  */
 @Injectable()
 export class ProductReviewService {
-  private readonly producers: CoreProducerService;
-
   private readonly products: CoreProductService;
 
-  private readonly flavors: CoreFlavorService;
+  private readonly coreProducers: CoreProducerService;
+
+  private readonly producers: ProducerReviewService;
 
   private readonly reach: ProducerReachService;
 
@@ -82,16 +86,16 @@ export class ProductReviewService {
   private readonly cache: VersionedCacheService;
 
   public constructor(
-    producers: CoreProducerService,
     products: CoreProductService,
-    flavors: CoreFlavorService,
+    coreProducers: CoreProducerService,
+    producers: ProducerReviewService,
     reach: ProducerReachService,
     reconcile: KbReconcileService,
     cache: VersionedCacheService,
   ) {
-    this.producers = producers;
     this.products = products;
-    this.flavors = flavors;
+    this.coreProducers = coreProducers;
+    this.producers = producers;
     this.reach = reach;
     this.reconcile = reconcile;
     this.cache = cache;
@@ -101,15 +105,9 @@ export class ProductReviewService {
    * Applies the knowledge base to the catalogue.
    *
    * This is the other half of every decision the screen records. Promoting a
-   * producer stores a claim and changes nothing a filter reads: no bottling
-   * points at that producer until the catalogue is re-resolved, which is why a
-   * reviewer can promote two producers and watch the review queue not move. A
-   * store sync re-resolves only what that run touched, so on its own it
-   * applies a promotion in unpredictable instalments.
-   *
-   * The pass is `KbReconcileService`, shared verbatim with
-   * `pnpm reconcile-flavors` — never a second copy of it. It is idempotent, so
-   * pressing the button twice reports zeros the second time.
+   * producer stores a claim and changes nothing a filter reads until the
+   * catalogue is re-resolved, which is why a reviewer can promote two
+   * producers and watch the queue not move.
    *
    * @returns What the pass wrote.
    */
@@ -120,64 +118,278 @@ export class ProductReviewService {
   }
 
   /**
-   * Counts what is waiting, per category.
+   * Lists one page of the curation queue.
    *
-   * @returns The counters the screen's tabs badge themselves with.
+   * @param query - Issue, shop, search, slice, sort and paging.
+   * @returns A page of bottlings, worst first by default.
    */
-  public async summary(): Promise<ProductReviewSummary> {
-    const [statuses, facts, conflicts, unresolved, products] = await Promise
-      .all([
-        this.producers.countByStatus(),
-        this.products.countUntrustedFacts(),
-        this.products.countOpenConflicts(),
-        this.producers.listUnresolvedBrands(1),
-        this.products.countReviewStatuses(),
-      ]);
+  public async queue(
+    query: ReviewQueueQuery,
+  ): Promise<TypePaginated<ReviewQueueRow>> {
+    const limit = query.perPage ?? REVIEW_PAGE_SIZE;
+    const offset = ((query.page ?? 1) - 1) * limit;
+
+    const hits = await this.reach.inertHits();
+
+    const { rows, total } = await this.products.findReviewQueue(
+      { ...query, page: query.page ?? 1, perPage: limit },
+      ProductReviewService.hitIds(hits),
+    );
+
+    const data = rows.map((row) =>
+      ProductReviewService.nameInertProducer(row, hits)
+    );
+
+    return { data, total, limit, offset };
+  }
+
+  /**
+   * Counts what is waiting, for the tabs and the «Проблеми» dropdown.
+   *
+   * @param includeAcknowledged - Whether acknowledged contradictions count,
+   *   so the dropdown's own checkbox changes the numbers beside it.
+   * @returns The counters.
+   */
+  public async summary(includeAcknowledged = false): Promise<ReviewSummary> {
+    const hits = await this.reach.inertHits();
+
+    const [counts, statuses, producers, appliedAt] = await Promise.all([
+      this.products.countReviewIssues(
+        ProductReviewService.hitIds(hits),
+        includeAcknowledged,
+      ),
+      this.products.countReviewStatuses(),
+      this.producers.summary(),
+      this.reconcile.lastAppliedAt(),
+    ]);
 
     return {
-      producers: {
-        verified: statuses.verified ?? 0,
-        auto: statuses.auto ?? 0,
-        unverified: statuses.unverified ?? 0,
-        rejected: statuses.rejected ?? 0,
-      },
-      untrustedTypes: facts.type,
-      untrustedCountries: facts.country,
-      untrustedFacts: facts.either,
-      untrustedFactsUnresolved: facts.eitherUnresolved,
-      openConflicts: conflicts,
-      unresolvedBrands: unresolved.length,
-      products,
+      open: counts.open,
+      conflictOnly: counts.conflictOnly,
+      byIssue: counts.byIssue,
+      verifiedToday: statuses.verifiedToday,
+      rejected: statuses.rejected,
+      knowledgeBaseAppliedAt: appliedAt,
+      producers,
     };
   }
 
   /**
-   * Lists one bucket of the new-product queue.
+   * Everything the side panel loads when a bottling is opened.
    *
-   * Defaults to `pending`, which is the work. The other two buckets are the
-   * archive, and `rejected` is reachable for one reason that matters: a
-   * rejection made by mistake is only reversible if the row can still be
-   * found, and a later legitimate listing of a rejected bottling lands back on
-   * that row rather than in the queue.
+   * Four questions, all answered from what the catalogue already holds: which
+   * producer this might be, which bottling it might duplicate, what its
+   * namesakes say about the facts it lacks, and what the shops' own URLs
+   * spell that their titles do not.
    *
-   * @param query - Bucket, search, shop filter and paging.
-   * @returns A page of the queue, newest first.
+   * The producer candidates deliberately search the alias index **ignoring
+   * scope and the length floor**. That is the whole `Hyde` case: the producer
+   * exists, the spelling is four letters and brand-scoped, and no resolver
+   * pass can ever reach it — so the only thing that can offer it to a person
+   * is a search that knows the rule is being broken and says so, through
+   * `via: 'unreachable-alias'`.
+   *
+   * @param id - The bottling.
+   * @returns The candidates, the duplicates, the sibling values and the URL
+   *   hints.
+   * @throws {NotFoundError} When nothing has that id.
    */
-  public async queuePage(
-    query: ReviewQueueQuery,
-  ): Promise<TypePaginated<ProductReviewQueueRow>> {
-    const limit = query.perPage ?? PAGE_SIZE;
-    const offset = ((query.page ?? 1) - 1) * limit;
+  public async suggestions(id: ID): Promise<ReviewSuggestions> {
+    const source = await this.products.findSuggestionSource(id);
 
-    const { rows, total } = await this.products.findReviewQueue(
-      query.reviewStatus ?? ProductReviewStatus.PENDING,
-      limit,
-      offset,
-      query.name,
-      query.store,
+    if (!source) {
+      throw new NotFoundError('Product not found', { id });
+    }
+
+    const [live, withheld, duplicates, siblings] = await Promise.all([
+      this.coreProducers.loadAliasIndex(),
+      this.coreProducers.loadWithheldAliasIndex(),
+      this.products.findDuplicateCandidates(id, REVIEW_SUGGESTION_LIMIT),
+      this.products.findSiblingFacts(id),
+    ]);
+
+    return {
+      producers: await this.producerCandidates(source, [...live, ...withheld]),
+      duplicates,
+      siblings: ProductReviewService.groupSiblings(siblings),
+      storeHints: ProductReviewService.urlHints(source.urls),
+    };
+  }
+
+  /**
+   * Ranks the producers a bottling might belong to.
+   *
+   * Four ways in, best evidence first: the maker a shop stated outright, the
+   * trademark token hidden in a raw name, an alias the resolver is forbidden
+   * to look for inside a name, and a plain word of the name matching a
+   * producer's own name.
+   *
+   * @param source - The bottling and its evidence.
+   * @param aliases - The live index plus the withheld one, since a withheld
+   *   producer is a legitimate answer a person can promote.
+   * @returns The candidates, best first, without repeats.
+   */
+  private async producerCandidates(
+    source: ProductSuggestionSourceRow,
+    aliases: KbAliasEntry[],
+  ): Promise<ReviewProducerCandidate[]> {
+    const found = new Map<ID, ReviewProducerCandidate>();
+
+    const offer = (
+      producer: KbProducerFacts,
+      via: ReviewCandidateVia,
+      spelling: string,
+    ): void => {
+      if (!found.has(producer.id)) {
+        found.set(producer.id, {
+          producer: {
+            id: producer.id,
+            slug: producer.slug,
+            name: producer.name,
+            kind: producer.kind,
+            status: KbStatus.AUTO,
+          },
+          countryIcon: null,
+          via,
+          spelling,
+          productCount: 0,
+        });
+      }
+    };
+
+    const stated = source.brandOrig
+      ? KbKeyUtils.key(source.brandOrig)
+      : null;
+
+    const hit = KbAliasUtils.matchByBrand(stated, aliases);
+
+    if (hit && source.brandOrig) {
+      offer(hit.producer, 'brandOrig', source.brandOrig);
+    }
+
+    source.rawNames.forEach((raw) => {
+      const token = BrandHintUtils.fromRawName(raw);
+      const byToken = token
+        ? KbAliasUtils.matchByBrand(KbKeyUtils.key(token), aliases)
+        : null;
+
+      if (byToken && token) {
+        offer(byToken.producer, 'tm-token', token);
+      }
+    });
+
+    const nameKey = KbKeyUtils.normalize(source.name ?? '');
+    const rawKey = KbKeyUtils.normalize(source.rawNames.join(' '));
+
+    aliases.forEach((alias) => {
+      if (found.size >= REVIEW_SUGGESTION_LIMIT || !alias.key) {
+        return;
+      }
+
+      if (KbKeyUtils.matchesWord(nameKey, alias.key)) {
+        offer(
+          alias.producer,
+          KbAliasUtils.reachesName(alias) ? 'name-word' : 'unreachable-alias',
+          alias.key,
+        );
+
+        return;
+      }
+
+      if (KbKeyUtils.matchesWord(rawKey, alias.key)) {
+        offer(alias.producer, 'similar', alias.key);
+      }
+    });
+
+    return this.withProducerFacts([...found.values()]);
+  }
+
+  /**
+   * Fills in each candidate's real status, flag and bottling count.
+   *
+   * The alias index carries a producer's facts but not its review status or
+   * its country's flag, and both decide how the candidate reads: a withheld
+   * row is an answer that also needs promoting, and the flag is what makes a
+   * one-line candidate recognisable.
+   *
+   * @param candidates - The candidates as the matching found them.
+   * @returns The same candidates, ranked and completed.
+   */
+  private async withProducerFacts(
+    candidates: ReviewProducerCandidate[],
+  ): Promise<ReviewProducerCandidate[]> {
+    if (!candidates.length) {
+      return [];
+    }
+
+    const rows = await this.coreProducers.findCandidateFacts(
+      candidates.map((one) => one.producer.id),
     );
 
-    return { data: rows, total, limit, offset };
+    const byId = new Map(rows.map((row) => [row.id, row]));
+
+    return candidates
+      .map((candidate) => {
+        const row = byId.get(candidate.producer.id);
+
+        return {
+          ...candidate,
+          producer: {
+            ...candidate.producer,
+            status: row?.status ?? candidate.producer.status,
+          },
+          countryIcon: row?.countryIcon ?? null,
+          productCount: row?.productCount ?? 0,
+        };
+      })
+      .sort((left, right) =>
+        CANDIDATE_RANK[left.via] - CANDIDATE_RANK[right.via]
+        || right.productCount - left.productCount
+      );
+  }
+
+  /**
+   * Groups the sibling values by the fact they describe.
+   *
+   * @param rows - The values as SQL returned them.
+   * @returns One list per fact, most common first.
+   */
+  private static groupSiblings(
+    rows: ProductSiblingFactRow[],
+  ): ReviewSiblings {
+    const siblings: ReviewSiblings = { abv: [], type: [], country: [] };
+
+    rows.forEach((row) => {
+      const bucket = siblings[row.fact as keyof ReviewSiblings];
+
+      bucket?.push({ value: row.value, label: row.label, count: row.n });
+    });
+
+    return siblings;
+  }
+
+  /**
+   * Lifts the readable words out of the shops' own listing URLs.
+   *
+   * A shop routinely spells a name correctly in its slug and truncates it in
+   * the title — `grant-s-triple-wood` beside a listing that says `Grants` —
+   * so the slug is evidence the canonical name was built without.
+   *
+   * @param urls - The listing URLs.
+   * @returns The distinct slug words, longest first.
+   */
+  private static urlHints(urls: string[]): string[] {
+    const words = new Set<string>();
+
+    urls.forEach((url) => {
+      const tail = url.split('?')[0].split('/').filter(Boolean).pop() ?? '';
+
+      tail.split(/[-_]+/)
+        .filter((word) => word.length >= URL_HINT_MIN_LENGTH)
+        .forEach((word) => words.add(word.toLowerCase()));
+    });
+
+    return [...words].slice(0, REVIEW_SUGGESTION_LIMIT);
   }
 
   /**
@@ -185,17 +397,12 @@ export class ProductReviewService {
    *
    * One method for all three transitions, because they differ only in the
    * value written — "back into the queue" and "un-reject" are the same
-   * operation as "verify" with a different one. Three of them would be three
-   * places to forget the line below.
+   * operation as "verify" with a different one.
    *
    * **The catalogue cache is bumped whatever the verdict**, not only when it
    * crosses the `rejected` boundary that actually changes what a report
-   * returns. Two reasons: one request may carry both values, and a rule about
-   * which values matter is a rule that drifts — while the cost is asymmetric,
-   * since a spent bump costs one regeneration of a set that expires daily
-   * anyway, and a missed one serves a rejected bottling until the next sync.
-   * The bulk shape is what makes that cheap: a pass over fifty rows is one
-   * request and one bump, not fifty.
+   * returns: one request may carry both values, and a rule about which values
+   * matter is a rule that drifts. The bulk shape is what makes that cheap.
    *
    * @param input - The bottlings and the verdict.
    * @returns How many rows were written, and the queue counters after it.
@@ -216,368 +423,44 @@ export class ProductReviewService {
   }
 
   /**
-   * Lists producers awaiting review, worst-first by catalogue reach.
+   * Flattens the what-if answer to the two id lists the detector query reads.
    *
-   * The withheld tab is ranked by **potential** reach and paged in memory;
-   * every other status keeps the plain SQL paging. The split is not an
-   * optimisation, it is the difference between a usable queue and an
-   * alphabetical one: a withheld producer resolves to nothing by construction,
-   * so the SQL ordering by `productCount` is ordering by zero. See
-   * {@link ProducerReachService} for what the number means and why it is
-   * computed rather than stored.
-   *
-   * Paging in memory is affordable because the whole table is 796 rows; if
-   * that ever stops being true, the ranking is the thing to cache, not the
-   * paging to move back into SQL.
-   *
-   * @param query - Status filter and paging.
-   * @returns A page of producers.
+   * @param hits - The what-if answer.
+   * @returns The id lists.
    */
-  public async producersPage(
-    query: ReviewProducerQuery,
-  ): Promise<TypePaginated<ProducerReviewRow>> {
-    const limit = query.perPage ?? PAGE_SIZE;
-    const offset = ((query.page ?? 1) - 1) * limit;
-
-    if (query.status !== KbStatus.UNVERIFIED) {
-      const { rows, total } = await this.producers.listForReview(
-        query.status,
-        limit,
-        offset,
-        query.name,
-      );
-
-      return { data: rows, total, limit, offset };
-    }
-
-    const [listed, reach] = await Promise.all([
-      this.producers.listForReview(query.status, null, 0, query.name),
-      this.reach.withheldReach(),
-    ]);
-
-    const ranked = listed.rows
-      .map((row) => ({ ...row, potentialReach: reach.get(row.id) ?? 0 }))
-      .sort((left, right) =>
-        right.potentialReach - left.potentialReach
-        || left.slug.localeCompare(right.slug)
-      );
-
+  private static hitIds(hits: ReviewInertHits): ReviewInertHitIds {
     return {
-      data: ranked.slice(offset, offset + limit),
-      total: listed.total,
-      limit,
-      offset,
+      rejected: [...hits.rejected.keys()],
+      withheld: [...hits.withheld.keys()],
     };
   }
 
   /**
-   * Lists the bottlings whose type or country the filters no longer trust.
+   * Names the producer behind a resolution-derived chip.
    *
-   * @param query - Field filter and paging.
-   * @returns A page of facts, worst-first by how many shops carry the
-   *   bottling.
+   * "Resolves to Yakusun, ruled not whisky" is the sentence the person reads,
+   * and only the what-if pass knows which producer that is — the detector
+   * query was handed ids alone.
+   *
+   * @param row - The queue row.
+   * @param hits - The what-if answer.
+   * @returns The row with those chips carrying a producer name.
    */
-  public async factsPage(
-    query: ReviewFactQuery,
-  ): Promise<TypePaginated<ProductFactReviewRow>> {
-    const limit = query.perPage ?? PAGE_SIZE;
-    const offset = ((query.page ?? 1) - 1) * limit;
-
-    const { rows, total } = await this.products.findUntrustedFacts(
-      query.field,
-      limit,
-      offset,
-      query.producer,
-      query.name,
-    );
-
-    return { data: rows, total, limit, offset };
-  }
-
-  /**
-   * Lists the unresolved cross-shop contradictions, worst-first.
-   *
-   * @param query - Attribute and store filters, plus paging.
-   * @returns A page of contradictions.
-   */
-  public async conflictsPage(
-    query: ReviewConflictQuery,
-  ): Promise<TypePaginated<ReviewConflictRow>> {
-    const limit = query.perPage ?? PAGE_SIZE;
-    const offset = ((query.page ?? 1) - 1) * limit;
-
-    const { rows, total } = await this.products.findConflicts(
-      query.attribute,
-      query.store,
-      limit,
-      offset,
-      query.name,
-    );
-
-    return { data: rows, total, limit, offset };
-  }
-
-  /**
-   * Lists the brand keys nothing in the knowledge base resolves.
-   *
-   * @param limit - How many to return.
-   * @returns Brand names with the number of bottlings behind them.
-   */
-  public async unresolvedBrands(
-    limit?: number,
-  ): Promise<{ brand: string; productCount: number }[]> {
-    return this.producers.listUnresolvedBrands(limit);
-  }
-
-  /**
-   * Applies a reviewer's edit to a producer **and to the catalogue**.
-   *
-   * Any field the reviewer changed is written, and the row is stamped with the
-   * moment it happened. `verified` outranks the auto-gate, so a promoted row
-   * goes live regardless of what the gate concluded about its citations.
-   *
-   * **The catalogue pass runs here, in the same request, and that is the
-   * point.** Storing the decision alone changes nothing a filter reads: no
-   * bottling points at the producer until the catalogue is re-resolved, so a
-   * reviewer promoting two producers watched the review counts stay exactly
-   * where they were and was right to call that broken. There is no reason to
-   * defer it — the pass costs ~200 ms over the whole catalogue, is idempotent,
-   * never touches a `manual` value, and a wrong promotion is undone by
-   * demoting and letting the next pass rewrite it.
-   *
-   * It runs on **every** edit rather than only the ones that can change
-   * resolution. A rule about which fields matter is a rule that drifts, and
-   * the pass writes nothing when nothing changed.
-   *
-   * @param id - The producer to edit.
-   * @param patch - The fields to change; an absent field is left alone.
-   * @returns The producer as it now stands, and what applying it wrote.
-   * @throws {NotFoundError} When no producer has that id.
-   */
-  public async patchProducer(
-    id: ID,
-    patch: ProducerPatchInput,
-  ): Promise<ProducerPatchResult> {
-    const updated = await this.producers.applyReview(id, patch);
-
-    if (!updated) {
-      throw new NotFoundError('Producer not found');
-    }
-
-    const run = await this.reconcile.run();
-
-    return { producer: updated, applied: run.summary };
-  }
-
-  /**
-   * Reads one producer with everything that overrides its facts.
-   *
-   * @param id - The producer to read.
-   * @returns The producer, its child lines and the rules that bear on it.
-   * @throws {NotFoundError} When no producer has that id.
-   */
-  public async producerDetail(id: ID): Promise<ProducerDetail> {
-    const detail = await this.producers.findDetail(id);
-
-    if (!detail) {
-      throw new NotFoundError('Producer not found');
-    }
-
-    return detail;
-  }
-
-  /**
-   * Lists the bottlings behind one producer row — what expanding the row on
-   * the review screen shows.
-   *
-   * The answer depends on the row's status, because the number next to it
-   * does too. A live producer (`verified`/`auto`) lists what resolves to it
-   * **today**, in either slot — made by it or bottled by it. A withheld one
-   * resolves to nothing by construction, so its list is the same what-if pass
-   * its `potentialReach` ranking came from: the bottlings that **would**
-   * resolve to it were it promoted.
-   *
-   * @param id - The producer.
-   * @returns The bottlings, alphabetically by display name.
-   * @throws {NotFoundError} When no producer has that id.
-   */
-  public async producerProducts(id: ID): Promise<ProducerProductRow[]> {
-    const producer = await this.producers.findReviewRow(id);
-
-    if (!producer) {
-      throw new NotFoundError('Producer not found');
-    }
-
-    const live = producer.status === KbStatus.VERIFIED
-      || producer.status === KbStatus.AUTO;
-
-    if (live) {
-      return this.products.findResolvedByProducer(id);
-    }
-
-    const ids = await this.reach.withheldProductIds(id);
-
-    return this.products.findProducerProductsByIds(ids);
-  }
-
-  /**
-   * Creates one producer-scoped name-pattern rule **and applies it**.
-   *
-   * The same recording-vs-applying rule as `patchProducer`: a stored rule
-   * changes nothing a filter reads until the catalogue is re-resolved, so the
-   * pass runs in the same request and the response reports what it wrote.
-   *
-   * Validation the DTO cannot express happens here: exactly one of the peat
-   * band or the tag claim must be stated (the table's CHECK constraint, as a
-   * 400 instead of a 500), the pattern must normalize to something matchable,
-   * and a tag rule's flavour must already exist — an unknown name is rejected
-   * rather than coined, the same stance `CoreBrandService.findIdsByName`
-   * takes.
-   *
-   * @param id - The producer the rule is scoped to.
-   * @param input - The rule as the reviewer stated it.
-   * @returns What applying the rule wrote.
-   * @throws {NotFoundError} When no producer has that id.
-   * @throws {BadRequestError} When the rule states both claims, neither, an
-   *   unknown flavour, or a pattern that normalizes to nothing.
-   * @throws {DuplicateError} When the producer already has a rule for that
-   *   pattern and tag.
-   */
-  public async createProducerRule(
-    id: ID,
-    input: ProducerRuleCreateInput,
-  ): Promise<KbReconcileSummary> {
-    const producer = await this.producers.findReviewRow(id);
-
-    if (!producer) {
-      throw new NotFoundError('Producer not found');
-    }
-
-    const rule = await this.buildRule(id, input);
-
-    try {
-      await this.producers.createRule(rule);
-    } catch (error) {
-      if ((error as { code?: string }).code === UNIQUE_VIOLATION) {
-        throw new DuplicateError(
-          'The producer already has a rule for this pattern',
-        );
-      }
-
-      throw error;
-    }
-
-    const run = await this.reconcile.run();
-
-    return run.summary;
-  }
-
-  /**
-   * Deletes one of a producer's own rules **and applies the removal**.
-   *
-   * Scoped to the producer, so a global rule — migration-authored context —
-   * is unreachable by construction rather than by a check someone could
-   * forget.
-   *
-   * @param id - The producer the rule belongs to.
-   * @param ruleId - The rule to delete.
-   * @returns What applying the removal wrote.
-   * @throws {NotFoundError} When the rule does not exist or is not that
-   *   producer's.
-   */
-  public async deleteProducerRule(
-    id: ID,
-    ruleId: ID,
-  ): Promise<KbReconcileSummary> {
-    const deleted = await this.producers.deleteRule(ruleId, id);
-
-    if (deleted === 0) {
-      throw new NotFoundError('Rule not found');
-    }
-
-    const run = await this.reconcile.run();
-
-    return run.summary;
-  }
-
-  /**
-   * Validates and normalizes a reviewer's rule into the row to store.
-   *
-   * @param id - The producer the rule is scoped to.
-   * @param input - The rule as the reviewer stated it.
-   * @returns The validated rule.
-   * @throws {BadRequestError} When the rule is not exactly one claim, names an
-   *   unknown flavour, or its pattern normalizes to nothing.
-   */
-  private async buildRule(
-    id: ID,
-    input: ProducerRuleCreateInput,
-  ): Promise<ProducerRuleInput> {
-    const isPeatRule = input.peatProfile !== undefined;
-    const isTagRule = input.flavorName !== undefined
-      || input.effect !== undefined;
-
-    if (isPeatRule === isTagRule) {
-      throw new BadRequestError(
-        'A rule states either a peat band or a tag claim, exactly one',
-      );
-    }
-
-    if (isTagRule && (!input.flavorName || !input.effect)) {
-      throw new BadRequestError(
-        'A tag rule needs both the flavor and the effect',
-      );
-    }
-
-    const pattern = KbKeyUtils.key(input.pattern);
-
-    if (!pattern) {
-      throw new BadRequestError('The pattern contains nothing matchable');
-    }
-
-    let flavorId: ID | null = null;
-
-    if (input.flavorName) {
-      const ids = await this.flavors.findIdsByName([input.flavorName]);
-      const found = ids.get(input.flavorName);
-
-      if (!found) {
-        throw new BadRequestError(`Unknown flavor: ${input.flavorName}`);
-      }
-
-      flavorId = found;
-    }
-
-    return {
-      producerId: id,
-      pattern,
-      matchMode: input.matchMode ?? FlavorRuleMatchMode.WORD,
-      peatProfile: input.peatProfile ?? null,
-      flavorId,
-      effect: input.effect ?? null,
-      priority: input.priority ?? DEFAULT_RULE_PRIORITY,
-      note: input.note?.trim() ? input.note.trim() : null,
+  private static nameInertProducer(
+    row: ReviewQueueRow,
+    hits: ReviewInertHits,
+  ): ReviewQueueRow {
+    const named: Partial<Record<ReviewIssueCode, KbProducerFacts>> = {
+      [ReviewIssueCode.PRODUCER_REJECTED]: hits.rejected.get(row.id),
+      [ReviewIssueCode.PRODUCER_WITHHELD]: hits.withheld.get(row.id),
     };
-  }
 
-  /**
-   * Marks a cross-shop contradiction settled.
-   *
-   * Resolving records a decision, not a correction — the fact itself is
-   * changed through `POST /product/update`, which stamps `manual`. A
-   * contradiction seen again after this is un-resolved by the scrape, because
-   * a disagreement somebody dismissed that keeps arriving is not dismissed.
-   *
-   * @param productId - The bottling.
-   * @param storeId - The shop making the claim.
-   * @param attribute - Which fact is disputed.
-   * @returns Resolves once the row is marked.
-   */
-  public async resolveConflict(
-    productId: ID,
-    storeId: ID,
-    attribute: string,
-  ): Promise<void> {
-    await this.products.resolveConflict(productId, storeId, attribute);
+    const issues = row.issues.map((issue) => {
+      const producer = named[issue.code];
+
+      return producer ? { ...issue, detail: producer.name } : issue;
+    });
+
+    return { ...row, issues };
   }
 }

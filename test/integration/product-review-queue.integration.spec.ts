@@ -10,15 +10,16 @@ import {
   ProductReviewStatus,
   ReportKind,
   ReportWindow,
+  ReviewQueueStatus,
   SortOrder,
 } from '~enums';
 import type {
   ID,
   MetaCountry,
-  ProductReviewQueueRow,
   ProductReviewStatusCounts,
   ReportOptions,
   ReportPublicGroup,
+  ReviewQueueRow,
 } from '~types';
 
 import { ReportService } from '../../src/domain/report/report.service';
@@ -137,7 +138,7 @@ interface QueueFixture {
   /**
    * One queue row, for its field shape.
    */
-  queueRow: ProductReviewQueueRow | undefined;
+  queueRow: ReviewQueueRow | undefined;
 
   /**
    * The queue counters, and the table's own row count beside them.
@@ -258,18 +259,20 @@ describe('the new-product review queue (integration)', () => {
         reports[kind] = await runKind(kind);
       }
 
+      const noHits = { rejected: [], withheld: [] };
+
       const pending = await products.findReviewQueue(
-        ProductReviewStatus.PENDING,
-        50,
-        0,
-        TOKEN,
+        { name: TOKEN, includeUnstocked: true },
+        noHits,
       );
 
       const rejected = await products.findReviewQueue(
-        ProductReviewStatus.REJECTED,
-        50,
-        0,
-        TOKEN,
+        {
+          name: TOKEN,
+          status: ReviewQueueStatus.REJECTED,
+          includeUnstocked: true,
+        },
+        noHits,
       );
 
       const totals = await dataSource.query(
@@ -422,7 +425,7 @@ describe('the new-product review queue (integration)', () => {
         volumeMl: 700,
         reviewStatus: ProductReviewStatus.PENDING,
       }));
-      expect(fixture.queueRow?.stores).toHaveLength(SLUGS.length);
+      expect(fixture.queueRow?.offers).toHaveLength(SLUGS.length);
       expect(fixture.queueRow?.storeCount).toBe(SLUGS.length);
     });
   });

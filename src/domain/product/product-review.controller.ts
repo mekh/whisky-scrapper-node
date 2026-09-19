@@ -4,87 +4,76 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Param,
   Post,
   Query,
 } from '@nestjs/common';
 
-import { Permission } from '~decorators/auth';
 import { Paginated, Plain } from '~decorators/types';
 import { Action, Resource } from '~enums';
 import type {
+  ID,
   KbReconcileSummary,
-  ProducerReviewRow,
-  ProductFactReviewRow,
-  ProductReviewQueueRow,
   ProductReviewStatusResult,
-  ProductReviewSummary,
-  ReviewConflictRow,
+  ReviewBulkResult,
+  ReviewCommitResult,
+  ReviewPreview,
+  ReviewQueueRow,
+  ReviewSuggestions,
+  ReviewSummary,
   TypePaginated,
 } from '~types';
 
 import {
-  ConflictResolveDto,
   ProductReviewStatusDto,
-  ReviewQueryDto,
+  ReviewBulkDto,
+  ReviewCommitDto,
+  ReviewMergeDto,
+  ReviewPreviewDto,
+  ReviewQueueQueryDto,
 } from './dto';
 import { ProductReviewService } from './product-review.service';
+import { ReviewCommitService } from './review-commit.service';
+import { ReviewPreviewService } from './review-preview.service';
 import {
   KbReconcileSummaryType,
-  ProducerReviewType,
-  ProductFactReviewType,
-  ProductReviewQueueType,
   ProductReviewStatusResultType,
-  ProductReviewSummaryType,
-  ReviewConflictType,
+  ReviewBulkResultType,
+  ReviewCommitResultType,
+  ReviewPreviewType,
+  ReviewQueueRowType,
+  ReviewSuggestionsType,
+  ReviewSummaryType,
 } from './types';
 
 @Controller('product/review')
 export class ProductReviewController {
-  public constructor(private readonly reviewService: ProductReviewService) {}
+  public constructor(
+    private readonly reviewService: ProductReviewService,
+    private readonly commitService: ReviewCommitService,
+    private readonly previewService: ReviewPreviewService,
+  ) {}
 
   @Get('summary')
-  @Plain(ProductReviewSummaryType, [Resource.PRODUCT, Action.REVIEW])
-  public summary(): Promise<ProductReviewSummary> {
-    return this.reviewService.summary();
+  @Plain(ReviewSummaryType, [Resource.PRODUCT, Action.REVIEW])
+  public summary(
+    @Query() query: ReviewQueueQueryDto,
+  ): Promise<ReviewSummary> {
+    return this.reviewService.summary(query.includeAcknowledged);
   }
 
-  @Get('producers')
-  @Paginated(ProducerReviewType, [Resource.PRODUCER, Action.READ])
-  public producers(
-    @Query() query: ReviewQueryDto,
-  ): Promise<TypePaginated<ProducerReviewRow>> {
-    return this.reviewService.producersPage(query);
-  }
-
-  @Get('facts')
-  @Paginated(ProductFactReviewType, [Resource.PRODUCT, Action.REVIEW])
-  public facts(
-    @Query() query: ReviewQueryDto,
-  ): Promise<TypePaginated<ProductFactReviewRow>> {
-    return this.reviewService.factsPage(query);
-  }
-
-  /**
-   * One bucket of the new-product queue — what the last syncs created and
-   * nobody has checked yet.
-   *
-   * @param query - Bucket (`pending` by default), search, shop and paging.
-   * @returns A page of the queue, newest first.
-   */
   @Get('queue')
-  @Paginated(ProductReviewQueueType, [Resource.PRODUCT, Action.REVIEW])
+  @Paginated(ReviewQueueRowType, [Resource.PRODUCT, Action.REVIEW])
   public queue(
-    @Query() query: ReviewQueryDto,
-  ): Promise<TypePaginated<ProductReviewQueueRow>> {
-    return this.reviewService.queuePage(query);
+    @Query() query: ReviewQueueQueryDto,
+  ): Promise<TypePaginated<ReviewQueueRow>> {
+    return this.reviewService.queue(query);
   }
 
-  @Get('conflicts')
-  @Paginated(ReviewConflictType, [Resource.PRODUCT, Action.REVIEW])
-  public conflicts(
-    @Query() query: ReviewQueryDto,
-  ): Promise<TypePaginated<ReviewConflictRow>> {
-    return this.reviewService.conflictsPage(query);
+  @Get(':id/suggestions')
+  @Plain(ReviewSuggestionsType, [Resource.PRODUCT, Action.REVIEW])
+  public suggestions(@Param('id') id: string): Promise<ReviewSuggestions> {
+    return this.reviewService.suggestions(id as ID);
   }
 
   @Post('apply')
@@ -94,17 +83,34 @@ export class ProductReviewController {
     return this.reviewService.applyKnowledgeBase();
   }
 
-  /**
-   * Records a verdict on a batch of bottlings: verified, not whisky, or back
-   * into the queue.
-   *
-   * One route for all three, since they differ only in the value written and
-   * un-rejecting is the same operation as verifying. `POST` rather than
-   * `PATCH`, as every other review mutation here is.
-   *
-   * @param body - The bottlings and the verdict.
-   * @returns How many rows were written, and the fresh queue counters.
-   */
+  @Post('preview')
+  @HttpCode(HttpStatus.OK)
+  @Plain(ReviewPreviewType, [Resource.PRODUCT, Action.REVIEW])
+  public preview(@Body() body: ReviewPreviewDto): Promise<ReviewPreview> {
+    return this.previewService.previewLink(body.productId, body.producer);
+  }
+
+  @Post('commit')
+  @HttpCode(HttpStatus.OK)
+  @Plain(ReviewCommitResultType, [Resource.PRODUCT, Action.REVIEW])
+  public commit(@Body() body: ReviewCommitDto): Promise<ReviewCommitResult> {
+    return this.commitService.commit(body);
+  }
+
+  @Post('merge')
+  @HttpCode(HttpStatus.OK)
+  @Plain(ReviewCommitResultType, [Resource.PRODUCT, Action.REVIEW])
+  public merge(@Body() body: ReviewMergeDto): Promise<ReviewCommitResult> {
+    return this.commitService.merge(body);
+  }
+
+  @Post('bulk')
+  @HttpCode(HttpStatus.OK)
+  @Plain(ReviewBulkResultType, [Resource.PRODUCT, Action.REVIEW])
+  public bulk(@Body() body: ReviewBulkDto): Promise<ReviewBulkResult> {
+    return this.commitService.bulk(body);
+  }
+
   @Post('status')
   @HttpCode(HttpStatus.OK)
   @Plain(ProductReviewStatusResultType, [Resource.PRODUCT, Action.REVIEW])
@@ -112,16 +118,5 @@ export class ProductReviewController {
     @Body() body: ProductReviewStatusDto,
   ): Promise<ProductReviewStatusResult> {
     return this.reviewService.setStatus(body);
-  }
-
-  @Post('conflicts/resolve')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  @Permission([Resource.PRODUCT, Action.REVIEW])
-  public resolve(@Body() body: ConflictResolveDto): Promise<void> {
-    return this.reviewService.resolveConflict(
-      body.productId,
-      body.storeId,
-      body.attribute,
-    );
   }
 }

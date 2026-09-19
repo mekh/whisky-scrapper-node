@@ -2,13 +2,18 @@ import { Injectable } from '@nestjs/common';
 
 import { CoreProducerService } from '~core/producer';
 import { CoreProductService } from '~core/product';
+import { KbAliasUtils, KbKeyUtils } from '~utils';
+
 import { KbApplyService, KbResolverService } from '~scrape/kb';
 import type {
   ID,
   KbAliasEntry,
   KbNameGroup,
+  KbProducerFacts,
   KbResolution,
   KbResolveInput,
+  ProducerQueueHints,
+  ReviewInertHits,
 } from '~types';
 
 /**
@@ -88,14 +93,33 @@ export class ProducerReachService {
   }
 
   /**
+   * Adds the inert rows to the live by-id producer map, so a what-if
+   * resolution can name the owner of a range it has just reached.
+   *
+   * @param live - The live producers by id.
+   * @param inert - The withheld or rejected alias entries.
+   * @returns A new map holding both.
+   */
+  private static mergeProducers(
+    live: Map<ID, KbProducerFacts>,
+    inert: KbAliasEntry[],
+  ): Map<ID, KbProducerFacts> {
+    const merged = new Map(live);
+
+    inert.forEach((alias) => {
+      merged.set(alias.producer.id, alias.producer);
+    });
+
+    return merged;
+  }
+
+  /**
    * Which withheld producers a group's resolution would claim.
    *
    * A set, not an array, so a group counts once however many slots it fills.
-   * Today the two slots can never name the same producer — a bottler is
-   * refused the producer slot outright — but `bottlerOf`'s own documentation
-   * promises a second path it does not yet implement (the resolved producer
-   * being a range a bottler owns, `Big Peat` reporting Douglas Laing), and
-   * that path would make the collision real.
+   * The two slots still cannot name one producer — a bottler is refused the
+   * producer slot, and `bottlerOf` skips an owner that is the producer itself
+   * — but the set keeps that from being a guarantee this read depends on.
    *
    * @param resolution - What the group resolved to.
    * @param withheldIds - The withheld producers' ids.
@@ -183,6 +207,164 @@ export class ProducerReachService {
   }
 
   /**
+   * Says, for every bottling that resolves to nothing today, which inert
+   * producer its own spelling would reach.
+   *
+   * Two of the curation queue's detectors need this and neither can be written
+   * in SQL without a second implementation of alias matching — which is the
+   * defect class the knowledge base exists to remove. So the real resolver
+   * runs over an index the withheld and the rejected rows are added to, once
+   * per request, and the answer is handed to the detector query as two id
+   * arrays.
+   *
+   * Only bottlings with **neither** a producer nor a bottler are reported: a
+   * resolved bottling is not in this queue whatever an inert row would have
+   * claimed.
+   *
+   * @returns The bottlings reaching a `rejected` producer and those reaching a
+   *   withheld one, each with the producer they reach.
+   */
+  public async inertHits(): Promise<ReviewInertHits> {
+    const [index, withheld, rejected, rows] = await Promise.all([
+      this.producers.loadIndex(),
+      this.producers.loadWithheldAliasIndex(),
+      this.producers.loadRejectedAliasIndex(),
+      this.products.findKbReconcileCandidates(),
+    ]);
+
+    const withheldIds = new Set(withheld.map((one) => one.producer.id));
+    const rejectedIds = new Set(rejected.map((one) => one.producer.id));
+
+    const groups = KbApplyService.groupByName(rows);
+
+    const resolutions = this.resolver.resolve(
+      groups.map((group) => ({
+        id: group.rows[0]?.id ?? ('' as ID),
+        name: group.name,
+        brand: KbApplyService.brandOf(group),
+      })),
+      {
+        ...index,
+        aliases: ProducerReachService.mergeAliases(
+          index.aliases,
+          [...withheld, ...rejected],
+        ),
+        producers: ProducerReachService.mergeProducers(
+          index.producers,
+          [...withheld, ...rejected],
+        ),
+      },
+    );
+
+    const hits: ReviewInertHits = { rejected: new Map(), withheld: new Map() };
+
+    resolutions.forEach((resolution, position) => {
+      const producer = resolution.producer ?? resolution.bottler;
+
+      if (!producer) {
+        return;
+      }
+
+      let bucket: Map<ID, KbProducerFacts> | null = null;
+
+      if (rejectedIds.has(producer.id)) {
+        bucket = hits.rejected;
+      } else if (withheldIds.has(producer.id)) {
+        bucket = hits.withheld;
+      }
+
+      if (!bucket) {
+        return;
+      }
+
+      groups[position]?.rows.forEach((row) => {
+        if (row.producerId === null && row.bottlerId === null) {
+          bucket.set(row.id, producer);
+        }
+      });
+    });
+
+    return hits;
+  }
+
+  /**
+   * Says which live producers are unreachable and which are merely
+   * unlinked — the two producer detectors no SQL predicate can answer.
+   *
+   * Reachability is `KbAliasUtils`' own rule and nothing else: a name match
+   * needs a scope that is not `brand`, and either the five-character floor or
+   * the `lead` anchoring that is exempt from it. Restating that in SQL would
+   * be a second copy of the rule the resolver matches by, so the answer is
+   * computed here and handed to the query as two id lists.
+   *
+   * The difference between the two lists is what a person would do about
+   * them. **Unreachable**: every spelling the producer has is one the resolver
+   * cannot look for inside a name, and some unresolved bottling carries the
+   * word anyway — one scope change fixes all of them. **Mentioned**: a
+   * spelling does reach it, but the bottlings naming it were not resolved
+   * because the name cleaner stripped the token — which usually wants an
+   * alias for what the shop actually printed.
+   *
+   * @returns The two id lists and the per-producer mention counts.
+   */
+  public async producerHints(): Promise<ProducerQueueHints> {
+    const [aliases, unresolved] = await Promise.all([
+      this.producers.loadAliasIndex(),
+      this.products.findUnresolvedNames(),
+    ]);
+
+    const rows = unresolved.map((row) => ({
+      name: KbKeyUtils.normalize(row.name ?? ''),
+      raw: KbKeyUtils.normalize(row.raw),
+    }));
+
+    const byProducer = new Map<ID, KbAliasEntry[]>();
+
+    aliases.forEach((alias) => {
+      const held = byProducer.get(alias.producer.id) ?? [];
+
+      held.push(alias);
+      byProducer.set(alias.producer.id, held);
+    });
+
+    const hints: ProducerQueueHints = {
+      unreachable: [],
+      mentioned: [],
+      mentions: new Map(),
+    };
+
+    byProducer.forEach((held, id) => {
+      const nameKey = KbKeyUtils.key(held[0].producer.name);
+      const keys = [...new Set([nameKey, ...held.map((one) => one.key)])]
+        .filter((key) => key.length > 0);
+
+      const hitsRaw = rows.filter((row) =>
+        keys.some((key) =>
+          KbKeyUtils.matchesWord(row.raw, key)
+        )
+      ).length;
+
+      if (hitsRaw === 0) {
+        return;
+      }
+
+      hints.mentions.set(id, hitsRaw);
+
+      const reachable = held.some((alias) => KbAliasUtils.reachesName(alias));
+
+      if (reachable) {
+        hints.mentioned.push(id);
+
+        return;
+      }
+
+      hints.unreachable.push(id);
+    });
+
+    return hints;
+  }
+
+  /**
    * Runs the one what-if pass both public reads share: the whole catalogue
    * resolved against the live index plus every withheld alias.
    *
@@ -217,6 +399,10 @@ export class ProducerReachService {
     const resolutions = this.resolver.resolve(inputs, {
       ...index,
       aliases: ProducerReachService.mergeAliases(index.aliases, withheld),
+      producers: ProducerReachService.mergeProducers(
+        index.producers,
+        withheld,
+      ),
     });
 
     return { groups, resolutions, withheldIds };

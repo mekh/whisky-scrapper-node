@@ -5,6 +5,7 @@ import { SCRAPE_ADAPTER_FACTORY } from '~constants';
 import { CoreWhiskyModule } from '~core/core-whisky.module';
 import { CacheModule } from '~lib/cache';
 import { MetricsModule } from '~lib/metrics';
+import { ValkeyModule } from '~lib/valkey';
 
 import { AdapterRegistryService } from './adapters/adapter-registry.service';
 import { HttpClientFactory } from './http/http-client.factory';
@@ -32,6 +33,7 @@ import { ScrapeService } from './scrape.service';
     MetricsModule,
     ConfigModule,
     CoreWhiskyModule,
+    ValkeyModule,
   ],
   providers: [
     NormalizeService,
@@ -58,6 +60,7 @@ import { ScrapeService } from './scrape.service';
     LlmFlavorService,
     LlmResearchService,
     KbResolverService,
+    KbApplyService,
     KbReconcileService,
   ],
 })

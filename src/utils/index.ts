@@ -1,4 +1,5 @@
 export { ArrayUtils } from './array.utils';
+export { BrandHintUtils } from './brand-hint.util';
 export { BrandUtils } from './brand.util';
 export { ClientIpUtils } from './client-ip.util';
 export { ConcurrencyPool } from './concurrency-pool.util';

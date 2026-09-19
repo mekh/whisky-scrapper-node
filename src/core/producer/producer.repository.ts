@@ -1,8 +1,14 @@
 import { TypeormRepository } from '@toxicoder/nestjs-typeorm-repository';
 
 import { PRODUCER_PAGE_SIZE } from '~constants';
-import { BaseRepository } from '~core/_common';
-import { KbStatus, PeatProfile, SortOrder } from '~enums';
+import { BaseRepository, PRODUCER_ISSUES_SQL } from '~core/_common';
+import {
+  KbStatus,
+  PeatProfile,
+  ProducerIssueCode,
+  ProducerKind,
+  SortOrder,
+} from '~enums';
 import {
   ID,
   KbAliasEntry,
@@ -16,10 +22,12 @@ import {
   ProducerListQuery,
   ProducerOptionRow,
   ProducerOwnerRow,
+  ProducerQueueQuery,
   ProducerReviewRow,
   ProducerRuleInput,
   ProducerRuleRow,
   ResearchedProducer,
+  ReviewProducerSummary,
   TypeBrand,
   UnresearchedBrandRow,
   UnresolvedBrandRow,
@@ -28,7 +36,13 @@ import {
 import { ProducerEntity } from './producer.entity';
 
 import type { ProducerReviewPatch } from './producer-review.interfaces';
-import type { KbAliasRow, KbFlavorRuleRow } from './producer.interfaces';
+import type {
+  KbAliasRow,
+  KbFlavorRuleRow,
+  KbProducerRow,
+  ProducerCandidateFactRow,
+  ProducerQueueSqlRow,
+} from './producer.interfaces';
 
 /**
  * Autocomplete over producer names, reached through every spelling the
@@ -73,6 +87,19 @@ const ALIAS_INDEX_SQL = `
   JOIN producer p ON p.id = a."producerId"
   WHERE p.status = ANY($1::text[])
   ORDER BY length(a.key) DESC, a.key
+`;
+
+/**
+ * Loads every live producer's facts, keyed by id. It reaches the rows
+ * {@link ALIAS_INDEX_SQL} cannot — a producer holding no spelling of its own,
+ * which is what a range's owner usually is.
+ */
+const PRODUCER_FACTS_SQL = `
+  SELECT p.id, p.slug, p.name, p.kind, p."countryId", p.region,
+         p."legalRegion", p."parentId", p."bottlerId", p."defaultTypeName",
+         p."peatProfile"
+  FROM producer p
+  WHERE p.status = ANY($1::text[])
 `;
 
 /**
@@ -247,6 +274,63 @@ const OPTION_SEARCH_SQL = `
   LIMIT $3
 `;
 
+/**
+ * A producer row's severity, worst first — the queue's default order.
+ *
+ * The same shape the bottlings queue uses and the same severity vocabulary,
+ * so one legend explains both tabs.
+ */
+const PRODUCER_SEVERITY_SQL = `CASE
+    WHEN b.issues && ARRAY['${ProducerIssueCode.NO_ALIAS}',
+      '${ProducerIssueCode.ALIAS_UNREACHABLE}']::text[] THEN 1
+    WHEN b.issues && ARRAY['${ProducerIssueCode.UNLINKED_MENTIONS}',
+      '${ProducerIssueCode.KIND_SUSPECT}',
+      '${ProducerIssueCode.NO_REGION}']::text[] THEN 2
+    ELSE 3
+  END`;
+
+/**
+ * The curation queue's detector pass over the producers.
+ *
+ * `$1` and `$2` are the two id lists the what-if pass computed — the
+ * producers whose every spelling is unreachable by name, and those merely
+ * named in unresolved bottlings. Both are `KbAliasUtils`' own rules, so they
+ * are handed in rather than restated here. `$3` narrows to one status, `$4`
+ * to one kind, `$5` is the search, `$6` the issue codes to keep.
+ *
+ * Membership mirrors the bottlings queue: a producer is in it when it is
+ * `unverified`, or when it is live and something worse than an information
+ * code fires. A `rejected` row is never queued — that verdict is the answer.
+ */
+const PRODUCER_QUEUE_SQL = `
+  WITH b AS (
+    SELECT p.id, p.slug, p.name, p.kind, p.status, p.region,
+           p."defaultTypeName", p."peatProfile", p."createdAt",
+           c.code AS "countryCode", c."nameUa" AS "countryName",
+           c.icon AS "countryIcon",
+           (SELECT count(*)::int FROM product pr
+            WHERE pr."producerId" = p.id OR pr."bottlerId" = p.id)
+             AS "productCount",
+           (SELECT count(*)::int FROM producer_alias a
+            WHERE a."producerId" = p.id) AS "aliasCount",
+           ${PRODUCER_ISSUES_SQL} AS issues
+    FROM producer p
+    LEFT JOIN country c ON c.id = p."countryId"
+    WHERE p.status <> '${KbStatus.REJECTED}'
+      AND ($3::text IS NULL OR p.status = $3)
+      AND ($4::text IS NULL OR p.kind = $4)
+      AND ($5::text IS NULL
+           OR p.name ILIKE '%' || $5 || '%'
+           OR p.slug ILIKE '%' || $5 || '%')
+  ),
+  q AS (
+    SELECT b.*, ${PRODUCER_SEVERITY_SQL} AS severity
+    FROM b
+    WHERE cardinality(b.issues) > 0
+      AND ($6::text[] IS NULL OR b.issues && $6::text[])
+  )
+`;
+
 @TypeormRepository(ProducerEntity)
 export class ProducerRepository extends BaseRepository<ProducerEntity> {
   /**
@@ -268,6 +352,37 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
   }
 
   /**
+   * Loads every live producer's facts, keyed by id. The `verified`/`auto`
+   * gate is stated here rather than taken as a parameter, as
+   * {@link findAliasIndex} documents.
+   *
+   * @returns One entry per live producer.
+   */
+  public async findProducerFacts(): Promise<Map<ID, KbProducerFacts>> {
+    const rows = await this.query(
+      PRODUCER_FACTS_SQL,
+      [[KbStatus.VERIFIED, KbStatus.AUTO]],
+    ) as KbProducerRow[];
+
+    return new Map(rows.map((row) => [row.id, this.toFacts(row)]));
+  }
+
+  /**
+   * One producer's kind, for a caller that only needs to branch on it.
+   *
+   * @param id - The producer.
+   * @returns The kind, or null when nothing has that id.
+   */
+  public async findKind(id: ID): Promise<ProducerKind | null> {
+    const rows = await this.query(
+      'SELECT kind FROM producer WHERE id = $1',
+      [id],
+    ) as { kind: ProducerKind }[];
+
+    return rows[0]?.kind ?? null;
+  }
+
+  /**
    * Loads the aliases of the producers the gate withheld.
    *
    * Deliberately a **second** read rather than a status parameter on
@@ -286,6 +401,103 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
     const rows = await this.query(
       ALIAS_INDEX_SQL,
       [[KbStatus.UNVERIFIED]],
+    ) as KbAliasRow[];
+
+    return rows.map((row) => ({
+      key: row.key,
+      scope: row.scope,
+      producer: this.toFacts(row),
+    }));
+  }
+
+  /**
+   * Lists one page of the producers queue.
+   *
+   * @param query - Issue, status, kind, search and paging.
+   * @param unreachable - Producers whose every spelling is unreachable by
+   *   name while an unresolved bottling carries the word.
+   * @param mentioned - Producers merely named in unresolved bottlings.
+   * @param limit - Page size.
+   * @param offset - Page offset.
+   * @returns The page and the total matching count.
+   */
+  public async findQueue(
+    query: ProducerQueueQuery,
+    unreachable: ID[],
+    mentioned: ID[],
+    limit: number,
+    offset: number,
+  ): Promise<{ rows: ProducerQueueSqlRow[]; total: number }> {
+    const params = [
+      unreachable,
+      mentioned,
+      query.status ?? null,
+      query.kind ?? null,
+      query.name ?? null,
+      query.issue?.length ? query.issue : null,
+    ];
+
+    const rows = await this.query(
+      `${PRODUCER_QUEUE_SQL}
+       SELECT q.* FROM q
+       ORDER BY q.severity, q."productCount" DESC, q.slug
+       LIMIT $7 OFFSET $8`,
+      [...params, limit, offset],
+    ) as ProducerQueueSqlRow[];
+
+    const counted = await this.query(
+      `${PRODUCER_QUEUE_SQL} SELECT count(*)::int AS total FROM q`,
+      params,
+    ) as { total: number }[];
+
+    return { rows, total: counted[0]?.total ?? 0 };
+  }
+
+  /**
+   * Counts the producers queue and how many rows each code fires on.
+   *
+   * @param unreachable - As for {@link findQueue}.
+   * @param mentioned - As for {@link findQueue}.
+   * @returns The open total and the per-code tally.
+   */
+  public async countQueueIssues(
+    unreachable: ID[],
+    mentioned: ID[],
+  ): Promise<ReviewProducerSummary> {
+    const rows = await this.query(
+      `${PRODUCER_QUEUE_SQL}
+       SELECT
+         (SELECT count(*)::int FROM q) AS open,
+         COALESCE((
+           SELECT json_object_agg(t.code, t.n)
+           FROM (
+             SELECT code, count(*)::int AS n
+             FROM q, unnest(q.issues) AS code
+             GROUP BY code
+           ) t
+         ), '{}'::json) AS "byIssue"`,
+      [unreachable, mentioned, null, null, null, null],
+    ) as ReviewProducerSummary[];
+
+    return rows[0] ?? { open: 0, byIssue: {} };
+  }
+
+  /**
+   * Loads the alias index of the producers somebody has ruled out.
+   *
+   * Never for resolution, for the reason {@link findWithheldAliasIndex} gives
+   * about its own list — more strongly here, since a `rejected` row states
+   * that the thing is not a whisky producer at all. The one caller is the
+   * curation screen's what-if pass, which asks what a bottling *would* resolve
+   * to so it can say "this reaches something already ruled out" and writes
+   * nothing.
+   *
+   * @returns Alias entries whose producers are `rejected`, longest key first.
+   */
+  public async findRejectedAliasIndex(): Promise<KbAliasEntry[]> {
+    const rows = await this.query(
+      ALIAS_INDEX_SQL,
+      [[KbStatus.REJECTED]],
     ) as KbAliasRow[];
 
     return rows.map((row) => ({
@@ -870,6 +1082,37 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
   }
 
   /**
+   * The facts a suggested producer is judged by, for a handful of ids.
+   *
+   * The alias index carries a producer's resolution facts but not its review
+   * status, its flag or how much of the catalogue already resolves to it —
+   * and all three decide how a candidate reads: a withheld row is an answer
+   * that also needs promoting, the flag makes a one-line candidate
+   * recognisable, and the count is the confidence signal.
+   *
+   * @param ids - The producers to describe.
+   * @returns One row per producer that exists.
+   */
+  public async findCandidateFacts(
+    ids: ID[],
+  ): Promise<ProducerCandidateFactRow[]> {
+    if (!ids.length) {
+      return [];
+    }
+
+    return this.query(
+      `SELECT p.id, p.status, c.icon AS "countryIcon",
+              (SELECT count(*)::int FROM product pr
+               WHERE pr."producerId" = p.id OR pr."bottlerId" = p.id)
+                AS "productCount"
+       FROM producer p
+       LEFT JOIN country c ON c.id = p."countryId"
+       WHERE p.id = ANY($1::uuid[])`,
+      [ids],
+    ) as Promise<ProducerCandidateFactRow[]>;
+  }
+
+  /**
    * Creates one producer.
    *
    * The country is resolved through a sub-select, so an unknown code leaves
@@ -936,16 +1179,22 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
   /**
    * Points one normalized spelling at a producer.
    *
-   * A key already claimed by another producer is left alone rather than moved:
-   * `producer_alias.key` is unique across every producer precisely so one
-   * spelling cannot resolve two ways, and silently stealing it would change
-   * what an unrelated maker resolves to.
+   * A key already claimed by **another** producer is left alone rather than
+   * moved: `producer_alias.key` is unique across every producer precisely so
+   * one spelling cannot resolve two ways, and silently stealing it would
+   * change what an unrelated maker resolves to.
+   *
+   * A key this **same** producer already holds has its scope written instead.
+   * That is the curation screen's whole `Hyde` case: the spelling exists,
+   * brand-scoped, and the person is choosing where it may be matched — a
+   * no-op there would leave them pressing a button that does nothing.
    *
    * @param key - The normalized alias key.
    * @param producerId - The producer it must reach.
    * @param scope - Where the alias may be matched.
    * @param note - Why it exists, or null.
-   * @returns True when the alias was written, false when the key was taken.
+   * @returns True when the alias was written or rescoped, false when another
+   *   producer holds the key.
    */
   public async insertAlias(
     key: string,
@@ -956,7 +1205,8 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
     const rows = await this.query(
       `INSERT INTO producer_alias (key, "producerId", scope, note)
        VALUES ($1, $2, $3, $4)
-       ON CONFLICT (key) DO NOTHING
+       ON CONFLICT (key) DO UPDATE SET scope = EXCLUDED.scope
+       WHERE producer_alias."producerId" = EXCLUDED."producerId"
        RETURNING id`,
       [key, producerId, scope, note],
     ) as { id: ID }[];
@@ -1000,6 +1250,52 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
     ) as { producerId: ID; name: string }[];
 
     return rows[0] ?? null;
+  }
+
+  /**
+   * The producer one alias row belongs to, and the spelling it holds.
+   *
+   * Reached by the alias's own id rather than by its key, because widening a
+   * scope names the row, not the word.
+   *
+   * @param aliasId - The alias.
+   * @returns The producer and the key, or null when nothing has that id.
+   */
+  public async findAliasProducer(
+    aliasId: ID,
+  ): Promise<{ producerId: ID; key: string; scope: string } | null> {
+    const rows = await this.query(
+      `SELECT a."producerId", a.key, a.scope
+       FROM producer_alias a
+       WHERE a.id = $1`,
+      [aliasId],
+    ) as { producerId: ID; key: string; scope: string }[];
+
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Widens or narrows one alias, scoped to its producer so a stray id cannot
+   * reach another maker's spelling.
+   *
+   * @param aliasId - The alias.
+   * @param producerId - The producer it must belong to.
+   * @param scope - The scope to store.
+   * @returns How many rows were written.
+   */
+  public async updateAliasScope(
+    aliasId: ID,
+    producerId: ID,
+    scope: string,
+  ): Promise<number> {
+    const rows = await this.updateReturning<{ id: ID }>(
+      `UPDATE producer_alias SET scope = $3
+       WHERE id = $1 AND "producerId" = $2
+       RETURNING id`,
+      [aliasId, producerId, scope],
+    );
+
+    return rows.length;
   }
 
   /**
@@ -1066,7 +1362,7 @@ export class ProducerRepository extends BaseRepository<ProducerEntity> {
    * @param row - One joined alias row.
    * @returns The producer's facts.
    */
-  private toFacts(row: KbAliasRow): KbProducerFacts {
+  private toFacts(row: KbProducerRow): KbProducerFacts {
     return {
       id: row.id,
       slug: row.slug,

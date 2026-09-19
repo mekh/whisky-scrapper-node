@@ -1,6 +1,4 @@
 import type {
-  FlavorRuleMatchMode,
-  KbFlavorEffect,
   KbStatus,
   PeatProfile,
   ProducerAliasScope,
@@ -157,53 +155,6 @@ export interface ProductReviewStatusInput {
    * The verdict to record.
    */
   reviewStatus: ProductReviewStatus;
-}
-
-/**
- * A reviewer's new name-pattern rule, as the request states it. Exactly one of
- * `peatProfile` or the `flavorName`/`effect` pair must be set — the XOR the
- * table's CHECK constraint enforces, validated in the domain layer so it
- * answers 400 rather than 500.
- */
-export interface ProducerRuleCreateInput {
-  /**
-   * The pattern, in whatever spelling the reviewer typed; normalized to a
-   * `KbKeyUtils.key` before it is stored.
-   */
-  pattern: string;
-
-  /**
-   * `word` (default) or `prefix` — the latter exists for Ukrainian
-   * inflection.
-   */
-  matchMode?: FlavorRuleMatchMode;
-
-  /**
-   * The peat band, for a peat rule. Never `unknown`.
-   */
-  peatProfile?: PeatProfile;
-
-  /**
-   * The flavour tag name, for a tag rule. Resolved against the `flavor`
-   * table; an unknown name is rejected rather than coined.
-   */
-  flavorName?: string;
-
-  /**
-   * `require` or `forbid`. Never `baseline`, which belongs to the house
-   * style.
-   */
-  effect?: KbFlavorEffect;
-
-  /**
-   * Higher wins; defaults to 60, the producer-scoped convention.
-   */
-  priority?: number;
-
-  /**
-   * Why the rule exists.
-   */
-  note?: string;
 }
 
 /**

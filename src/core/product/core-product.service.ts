@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 
+import { REVIEW_ISSUE_SEVERITY, REVIEW_SCOTLAND_CODE } from '~constants';
 import { CoreBaseService } from '~core/_common';
-import { ProductReviewStatus } from '~enums';
+import { ProductFactField, ProductReviewStatus, ReviewIssueCode } from '~enums';
 import {
   FlavorCandidateRow,
   ID,
@@ -12,22 +13,52 @@ import {
   ProducerProductRow,
   ProductCanonicalInput,
   ProductFactConflictInput,
-  ProductFactReviewRow,
   ProductFillInput,
   ProductMatchRow,
   ProductNameCandidateRow,
-  ProductReviewQueueRow,
   ProductReviewStatusCounts,
   ProductScrapeFlavorLink,
   ProductSearchItem,
+  ProductSiblingFactRow,
   ProductStoreFieldsRow,
   ProductStoredFactsRow,
-  ReviewConflictRow,
-  UntrustedFactCounts,
+  ProductSuggestionSourceRow,
+  ProductUnresolvedNameRow,
+  ReviewDuplicateCandidate,
+  ReviewInertHitIds,
+  ReviewIssue,
+  ReviewIssueCounts,
+  ReviewQueueQuery,
+  ReviewQueueRow,
 } from '~types';
+import { BrandHintUtils } from '~utils';
 
 import { ProductEntity } from './product.entity';
 import { ProductRepository } from './product.repository';
+
+import type { ReviewQueueSqlRow } from './product.interfaces';
+
+/**
+ * Which fact each detector is about, where it is about one. Read by the client
+ * to put a fix button beside the right field; stated once, here, so the chip
+ * and the button cannot name different fields.
+ */
+const ISSUE_FIELD: Readonly<Partial<Record<ReviewIssueCode, string>>> = {
+  [ReviewIssueCode.MISSING_ABV]: 'abv',
+  [ReviewIssueCode.MISSING_VOLUME]: 'volume',
+  [ReviewIssueCode.MISSING_COUNTRY]: 'country',
+  [ReviewIssueCode.MISSING_TYPE]: 'type',
+  [ReviewIssueCode.TYPE_VS_NAME]: 'type',
+  [ReviewIssueCode.COUNTRY_VS_NAME]: 'country',
+  [ReviewIssueCode.ABV_RANGE]: 'abv',
+  [ReviewIssueCode.NAME_LEFTOVER]: 'name',
+  [ReviewIssueCode.CYRILLIC_NAME]: 'name',
+  [ReviewIssueCode.AGE_IN_RAW]: 'age',
+  [ReviewIssueCode.AGE_SINGLE_STORE]: 'age',
+  [ReviewIssueCode.NO_PRODUCER]: 'producer',
+  [ReviewIssueCode.PRODUCER_REJECTED]: 'producer',
+  [ReviewIssueCode.PRODUCER_WITHHELD]: 'producer',
+};
 
 /**
  * Persistence-layer public API for the canonical `product` entity — the
@@ -39,6 +70,65 @@ import { ProductRepository } from './product.repository';
 export class CoreProductService extends CoreBaseService<ProductEntity> {
   public constructor(protected readonly repo: ProductRepository) {
     super(repo);
+  }
+
+  /**
+   * Turns one detector row into the shape the screen reads.
+   *
+   * @param row - The row as SQL returned it.
+   * @returns The row with its issues explained and its offers annotated.
+   */
+  private static toQueueRow(row: ReviewQueueSqlRow): ReviewQueueRow {
+    const issues = row.issues.map((code) =>
+      CoreProductService.toIssue(code as ReviewIssueCode, row)
+    );
+
+    const offers = row.offers.map((offer) => ({
+      ...offer,
+      brandHint: BrandHintUtils.fromRawName(offer.nameOrig),
+    }));
+
+    return { ...row, issues, offers };
+  }
+
+  /**
+   * Explains one code: how bad it is, which field it is about, and what the
+   * detector actually found.
+   *
+   * @param code - The code that fired.
+   * @param row - The row it fired on, for the codes that quote a value.
+   * @returns The explained issue.
+   */
+  private static toIssue(
+    code: ReviewIssueCode,
+    row: ReviewQueueSqlRow,
+  ): ReviewIssue {
+    const issue: ReviewIssue = {
+      code,
+      severity: REVIEW_ISSUE_SEVERITY[code],
+    };
+
+    const field = ISSUE_FIELD[code];
+
+    if (field) {
+      issue.field = field;
+    }
+
+    if (code === ReviewIssueCode.TYPE_VS_NAME && row.namedType) {
+      issue.detail = row.namedType;
+    }
+
+    /*
+      The detector fires on Scotland's regions and on nothing else, so the
+      country it means is a constant — but it is this file's constant, not the
+      client's. Stating it here is what lets the screen offer the fix without
+      a second copy of the vocabulary.
+    */
+    if (code === ReviewIssueCode.COUNTRY_VS_NAME) {
+      issue.detail = REVIEW_SCOTLAND_CODE;
+    }
+
+    return issue;
   }
 
   /**
@@ -276,38 +366,100 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
   }
 
   /**
-   * Counts the bottlings whose type or country the filters no longer trust.
+   * Pins a bottling's maker by hand, stamping the link `manual` so no pass
+   * moves it.
    *
-   * @returns The per-field counts and the count of bottlings with either.
+   * @param productId - The bottling.
+   * @param producerId - The maker, or null to clear it.
+   * @param bottlerId - The bottler, or null to clear it.
+   * @returns How many rows were written.
    */
-  public async countUntrustedFacts(): Promise<UntrustedFactCounts> {
-    return this.repo.countUntrustedFacts();
+  public async setProducerManual(
+    productId: ID,
+    producerId: ID | null,
+    bottlerId: ID | null,
+  ): Promise<number> {
+    return this.repo.setProducerManual(productId, producerId, bottlerId);
   }
 
   /**
-   * Lists the bottlings whose type or country the filters distrust.
+   * Stamps facts `manual` without changing their values.
    *
-   * @param field - `type`, `country`, or omit for either.
-   * @param limit - Page size.
-   * @param offset - Page offset.
-   * @param producer - `resolved` or `unresolved` for one half of the queue.
-   * @param search - Case-insensitive substring of a name, or omit for all.
-   * @returns The rows and the total matching count.
+   * @param productId - The bottling.
+   * @param fields - The fact fields to stamp.
+   * @returns How many rows were written.
    */
-  public async findUntrustedFacts(
-    field?: string,
-    limit?: number,
-    offset?: number,
-    producer?: string,
-    search?: string,
-  ): Promise<{ rows: ProductFactReviewRow[]; total: number }> {
-    return this.repo.findUntrustedFacts(
-      field,
-      limit,
-      offset,
-      producer,
-      search,
-    );
+  public async stampManual(
+    productId: ID,
+    fields: ProductFactField[],
+  ): Promise<number> {
+    return this.repo.stampManual(productId, fields);
+  }
+
+  /**
+   * Acknowledges every open contradiction recorded against a bottling.
+   *
+   * @param productId - The bottling.
+   * @returns How many were acknowledged.
+   */
+  public async acknowledgeConflicts(productId: ID): Promise<number> {
+    return this.repo.acknowledgeConflicts(productId);
+  }
+
+  /**
+   * The display names behind a set of producer, type and country ids.
+   *
+   * @param ids - The ids to name.
+   * @returns Id to display name; an id nothing has is absent.
+   */
+  public async findLabelsByIds(ids: ID[]): Promise<Map<ID, string>> {
+    return this.repo.findLabelsByIds(ids);
+  }
+
+  /**
+   * Everything the per-bottling suggestions are derived from.
+   *
+   * @param id - The bottling.
+   * @returns Its facts and its evidence, or null when nothing has that id.
+   */
+  public async findSuggestionSource(
+    id: ID,
+  ): Promise<ProductSuggestionSourceRow | null> {
+    return this.repo.findSuggestionSource(id);
+  }
+
+  /**
+   * The bottlings one row may be a second copy of.
+   *
+   * @param id - The bottling to compare against.
+   * @param limit - How many candidates to return.
+   * @returns The candidates, exact twins first.
+   */
+  public async findDuplicateCandidates(
+    id: ID,
+    limit: number,
+  ): Promise<ReviewDuplicateCandidate[]> {
+    return this.repo.findDuplicateCandidates(id, limit);
+  }
+
+  /**
+   * What identically-named bottlings state about the facts this one lacks.
+   *
+   * @param id - The bottling.
+   * @returns One list per fact, most common value first.
+   */
+  public async findSiblingFacts(id: ID): Promise<ProductSiblingFactRow[]> {
+    return this.repo.findSiblingFacts(id);
+  }
+
+  /**
+   * The stocked bottlings that resolve to no maker, with the names one could
+   * be found in.
+   *
+   * @returns One row per unresolved stocked bottling.
+   */
+  public async findUnresolvedNames(): Promise<ProductUnresolvedNameRow[]> {
+    return this.repo.findUnresolvedNames();
   }
 
   /**
@@ -320,23 +472,44 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
   }
 
   /**
-   * Lists one bucket of the new-product queue, newest first.
+   * Lists one page of the curation queue, each row carrying why it is there.
    *
-   * @param status - Which bucket to list.
-   * @param limit - Page size.
-   * @param offset - Page offset.
-   * @param search - Case-insensitive substring of either name, or omit.
-   * @param storeSlug - Restrict to one shop's bottlings, or omit.
-   * @returns The rows and the total matching count.
+   * The detectors run in SQL; two things are added here rather than there. The
+   * severity of each code comes from `REVIEW_ISSUE_SEVERITY`, the same map the
+   * client colours its chips by, so there is one answer to "how bad is this".
+   * And each offer's brand token comes from `BrandHintUtils`, the one place
+   * the `(Країна, ТМ Brand)` shape is read — putting either in SQL would be a
+   * second copy of a rule that already exists.
+   *
+   * @param query - Issue, shop, search, slice, sort and paging.
+   * @param hits - What the what-if pass concluded about the bottlings that
+   *   resolve to nothing.
+   * @returns The page and the total matching count.
    */
   public async findReviewQueue(
-    status: ProductReviewStatus,
-    limit?: number,
-    offset?: number,
-    search?: string,
-    storeSlug?: string,
-  ): Promise<{ rows: ProductReviewQueueRow[]; total: number }> {
-    return this.repo.findReviewQueue(status, limit, offset, search, storeSlug);
+    query: ReviewQueueQuery,
+    hits: ReviewInertHitIds,
+  ): Promise<{ rows: ReviewQueueRow[]; total: number }> {
+    const { rows, total } = await this.repo.findReviewQueue(query, hits);
+
+    return {
+      rows: rows.map((row) => CoreProductService.toQueueRow(row)),
+      total,
+    };
+  }
+
+  /**
+   * Counts the open queue and how many bottlings each detector fires on.
+   *
+   * @param hits - The what-if answer.
+   * @param includeAcknowledged - Whether acknowledged contradictions count.
+   * @returns The open total, the contradiction-only share and the tally.
+   */
+  public async countReviewIssues(
+    hits: ReviewInertHitIds,
+    includeAcknowledged = false,
+  ): Promise<ReviewIssueCounts> {
+    return this.repo.countReviewIssues(hits, includeAcknowledged);
   }
 
   /**
@@ -355,35 +528,6 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
     onlyWhenPending = false,
   ): Promise<number> {
     return this.repo.applyReviewStatus(ids, status, onlyWhenPending);
-  }
-
-  /**
-   * Counts the unresolved cross-shop contradictions.
-   *
-   * @returns How many are open.
-   */
-  public async countOpenConflicts(): Promise<number> {
-    return this.repo.countOpenConflicts();
-  }
-
-  /**
-   * Lists the unresolved contradictions, worst-first.
-   *
-   * @param attribute - Restrict to one disputed attribute.
-   * @param store - Restrict to one shop's claims, by slug.
-   * @param limit - Page size.
-   * @param offset - Page offset.
-   * @param search - Case-insensitive substring of a name, or omit for all.
-   * @returns The rows and the total matching count.
-   */
-  public async findConflicts(
-    attribute?: string,
-    store?: string,
-    limit?: number,
-    offset?: number,
-    search?: string,
-  ): Promise<{ rows: ReviewConflictRow[]; total: number }> {
-    return this.repo.findConflicts(attribute, store, limit, offset, search);
   }
 
   /**
@@ -408,22 +552,6 @@ export class CoreProductService extends CoreBaseService<ProductEntity> {
     ids: ID[],
   ): Promise<ProducerProductRow[]> {
     return this.repo.findProducerProductsByIds(ids);
-  }
-
-  /**
-   * Marks one contradiction settled.
-   *
-   * @param productId - The bottling.
-   * @param storeId - The shop making the claim.
-   * @param attribute - Which fact is disputed.
-   * @returns Resolves once the row is marked.
-   */
-  public async resolveConflict(
-    productId: ID,
-    storeId: ID,
-    attribute: string,
-  ): Promise<void> {
-    return this.repo.resolveConflict(productId, storeId, attribute);
   }
 
   /**

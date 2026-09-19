@@ -58,6 +58,11 @@ export class KbAliasUtils {
    * it already matched, so `Douglas Laing Big Peat` does not resolve its own
    * bottler as the distillery.
    *
+   * A `lead` alias is the exception to both rules: it is tested against the
+   * start of the name only and is exempt from the floor. Anchoring is what
+   * makes a short key safe — shops write names brand-first, so `hyde` at
+   * position 0 is the brand and `blue` at position 0 is not Johnnie Walker.
+   *
    * @param nameKey - The product name normalized by `KbKeyUtils.normalize`,
    *   which leaves it space-wrapped so a key matches whole words.
    * @param aliases - The alias index, longest key first.
@@ -70,10 +75,8 @@ export class KbAliasUtils {
     excludeId: ID | null = null,
   ): KbAliasEntry | null {
     const hit = aliases.find((alias) =>
-      alias.scope !== ProducerAliasScope.BRAND
-      && alias.key.length >= KB_NAME_ALIAS_MIN_LENGTH
-      && alias.producer.id !== excludeId
-      && KbKeyUtils.matchesWord(nameKey, alias.key)
+      alias.producer.id !== excludeId
+      && KbAliasUtils.matchesScope(nameKey, alias)
     );
 
     return hit ?? null;
@@ -103,5 +106,48 @@ export class KbAliasUtils {
     return aliases.filter((alias) =>
       ProductMatchUtils.carriesIdentity(alias.key)
     );
+  }
+
+  /**
+   * Whether the resolver may look for an alias **inside** a name at all.
+   *
+   * The one statement of that rule, so the matcher and the curation screen's
+   * `alias-unreachable` detector cannot disagree about what a spelling can
+   * reach. A `brand` alias never can; a `lead` alias always can, because
+   * anchoring at position 0 is what makes a short key safe; everything else
+   * needs {@link KB_NAME_ALIAS_MIN_LENGTH}.
+   *
+   * @param alias - The alias to test.
+   * @returns True when some product name could match it.
+   */
+  public static reachesName(alias: KbAliasEntry): boolean {
+    if (alias.scope === ProducerAliasScope.BRAND) {
+      return false;
+    }
+
+    return alias.scope === ProducerAliasScope.LEAD
+      || alias.key.length >= KB_NAME_ALIAS_MIN_LENGTH;
+  }
+
+  /**
+   * Whether one alias matches a name in the way its own scope allows.
+   *
+   * @param nameKey - The space-wrapped, normalized product name.
+   * @param alias - The alias to test.
+   * @returns True when the alias fires on this name.
+   */
+  private static matchesScope(
+    nameKey: string,
+    alias: KbAliasEntry,
+  ): boolean {
+    if (!KbAliasUtils.reachesName(alias)) {
+      return false;
+    }
+
+    if (alias.scope === ProducerAliasScope.LEAD) {
+      return nameKey.startsWith(` ${alias.key} `);
+    }
+
+    return KbKeyUtils.matchesWord(nameKey, alias.key);
   }
 }

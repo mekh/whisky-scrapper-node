@@ -5,6 +5,7 @@ import type {
   ScrapeProgressReporter,
   StoreScrapeSpec,
 } from '~types';
+import { BrandHintUtils } from '~utils';
 
 import { firstAttr, firstText, strippedText } from '../../html/html.util';
 import { parsePrice } from '../../http/parse-price.util';
@@ -217,7 +218,7 @@ export class VinaMiraAdapter extends PagedHtmlAdapterBase {
     const regular = parsePrice(firstText($, card, OLD_PRICE_SELECTOR));
     const oldPrice = regular !== null && regular > price ? regular : null;
 
-    return this.makeSnapshot({
+    const snap = this.makeSnapshot({
       storeSku: sku,
       url: new URL(href, SITE).toString(),
       name,
@@ -225,6 +226,17 @@ export class VinaMiraAdapter extends PagedHtmlAdapterBase {
       oldPrice,
       promo: oldPrice !== null,
     });
+
+    /**
+     * The shop states the maker nowhere but inside the name, as
+     * `(Країна, ТМ Brand)` — which the name cleaner strips. Handing it over as
+     * the stated brand is what lets whole-string brand matching resolve it:
+     * that path has no length floor and no scope problem, so a four-letter
+     * maker such as `Hyde` resolves without an alias edit.
+     */
+    snap.brand = BrandHintUtils.fromRawName(name);
+
+    return snap;
   }
 
   /**

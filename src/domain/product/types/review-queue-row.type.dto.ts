@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   IsArray,
   IsDate,
+  IsEnum,
   IsInt,
   IsNumber,
   IsOptional,
@@ -9,18 +10,23 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-import type { ID, ProductReviewQueueRow } from '~types';
+import { ProductReviewStatus } from '~enums';
+import type { ID, ReviewQueueRow } from '~types';
 
-import { ReviewStoreLinkType } from './review-store-link.type.dto';
+import { ReviewConflictType } from './review-conflict.type.dto';
+import { ReviewIssueType } from './review-issue.type.dto';
+import { ReviewOfferType } from './review-offer.type.dto';
+import { ReviewProducerRefType } from './review-producer-ref.type.dto';
 
 /**
- * One bottling in the new-product queue.
+ * One bottling in the curation queue.
  *
- * The field set is chosen so a parse error is visible without opening
- * anything: `name` beside `nameOrig` is the comparison the screen exists for,
- * and the specs beside them are what the cleaner lifted out of that raw name.
+ * The field set is what a decision is made from without opening a second
+ * screen: `name` beside `nameOrig` is the comparison a parse error shows up
+ * in, every fact carries the source that decides whether a filter trusts it,
+ * and `issues` says why the row is here at all.
  */
-export class ProductReviewQueueType implements ProductReviewQueueRow {
+export class ReviewQueueRowType implements ReviewQueueRow {
   @IsString()
   public id!: ID;
 
@@ -90,16 +96,22 @@ export class ProductReviewQueueType implements ProductReviewQueueRow {
   public countrySource!: string | null;
 
   @IsOptional()
-  @IsString()
-  public brand!: string | null;
+  @ValidateNested()
+  @Type(() => ReviewProducerRefType)
+  public producer!: ReviewProducerRefType | null;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ReviewProducerRefType)
+  public bottler!: ReviewProducerRefType | null;
 
   @IsOptional()
   @IsString()
-  public producerSlug!: string | null;
+  public producerSource!: string | null;
 
   /**
-   * The spelling a shop used. A null `producerSlug` beside a non-null value
-   * here is the signal "the knowledge base does not know this maker yet".
+   * The spelling a shop used. A null producer beside a non-null value here is
+   * the signal "the knowledge base does not know this maker yet".
    */
   @IsOptional()
   @IsString()
@@ -114,12 +126,22 @@ export class ProductReviewQueueType implements ProductReviewQueueRow {
 
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => ReviewStoreLinkType)
-  public stores!: ReviewStoreLinkType[];
+  @Type(() => ReviewOfferType)
+  public offers!: ReviewOfferType[];
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReviewConflictType)
+  public conflicts!: ReviewConflictType[];
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReviewIssueType)
+  public issues!: ReviewIssueType[];
 
   @IsOptional()
-  @IsString()
-  public reviewStatus!: string | null;
+  @IsEnum(ProductReviewStatus)
+  public reviewStatus!: ProductReviewStatus | null;
 
   @IsOptional()
   @IsDate()

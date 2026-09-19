@@ -1,6 +1,7 @@
 import { TypeormRepository } from '@toxicoder/nestjs-typeorm-repository';
 
-import { BaseRepository } from '~core/_common';
+import { REVIEW_PAGE_SIZE } from '~constants';
+import { BaseRepository, REVIEW_ISSUES_SQL } from '~core/_common';
 import {
   FACT_SOURCE_RANK,
   FLAVOR_SOURCE_RANK,
@@ -8,6 +9,9 @@ import {
   FlavorSource,
   ProductFactField,
   ProductReviewStatus,
+  ReviewIssueCode,
+  ReviewQueueSort,
+  ReviewQueueStatus,
   TRUSTED_FACT_SOURCES,
 } from '~enums';
 import {
@@ -20,22 +24,27 @@ import {
   ProducerProductRow,
   ProductCanonicalInput,
   ProductFactConflictInput,
-  ProductFactReviewRow,
   ProductFillInput,
   ProductMatchRow,
   ProductNameCandidateRow,
-  ProductReviewQueueRow,
   ProductReviewStatusCounts,
   ProductScrapeFlavorLink,
   ProductSearchItem,
+  ProductSiblingFactRow,
   ProductStoreFieldsRow,
   ProductStoredFactsRow,
-  ReviewConflictRow,
-  UntrustedFactCounts,
+  ProductSuggestionSourceRow,
+  ProductUnresolvedNameRow,
+  ReviewDuplicateCandidate,
+  ReviewInertHitIds,
+  ReviewIssueCounts,
+  ReviewQueueQuery,
 } from '~types';
 import { SearchTermUtils } from '~utils';
 
 import { ProductEntity } from './product.entity';
+
+import type { ReviewQueueSqlRow } from './product.interfaces';
 
 /**
  * Finds or creates a batch of bottlings by their match key.
@@ -588,66 +597,6 @@ const FILL_MISSING_SQL = `
  */
 const UUID_SHAPE = '^[0-9a-fA-F-]{36}$';
 
-/**
- * How many shop links one review row carries.
- *
- * A bottling can be listed by nineteen shops, and nineteen links in a table
- * cell is not a row a person can read. Five is enough to check a fact against
- * a couple of listings, and the row already links to the bottling's own screen,
- * where every offer is listed in full.
- */
-const STORE_LINK_LIMIT = 5;
-
-/**
- * The shops' own pages for one bottling, at most {@link STORE_LINK_LIMIT} of
- * them, in-stock first.
- *
- * **One link per shop**, which is what the inner `DISTINCT ON` buys: a shop
- * routinely lists the same bottling under two SKUs (boxed and plain), and
- * without the dedup two of the five slots went to one shop — three shops
- * offered where five were meant to be. Within a shop the in-stock, most
- * recently seen listing wins.
- *
- * The nesting is forced by `DISTINCT ON`, whose `ORDER BY` must lead with the
- * distinct expression, so the "in-stock first" ordering the limit needs has to
- * happen one level out.
- *
- * An out-of-stock listing is offered rather than hidden — the page still says
- * what the shop claims about the bottling, which is the fact under review —
- * and marked so the client can dim it.
- */
-const STORE_LINKS_SQL = `
-  SELECT COALESCE(json_agg(json_build_object(
-           'slug', o.slug, 'name', o.name,
-           'url', o.url, 'inStock', o."inStock"
-         ) ORDER BY o."inStock" DESC, o.name), '[]'::json)
-  FROM (
-    SELECT d.* FROM (
-      SELECT DISTINCT ON (sp."storeId")
-             s.slug, s.name, sp.url, sp."inStock"
-      FROM store_product sp
-      JOIN store s ON s.id = sp."storeId"
-      WHERE sp."productId" = p.id AND sp.url <> ''
-      ORDER BY sp."storeId", sp."inStock" DESC, sp."lastSeen" DESC
-    ) d
-    ORDER BY d."inStock" DESC, d.name
-    LIMIT ${STORE_LINK_LIMIT}
-  ) o
-`;
-
-/**
- * Builds the producer-expansion read: the display names behind one producer
- * row, **grouped by name**. One whisky in three volumes is three bottlings but
- * one entry — the screen links into the catalogue by name, so ungrouped rows
- * were identical links repeated. The display name falls back to the longest
- * raw store name, as the facts queue picks it, and `inStock` is true when any
- * grouped bottling has a stocked offer anywhere. Built by one function for
- * both reads so the resolved and the what-if paths cannot drift apart in what
- * they show.
- *
- * @param where - The predicate selecting the bottlings, over alias `p`.
- * @returns The grouped, ordered query.
- */
 const producerProductsSql = (where: string): string => `
   SELECT x.label AS name, count(*)::int AS "productCount",
          bool_or(x."inStock") AS "inStock"
@@ -664,18 +613,6 @@ const producerProductsSql = (where: string): string => `
   GROUP BY x.label
   ORDER BY lower(x.label), x.label
 `;
-
-/**
- * The `WHERE` fragment that takes one half of the untrusted-fact queue.
- *
- * A lookup rather than a nested ternary because the two formatters disagree
- * about how to indent one, and the queue's halves are a closed set anyway: a
- * value outside it means "both halves", which is the empty fragment.
- */
-const FACT_QUEUE_SEGMENT: Record<string, string | undefined> = {
-  resolved: ' AND p."producerId" IS NOT NULL',
-  unresolved: ' AND p."producerId" IS NULL',
-};
 
 const SET_PRODUCERS_SQL = `
   UPDATE product p SET
@@ -793,6 +730,134 @@ const SEARCH_SQL = `
            p.name NULLS LAST, p.id
   LIMIT $4
 `;
+
+/**
+ * The producer slot as the curation screen names one.
+ *
+ * @param alias - The joined `producer` alias.
+ * @returns A JSON object, or NULL when nothing resolved.
+ */
+const producerRefSql = (alias: string): string =>
+  `CASE WHEN ${alias}.id IS NULL THEN NULL ELSE json_build_object(
+     'id', ${alias}.id, 'slug', ${alias}.slug, 'name', ${alias}.name,
+     'kind', ${alias}.kind, 'status', ${alias}.status) END`;
+
+/**
+ * Every shop's listing of one bottling, in-stock first, each with the most
+ * recent price captured for it.
+ *
+ * Nothing is deduplicated or capped: this is the evidence the person reads a
+ * fact out of, and a shop that lists the bottling twice is itself worth
+ * seeing.
+ */
+const REVIEW_OFFERS_SQL = `
+  SELECT COALESCE(json_agg(json_build_object(
+           'id', x.id, 'storeSlug', x.slug, 'storeName', x.name,
+           'storeColor', x.color, 'sku', x.sku, 'nameOrig', x."nameOrig",
+           'url', x.url, 'inStock', x."inStock", 'price', x.price,
+           'firstSeen', x."firstSeen")
+         ORDER BY x."inStock" DESC, x.name, x.sku), '[]'::json)
+  FROM (
+    SELECT sp.id, s.slug, s.name, s.color, sp.sku, sp."nameOrig", sp.url,
+           sp."inStock", sp."firstSeen", ps.price::float8 AS price
+    FROM store_product sp
+    JOIN store s ON s.id = sp."storeId"
+    LEFT JOIN LATERAL (
+      SELECT snap.price
+      FROM price_snapshot snap
+      WHERE snap."storeProductId" = sp.id
+      ORDER BY snap."capturedOn" DESC
+      LIMIT 1
+    ) ps ON true
+    WHERE sp."productId" = q.id
+  ) x
+`;
+
+/**
+ * The cross-shop contradictions recorded against one bottling, worst first.
+ *
+ * The stored and claimed values are foreign keys for three of the four
+ * attributes and a number for the fourth, so the uuid cast is guarded by a
+ * `CASE` on the value's shape — Postgres is free to evaluate a cast before the
+ * predicate meant to exclude it, and an ABV row would otherwise abort the
+ * whole query.
+ *
+ * Acknowledged rows come too, marked by their `resolvedAt`: the evidence a
+ * person already dismissed is still evidence, and the «переглянуті
+ * розбіжності» checkbox is what decides whether it also queues the bottling.
+ */
+const REVIEW_CONFLICTS_SQL = `
+  SELECT COALESCE(json_agg(json_build_object(
+           'storeId', y."storeId", 'storeSlug', y.slug,
+           'attribute', y.attribute, 'claimed', y.claimed,
+           'stored', y.stored, 'storedSource', y."storedSource",
+           'seenCount', y."seenCount", 'lastSeenAt', y."lastSeenAt",
+           'resolvedAt', y."resolvedAt")
+         ORDER BY y."resolvedAt" NULLS FIRST, y."seenCount" DESC), '[]'::json)
+  FROM (
+    SELECT g."storeId", st.slug, g.attribute, g."storedSource",
+           g."seenCount", g."lastSeenAt", g."resolvedAt",
+           COALESCE(sty.name, sc."nameUa", g."storedValue") AS stored,
+           COALESCE(cty.name, cc."nameUa", g."claimedValue") AS claimed
+    FROM (
+      SELECT c.*,
+             CASE WHEN c."storedValue" ~ '${UUID_SHAPE}'
+               THEN c."storedValue"::uuid END AS "storedId",
+             CASE WHEN c."claimedValue" ~ '${UUID_SHAPE}'
+               THEN c."claimedValue"::uuid END AS "claimedId"
+      FROM product_fact_conflict c
+      WHERE c."productId" = q.id
+    ) g
+    JOIN store st ON st.id = g."storeId"
+    LEFT JOIN type sty ON sty.id = g."storedId"
+    LEFT JOIN country sc ON sc.id = g."storedId"
+    LEFT JOIN type cty ON cty.id = g."claimedId"
+    LEFT JOIN country cc ON cc.id = g."claimedId"
+  ) y
+`;
+
+/**
+ * Everything one queue row carries, over the detector CTE's alias `q`.
+ */
+const REVIEW_ROW_SQL = `
+  SELECT q.id, q.name, q."matchKey", q.age, q."ageSource",
+         q.abv::float8 AS abv, q."abvSource", q."volumeMl", q."volumeSource",
+         q.type, q."typeSource", q."countryCode", q."countryName",
+         q."countryIcon", q."countrySource", q."producerSource",
+         q."brandOrig", q."storeCount", q."reviewStatus", q."reviewedAt",
+         q."createdAt", q.issues, q."namedType",
+         (SELECT sp."nameOrig" FROM store_product sp
+          WHERE sp."productId" = q.id
+          ORDER BY length(sp."nameOrig") DESC LIMIT 1) AS "nameOrig",
+         ${producerRefSql('pr')} AS producer,
+         ${producerRefSql('bo')} AS bottler,
+         COALESCE((
+           SELECT array_agg(f.name ORDER BY f.name)
+           FROM product_flavor pf
+           JOIN flavor f ON f.id = pf."flavorId"
+           WHERE pf."productId" = q.id
+         ), ARRAY[]::text[]) AS flavors,
+         (${REVIEW_OFFERS_SQL}) AS offers,
+         (${REVIEW_CONFLICTS_SQL}) AS conflicts
+  FROM q
+  LEFT JOIN producer pr ON pr.id = q."producerId"
+  LEFT JOIN producer bo ON bo.id = q."bottlerId"
+`;
+
+/**
+ * How a queue page is ordered, keyed by the sort the request names. A closed
+ * map rather than an interpolated column, since the value reaches an
+ * `ORDER BY`.
+ *
+ * Severity first is the default because the queue is worked worst-first;
+ * newest answers "what did last night's sync bring in"; reach answers "how
+ * often is this wrong fact being served".
+ */
+const REVIEW_SORT_SQL: Record<string, string> = {
+  [ReviewQueueSort.SEVERITY]: 'q.severity, q."createdAt" DESC, q.id',
+  [ReviewQueueSort.NEWEST]: 'q."createdAt" DESC, q.id',
+  [ReviewQueueSort.REACH]: 'q."storeCount" DESC, q.severity, q.id',
+};
 
 @TypeormRepository(ProductEntity)
 export class ProductRepository extends BaseRepository<ProductEntity> {
@@ -1243,8 +1308,16 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
    *
    * Upserted on `(productId, storeId, attribute)` so a disagreement that
    * stands for months stays one row with a rising `seenCount`, rather than one
-   * row per sync. `resolvedAt` is cleared on a fresh sighting: a conflict
-   * someone marked settled that reappears is not settled.
+   * row per sync.
+   *
+   * **A re-sighting no longer clears `resolvedAt`** (2026-09-17, the owner's
+   * reversal of the earlier rule). Every open contradiction queues its
+   * bottling now, so a claim that keeps arriving would queue it again every
+   * night and the acknowledgement would mean nothing — a person who has read
+   * a disagreement and decided against it has decided. A claim that changes
+   * still shows up: the stored and claimed values are overwritten, so the
+   * acknowledged row states today's disagreement, and a person can bring the
+   * whole set back with «переглянуті розбіжності».
    *
    * @param conflicts - The claims observed this run; duplicates by key are
    *   merged by the caller.
@@ -1269,8 +1342,7 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
          "claimedValue" = EXCLUDED."claimedValue",
          "storedSource" = EXCLUDED."storedSource",
          "seenCount" = product_fact_conflict."seenCount" + 1,
-         "lastSeenAt" = now(),
-         "resolvedAt" = NULL`,
+         "lastSeenAt" = now()`,
       [
         conflicts.map((conflict) => conflict.productId),
         conflicts.map((conflict) => conflict.storeId),
@@ -1724,131 +1796,262 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
   }
 
   /**
-   * Counts the bottlings whose type or country the filters no longer trust.
+   * Pins a bottling's maker by hand.
    *
-   * Both per-field counts and the distinct count are returned, because they
-   * answer different questions and summing the two is wrong: 892 bottlings
-   * have *both* facts untrusted, so `type + country` overstates the work by
-   * that much. The badge on the review screen wants `either`; the two
-   * sub-counts say which field is the problem.
+   * **The new write path.** Nothing could write `producerSource = 'manual'`
+   * before, although `SET_PRODUCERS_SQL` has always respected it — so a
+   * bottling no spelling reaches had no way to be given a maker at all except
+   * by inventing an alias for it. This is the escape hatch for that one case:
+   * a bottling that genuinely belongs to a producer no spelling would reach.
    *
-   * `eitherUnresolved` says how much of the queue is a **symptom** rather than
-   * work: a bottling with no resolved producer has no authority behind either
-   * fact, and resolving the producer fixes every bottling it makes at once.
+   * It writes both slots, so a link can be cleared as deliberately as it is
+   * made: a null pinned by a person is still a decision, and stamping it
+   * `manual` is what stops the next pass from filling it back in.
    *
-   * @returns The per-field counts, the distinct count, and the unresolved
-   *   share of it.
+   * @param productId - The bottling.
+   * @param producerId - The maker, or null to clear it.
+   * @param bottlerId - The bottler, or null to clear it.
+   * @returns How many rows were written.
    */
-  public async countUntrustedFacts(): Promise<UntrustedFactCounts> {
-    const untrustedType = `"typeId" IS NOT NULL
-           AND ("typeSource" IS NULL
-                OR NOT ("typeSource" = ANY($1::text[])))`;
-    const untrustedCountry = `"countryId" IS NOT NULL
-           AND ("countrySource" IS NULL
-                OR NOT ("countrySource" = ANY($1::text[])))`;
+  public async setProducerManual(
+    productId: ID,
+    producerId: ID | null,
+    bottlerId: ID | null,
+  ): Promise<number> {
+    const rows = await this.updateReturning<{ id: ID }>(
+      `UPDATE product SET
+         "producerId" = $2, "bottlerId" = $3,
+         "producerSource" = '${FactSource.MANUAL}',
+         "updatedAt" = now()
+       WHERE id = $1
+       RETURNING id`,
+      [productId, producerId, bottlerId],
+    );
 
-    const rows = await this.query(
-      `SELECT
-         count(*) FILTER (WHERE ${untrustedType})::int AS type,
-         count(*) FILTER (WHERE ${untrustedCountry})::int AS country,
-         count(*) FILTER (WHERE (${untrustedType})
-                             OR (${untrustedCountry}))::int AS either,
-         count(*) FILTER (WHERE ((${untrustedType})
-                             OR (${untrustedCountry}))
-                            AND "producerId" IS NULL)::int
-           AS "eitherUnresolved"
-       FROM product`,
-      [TRUSTED_FACT_SOURCES],
-    ) as UntrustedFactCounts[];
-
-    return rows[0]
-      ?? { type: 0, country: 0, either: 0, eitherUnresolved: 0 };
+    return rows.length;
   }
 
   /**
-   * Lists the bottlings whose type or country the filters distrust.
+   * Stamps facts `manual` without changing their values — "this value is
+   * right".
    *
-   * Ordered by how many shops carry the bottling, because a fact wrong on a
-   * whisky twelve shops list is wrong twelve times over on the reports.
+   * The stamp is the whole point rather than bookkeeping: every automatic
+   * pass is gated on `<field>Source <> 'manual'`, so confirming is what stops
+   * the knowledge base or the next sync from moving a value a person has
+   * looked at and accepted. It is also what stops `logFactConflicts` writing
+   * the same disagreement again.
    *
-   * Each row carries the country's own label and flag rather than its code
-   * alone, and up to `STORE_LINK_LIMIT` links to the shops' own pages — the
-   * reviewer's fastest way to settle a disputed fact is to look at the
-   * listing that produced it.
-   *
-   * @param field - `type`, `country`, or omit for either.
-   * @param limit - Page size.
-   * @param offset - Page offset.
-   * @param producer - `resolved` or `unresolved` to take one half of the
-   *   queue; omit for both. The halves need different work, which is why the
-   *   filter exists at all.
-   * @param search - Case-insensitive substring of the canonical name or any
-   *   store's raw name, or omit for all. Both columns, because the screen
-   *   falls back to the raw name where cleaning left nothing.
-   * @returns The rows and the total matching count.
+   * @param productId - The bottling.
+   * @param fields - The fact fields to stamp.
+   * @returns How many rows were written.
    */
-  public async findUntrustedFacts(
-    field?: string,
-    limit = 50,
-    offset = 0,
-    producer?: string,
-    search?: string,
-  ): Promise<{ rows: ProductFactReviewRow[]; total: number }> {
-    const segment = FACT_QUEUE_SEGMENT[producer ?? ''] ?? '';
+  public async stampManual(
+    productId: ID,
+    fields: ProductFactField[],
+  ): Promise<number> {
+    const columns = [...new Set(fields)]
+      .map((field) => `"${field}Source" = '${FactSource.MANUAL}'`);
 
-    const where = `(
-         (
-           ($1::text IS NULL OR $1 = 'type')
-           AND p."typeId" IS NOT NULL
-           AND (p."typeSource" IS NULL
-                OR NOT (p."typeSource" = ANY($2::text[])))
-         ) OR (
-           ($1::text IS NULL OR $1 = 'country')
-           AND p."countryId" IS NOT NULL
-           AND (p."countrySource" IS NULL
-                OR NOT (p."countrySource" = ANY($2::text[])))
-         )
-       ) AND (
-         $3::text IS NULL
-         OR p.name ILIKE '%' || $3 || '%'
-         OR EXISTS (
-           SELECT 1 FROM store_product snp
-           WHERE snp."productId" = p.id
-             AND snp."nameOrig" ILIKE '%' || $3 || '%')
-       )`;
+    if (!columns.length) {
+      return 0;
+    }
+
+    const rows = await this.updateReturning<{ id: ID }>(
+      `UPDATE product SET ${columns.join(', ')}, "updatedAt" = now()
+       WHERE id = $1
+       RETURNING id`,
+      [productId],
+    );
+
+    return rows.length;
+  }
+
+  /**
+   * Acknowledges every open contradiction recorded against a bottling.
+   *
+   * What the old "Вирішено" button lacked: a verdict settles the bottling, so
+   * it settles the claims against it too. The claims a person edited or
+   * confirmed are additionally stamped `manual`, which is what stops the
+   * scrape from writing them again at all.
+   *
+   * @param productId - The bottling.
+   * @returns How many contradictions were acknowledged.
+   */
+  public async acknowledgeConflicts(productId: ID): Promise<number> {
+    const rows = await this.updateReturning<{ productId: ID }>(
+      `UPDATE product_fact_conflict SET "resolvedAt" = now()
+       WHERE "productId" = $1 AND "resolvedAt" IS NULL
+       RETURNING "productId"`,
+      [productId],
+    );
+
+    return rows.length;
+  }
+
+  /**
+   * The display names behind a set of producer, type and country ids.
+   *
+   * One read for all three because an impact list mixes them: a bottling can
+   * change maker, type and country at once, and three round trips to name
+   * them would be three for no reason. Ids are unique across the tables, so
+   * one map answers every slot.
+   *
+   * @param ids - The ids to name.
+   * @returns Id to display name; an id nothing has is absent.
+   */
+  public async findLabelsByIds(ids: ID[]): Promise<Map<ID, string>> {
+    if (!ids.length) {
+      return new Map();
+    }
 
     const rows = await this.query(
-      `SELECT p.id, p.name, COALESCE(pr.name, bo.name) AS brand,
-              p."brandOrig",
-              t.name AS type, p."typeSource",
-              c.code AS "countryCode", c."nameUa" AS "countryName",
-              c.icon AS "countryIcon", p."countrySource",
-              pr.slug AS "producerSlug",
-              (SELECT sp."nameOrig" FROM store_product sp
-               WHERE sp."productId" = p.id
-               ORDER BY length(sp."nameOrig") DESC LIMIT 1) AS "nameOrig",
-              (SELECT count(DISTINCT sp."storeId")::int FROM store_product sp
-               WHERE sp."productId" = p.id AND sp."inStock") AS "storeCount",
-              (${STORE_LINKS_SQL}) AS stores
+      `SELECT id, name FROM producer WHERE id = ANY($1::uuid[])
+       UNION ALL
+       SELECT id, name FROM type WHERE id = ANY($1::uuid[])
+       UNION ALL
+       SELECT id, "nameUa" FROM country WHERE id = ANY($1::uuid[])`,
+      [ids],
+    ) as { id: ID; name: string }[];
+
+    return new Map(rows.map((row) => [row.id, row.name]));
+  }
+
+  /**
+   * Everything the per-bottling suggestions are derived from, in one read.
+   *
+   * The raw names and the listing URLs come along because both carry a maker
+   * the canonical name does not: the `(Країна, ТМ Hyde)` token the cleaner
+   * strips, and the URL slug a shop spells correctly where its own title was
+   * truncated.
+   *
+   * @param id - The bottling.
+   * @returns Its facts and its evidence, or null when nothing has that id.
+   */
+  public async findSuggestionSource(
+    id: ID,
+  ): Promise<ProductSuggestionSourceRow | null> {
+    const rows = await this.query(
+      `SELECT p.id, p.name, p."brandOrig", p."volumeMl", p.age,
+              p."producerId", p."bottlerId",
+              COALESCE((SELECT array_agg(sp."nameOrig")
+                        FROM store_product sp
+                        WHERE sp."productId" = p.id),
+                       ARRAY[]::text[]) AS "rawNames",
+              COALESCE((SELECT array_agg(sp.url)
+                        FROM store_product sp
+                        WHERE sp."productId" = p.id AND sp.url <> ''),
+                       ARRAY[]::text[]) AS urls
        FROM product p
-       LEFT JOIN type t ON t.id = p."typeId"
-       LEFT JOIN country c ON c.id = p."countryId"
-       LEFT JOIN producer pr ON pr.id = p."producerId"
-       LEFT JOIN producer bo ON bo.id = p."bottlerId"
-       WHERE (${where})${segment}
-       ORDER BY (SELECT count(DISTINCT sp."storeId") FROM store_product sp
-                 WHERE sp."productId" = p.id AND sp."inStock") DESC, p.id
-       LIMIT $4 OFFSET $5`,
-      [field ?? null, TRUSTED_FACT_SOURCES, search ?? null, limit, offset],
-    ) as ProductFactReviewRow[];
+       WHERE p.id = $1`,
+      [id],
+    ) as ProductSuggestionSourceRow[];
 
-    const counted = await this.query(
-      `SELECT count(*)::int AS total FROM product p
-       WHERE (${where})${segment}`,
-      [field ?? null, TRUSTED_FACT_SOURCES, search ?? null],
-    ) as { total: number }[];
+    return rows[0] ?? null;
+  }
 
-    return { rows, total: counted[0]?.total ?? 0 };
+  /**
+   * The bottlings one row may be a second copy of.
+   *
+   * Two shapes, and the weaker one is here rather than in the queue's
+   * detector on purpose: `near-identity` — same maker, same folded name and
+   * volume, exactly one of the pair stating an age — fires on 302 stocked
+   * bottlings because the age is stripped from the canonical name, so a NAS
+   * `Glenfiddich` and a twelve-year-old `Glenfiddich` are one folded name and
+   * are genuinely two whiskies. As a chip it is noise; as a suggestion beside
+   * the row a person is already reading, it is the `VAT 69` case.
+   *
+   * @param id - The bottling to compare against.
+   * @param limit - How many candidates to return.
+   * @returns The candidates, exact twins first, most-listed first within each
+   *   kind.
+   */
+  public async findDuplicateCandidates(
+    id: ID,
+    limit: number,
+  ): Promise<ReviewDuplicateCandidate[]> {
+    return this.query(
+      `WITH me AS (SELECT * FROM product WHERE id = $1)
+       SELECT v.id AS "productId", v.name, v."volumeMl", v.age,
+              (SELECT count(DISTINCT sp."storeId")::int FROM store_product sp
+               WHERE sp."productId" = v.id) AS "storeCount",
+              CASE WHEN v."volumeMl" IS NOT DISTINCT FROM me."volumeMl"
+                    AND v.age IS NOT DISTINCT FROM me.age
+                THEN 'identity' ELSE 'near-identity' END AS via
+       FROM product v, me
+       WHERE v.id <> me.id
+         AND me.name IS NOT NULL
+         AND ${identityOf('v.name')} = ${identityOf('me.name')}
+         AND (
+           (v."volumeMl" IS NOT DISTINCT FROM me."volumeMl"
+            AND v.age IS NOT DISTINCT FROM me.age)
+           OR (me."producerId" IS NOT NULL
+               AND v."producerId" = me."producerId"
+               AND v."volumeMl" IS NOT DISTINCT FROM me."volumeMl"
+               AND (v.age IS NULL) <> (me.age IS NULL))
+         )
+       ORDER BY via, "storeCount" DESC, v.id
+       LIMIT $2`,
+      [id, limit],
+    ) as Promise<ReviewDuplicateCandidate[]>;
+  }
+
+  /**
+   * What identically-named bottlings state about a fact, most common first.
+   *
+   * This is the `Canadian Club Original is 40 % in seven other shops`
+   * suggestion: the catalogue already holds the answer to most of the gaps in
+   * the queue, under another row of the same name.
+   *
+   * @param id - The bottling to take the name from and to exclude.
+   * @returns One list per fact, each value with how many namesakes state it.
+   */
+  public async findSiblingFacts(id: ID): Promise<ProductSiblingFactRow[]> {
+    return this.query(
+      `WITH me AS (SELECT * FROM product WHERE id = $1),
+       kin AS (
+         SELECT v.* FROM product v, me
+         WHERE v.id <> me.id AND me.name IS NOT NULL
+           AND ${identityOf('v.name')} = ${identityOf('me.name')}
+       )
+       SELECT 'abv' AS fact, kin.abv::text AS value, kin.abv::text AS label,
+              count(*)::int AS n
+       FROM kin WHERE kin.abv IS NOT NULL GROUP BY kin.abv
+       UNION ALL
+       SELECT 'type', t.name, t.name, count(*)::int
+       FROM kin JOIN type t ON t.id = kin."typeId" GROUP BY t.name
+       UNION ALL
+       SELECT 'country', c.code, c."nameUa", count(*)::int
+       FROM kin JOIN country c ON c.id = kin."countryId"
+       GROUP BY c.code, c."nameUa"
+       ORDER BY fact, n DESC, value`,
+      [id],
+    ) as Promise<ProductSiblingFactRow[]>;
+  }
+
+  /**
+   * The stocked bottlings that resolve to no maker at all, with the names a
+   * producer could be found in.
+   *
+   * Two strings per row because the two questions differ: the canonical name
+   * is what the resolver reads and failed on, while the raw names still carry
+   * the maker a shop stated and the cleaner stripped — the `(Країна, ТМ Hyde)`
+   * token that is the whole reason this queue is as long as it is.
+   *
+   * @returns One row per unresolved stocked bottling.
+   */
+  public async findUnresolvedNames(): Promise<ProductUnresolvedNameRow[]> {
+    return this.query(
+      `SELECT p.id, p.name,
+              COALESCE((SELECT string_agg(sp."nameOrig", ' ')
+                        FROM store_product sp
+                        WHERE sp."productId" = p.id), '') AS raw
+       FROM product p
+       WHERE p."producerId" IS NULL AND p."bottlerId" IS NULL
+         AND p."reviewStatus" IS DISTINCT FROM
+             '${ProductReviewStatus.REJECTED}'
+         AND EXISTS (SELECT 1 FROM store_product sp
+                     WHERE sp."productId" = p.id AND sp."inStock")`,
+    ) as Promise<ProductUnresolvedNameRow[]>;
   }
 
   /**
@@ -1871,95 +2074,126 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
          ${countOf(ProductReviewStatus.PENDING)} AS pending,
          ${countOf(ProductReviewStatus.VERIFIED)} AS verified,
          ${countOf(ProductReviewStatus.REJECTED)} AS rejected,
-         count(*) FILTER (WHERE "reviewStatus" IS NULL)::int AS legacy
+         count(*) FILTER (WHERE "reviewStatus" IS NULL)::int AS legacy,
+         count(*) FILTER (
+           WHERE "reviewStatus" = '${ProductReviewStatus.VERIFIED}'
+             AND "reviewedAt" >= date_trunc('day', now())
+         )::int AS "verifiedToday"
        FROM product`,
     ) as ProductReviewStatusCounts[];
 
-    return rows[0] ?? { pending: 0, verified: 0, rejected: 0, legacy: 0 };
+    return rows[0]
+      ?? { pending: 0, verified: 0, rejected: 0, legacy: 0, verifiedToday: 0 };
   }
 
   /**
-   * Lists one bucket of the new-product queue.
+   * Lists one page of the curation queue, with every reason each bottling is
+   * in it.
    *
-   * Ordered **newest first**, which is a deliberate departure from the facts
-   * queue's ranking by catalogue reach. The question here is "what did last
-   * night's sync bring in", a new bottling's reach is not yet known when it is
-   * a day old, and a new product usually sits in one shop — so ranking by shop
-   * count would degrade to arbitrary.
+   * The detectors live in {@link REVIEW_ISSUES_SQL} and nowhere else, which is
+   * what makes the chip on a row and the chip in the «Проблеми» filter the
+   * same object: the filter is an overlap test against the array this computes
+   * and the counts are a tally of it.
    *
-   * The search matches the canonical name **or** any shop's raw one, because
-   * the screen displays exactly that fallback pair and half the rows worth
-   * finding are the ones whose cleaned name came out wrong.
-   *
-   * @param status - Which bucket to list.
-   * @param limit - Page size.
-   * @param offset - Page offset.
-   * @param search - Case-insensitive substring of either name, or omit.
-   * @param storeSlug - Restrict to one shop's bottlings, or omit.
+   * @param query - Issue, shop, search, slice, sort and paging.
+   * @param hits - What the what-if pass concluded about the bottlings that
+   *   resolve to nothing, as two id lists the detectors read.
    * @returns The page and the total matching count.
    */
   public async findReviewQueue(
-    status: ProductReviewStatus,
-    limit = 50,
-    offset = 0,
-    search?: string,
-    storeSlug?: string,
-  ): Promise<{ rows: ProductReviewQueueRow[]; total: number }> {
-    const where = `p."reviewStatus" = $1
-       AND (
-         $2::text IS NULL
-         OR p.name ILIKE '%' || $2 || '%'
-         OR EXISTS (
-           SELECT 1 FROM store_product snp
-           WHERE snp."productId" = p.id
-             AND snp."nameOrig" ILIKE '%' || $2 || '%')
-       )
-       AND (
-         $3::text IS NULL
-         OR EXISTS (
-           SELECT 1 FROM store_product ssp
-           JOIN store sst ON sst.id = ssp."storeId"
-           WHERE ssp."productId" = p.id AND sst.slug = $3)
-       )`;
+    query: ReviewQueueQuery,
+    hits: ReviewInertHitIds,
+  ): Promise<{ rows: ReviewQueueSqlRow[]; total: number }> {
+    const limit = query.perPage ?? REVIEW_PAGE_SIZE;
+    const offset = ((query.page ?? 1) - 1) * limit;
+    const order = REVIEW_SORT_SQL[query.sort ?? ReviewQueueSort.SEVERITY]
+      ?? REVIEW_SORT_SQL[ReviewQueueSort.SEVERITY];
+
+    const params = this.reviewParams(query, hits);
 
     const rows = await this.query(
-      `SELECT p.id, p.name, p."matchKey", p.age, p."ageSource",
-              p.abv, p."abvSource", p."volumeMl", p."volumeSource",
-              t.name AS type, p."typeSource",
-              c.code AS "countryCode", c."nameUa" AS "countryName",
-              c.icon AS "countryIcon", p."countrySource",
-              COALESCE(pr.name, bo.name) AS brand, pr.slug AS "producerSlug",
-              p."brandOrig", p."reviewStatus", p."reviewedAt", p."createdAt",
-              (SELECT sp."nameOrig" FROM store_product sp
-               WHERE sp."productId" = p.id
-               ORDER BY length(sp."nameOrig") DESC LIMIT 1) AS "nameOrig",
-              COALESCE((
-                SELECT array_agg(f.name ORDER BY f.name)
-                FROM product_flavor pf
-                JOIN flavor f ON f.id = pf."flavorId"
-                WHERE pf."productId" = p.id
-              ), ARRAY[]::text[]) AS flavors,
-              (SELECT count(DISTINCT sp."storeId")::int FROM store_product sp
-               WHERE sp."productId" = p.id AND sp."inStock") AS "storeCount",
-              (${STORE_LINKS_SQL}) AS stores
-       FROM product p
-       LEFT JOIN type t ON t.id = p."typeId"
-       LEFT JOIN country c ON c.id = p."countryId"
-       LEFT JOIN producer pr ON pr.id = p."producerId"
-       LEFT JOIN producer bo ON bo.id = p."bottlerId"
-       WHERE ${where}
-       ORDER BY p."createdAt" DESC, p.id
-       LIMIT $4 OFFSET $5`,
-      [status, search ?? null, storeSlug ?? null, limit, offset],
-    ) as ProductReviewQueueRow[];
+      `${REVIEW_ISSUES_SQL}
+       ${REVIEW_ROW_SQL}
+       ORDER BY ${order}
+       LIMIT $11 OFFSET $12`,
+      [...params, limit, offset],
+    ) as ReviewQueueSqlRow[];
 
     const counted = await this.query(
-      `SELECT count(*)::int AS total FROM product p
-       WHERE ${where}`,
-      [status, search ?? null, storeSlug ?? null],
+      `${REVIEW_ISSUES_SQL} SELECT count(*)::int AS total FROM q`,
+      params,
     ) as { total: number }[];
 
     return { rows, total: counted[0]?.total ?? 0 };
+  }
+
+  /**
+   * Counts the open queue and how many bottlings each detector fires on.
+   *
+   * One statement rather than one per code, and over the same CTE the page
+   * read uses, so a chip's count and the page it opens can never disagree.
+   * The per-code counts overlap and never sum to the total — a bottling
+   * usually carries several.
+   *
+   * @param hits - The what-if answer, as for {@link findReviewQueue}.
+   * @param includeAcknowledged - Whether acknowledged contradictions count.
+   * @returns The open total, the share that is a contradiction and nothing
+   *   else, and the per-code tally.
+   */
+  public async countReviewIssues(
+    hits: ReviewInertHitIds,
+    includeAcknowledged = false,
+  ): Promise<ReviewIssueCounts> {
+    const params = this.reviewParams(
+      { includeAcknowledged },
+      hits,
+    );
+
+    const rows = await this.query(
+      `${REVIEW_ISSUES_SQL}
+       SELECT
+         (SELECT count(*)::int FROM q) AS open,
+         (SELECT count(*)::int FROM q
+          WHERE q.issues = ARRAY['${ReviewIssueCode.CONFLICT}']::text[])
+           AS "conflictOnly",
+         COALESCE((
+           SELECT json_object_agg(t.code, t.n)
+           FROM (
+             SELECT code, count(*)::int AS n
+             FROM q, unnest(q.issues) AS code
+             GROUP BY code
+           ) t
+         ), '{}'::json) AS "byIssue"`,
+      params,
+    ) as ReviewIssueCounts[];
+
+    return rows[0] ?? { open: 0, conflictOnly: 0, byIssue: {} };
+  }
+
+  /**
+   * Builds the parameters every curation read shares.
+   *
+   * @param query - The filters, all optional.
+   * @param hits - The what-if answer.
+   * @returns The ten parameters, in the order `REVIEW_ISSUES_SQL` numbers
+   *   them.
+   */
+  private reviewParams(
+    query: ReviewQueueQuery,
+    hits: ReviewInertHitIds,
+  ): unknown[] {
+    return [
+      hits.rejected,
+      hits.withheld,
+      query.includeAcknowledged ?? false,
+      TRUSTED_FACT_SOURCES,
+      query.name ?? null,
+      query.store?.length ? query.store : null,
+      query.issue?.length ? query.issue : null,
+      query.status ?? ReviewQueueStatus.OPEN,
+      query.includeUnstocked ?? false,
+      query.productIds?.length ? query.productIds : null,
+    ];
   }
 
   /**
@@ -1995,7 +2229,7 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
       ? ` AND "reviewStatus" = '${ProductReviewStatus.PENDING}'`
       : '';
 
-    const rows = await this.query(
+    const rows = await this.updateReturning<{ id: ID }>(
       `UPDATE product SET
          "reviewStatus" = $2,
          "reviewedAt" = now(),
@@ -2003,132 +2237,9 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
        WHERE id = ANY($1::uuid[])${gate}
        RETURNING id`,
       [ids, status],
-    ) as { id: ID }[];
+    );
 
     return rows.length;
-  }
-
-  /**
-   * Counts the unresolved cross-shop contradictions.
-   *
-   * @returns How many are open.
-   */
-  public async countOpenConflicts(): Promise<number> {
-    const rows = await this.query(
-      `SELECT count(*)::int AS total FROM product_fact_conflict
-       WHERE "resolvedAt" IS NULL`,
-    ) as { total: number }[];
-
-    return rows[0]?.total ?? 0;
-  }
-
-  /**
-   * Lists the unresolved contradictions, worst-first by how often each has
-   * been seen.
-   *
-   * The stored and claimed values are foreign keys for three of the four
-   * attributes and a number for the fourth, so the uuid cast is guarded by a
-   * `CASE` on the value's shape — Postgres is free to evaluate a cast before
-   * the predicate meant to exclude it, and an ABV row would otherwise abort
-   * the whole query.
-   *
-   * @param attribute - Restrict to one disputed attribute.
-   * @param store - Restrict to one shop's claims, by slug.
-   * @param limit - Page size.
-   * @param offset - Page offset.
-   * @param search - Case-insensitive substring of the bottling's canonical
-   *   name or any store's raw name, or omit for all.
-   * @returns The rows and the total matching count.
-   */
-  public async findConflicts(
-    attribute?: string,
-    store?: string,
-    limit = 50,
-    offset = 0,
-    search?: string,
-  ): Promise<{ rows: ReviewConflictRow[]; total: number }> {
-    const nameMatch = `($3::text IS NULL
-         OR p.name ILIKE '%' || $3 || '%'
-         OR EXISTS (
-           SELECT 1 FROM store_product snp
-           WHERE snp."productId" = p.id
-             AND snp."nameOrig" ILIKE '%' || $3 || '%'))`;
-
-    const rows = await this.query(
-      `WITH q AS (
-         SELECT c.*,
-                CASE WHEN c."storedValue" ~ $6 THEN c."storedValue"::uuid END
-                  AS "storedId",
-                CASE WHEN c."claimedValue" ~ $6 THEN c."claimedValue"::uuid END
-                  AS "claimedId"
-         FROM product_fact_conflict c
-         WHERE c."resolvedAt" IS NULL
-       )
-       SELECT q."productId", p.name AS "productName",
-              q."storeId", st.slug AS "storeSlug",
-              q.attribute, q."storedSource", q."seenCount", q."lastSeenAt",
-              COALESCE(sty.name, sc.code, q."storedValue")
-                AS "storedValue",
-              COALESCE(cty.name, cc.code, q."claimedValue")
-                AS "claimedValue"
-       FROM q
-       JOIN store st ON st.id = q."storeId"
-       JOIN product p ON p.id = q."productId"
-       LEFT JOIN type sty ON sty.id = q."storedId"
-       LEFT JOIN country sc ON sc.id = q."storedId"
-       LEFT JOIN type cty ON cty.id = q."claimedId"
-       LEFT JOIN country cc ON cc.id = q."claimedId"
-       WHERE ($1::text IS NULL OR q.attribute = $1)
-         AND ($2::text IS NULL OR st.slug = $2)
-         AND ${nameMatch}
-       ORDER BY q."seenCount" DESC, q."lastSeenAt" DESC
-       LIMIT $4 OFFSET $5`,
-      [
-        attribute ?? null,
-        store ?? null,
-        search ?? null,
-        limit,
-        offset,
-        UUID_SHAPE,
-      ],
-    ) as ReviewConflictRow[];
-
-    const counted = await this.query(
-      `SELECT count(*)::int AS total
-       FROM product_fact_conflict c
-       JOIN store st ON st.id = c."storeId"
-       JOIN product p ON p.id = c."productId"
-       WHERE c."resolvedAt" IS NULL
-         AND ($1::text IS NULL OR c.attribute = $1)
-         AND ($2::text IS NULL OR st.slug = $2)
-         AND ${nameMatch}`,
-      [attribute ?? null, store ?? null, search ?? null],
-    ) as { total: number }[];
-
-    return { rows, total: counted[0]?.total ?? 0 };
-  }
-
-  /**
-   * Marks one contradiction settled.
-   *
-   * The scrape clears `resolvedAt` again on the next sighting, so a
-   * disagreement somebody dismissed that keeps arriving is not dismissed.
-   *
-   * @param productId - The bottling.
-   * @param storeId - The shop making the claim.
-   * @param attribute - Which fact is disputed.
-   * @returns Resolves once the row is marked.
-   */
-  public async resolveConflict(
-    productId: ID,
-    storeId: ID,
-    attribute: string,
-  ): Promise<void> {
-    await this.query(
-      `UPDATE product_fact_conflict SET "resolvedAt" = now()
-       WHERE "productId" = $1 AND "storeId" = $2 AND attribute = $3`,
-      [productId, storeId, attribute],
-    );
   }
 
   /**
@@ -2195,7 +2306,8 @@ export class ProductRepository extends BaseRepository<ProductEntity> {
       `SELECT p.id, p.name, p."brandOrig" AS brand,
               p."countryId", p."countrySource",
               p."typeId", p."typeSource",
-              p."producerId", p."bottlerId", p."flavorsCuratedAt",
+              p."producerId", p."bottlerId", p."producerSource",
+              p."flavorsCuratedAt", p."volumeMl", p.age,
               COALESCE((
                 SELECT json_agg(json_build_object(
                   'flavorId', pf."flavorId", 'name', f.name,

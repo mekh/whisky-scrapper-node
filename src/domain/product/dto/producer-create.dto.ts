@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
@@ -6,6 +7,7 @@ import {
   IsString,
   IsUUID,
   MaxLength,
+  ValidateNested,
 } from 'class-validator';
 
 import {
@@ -13,6 +15,7 @@ import {
   PRODUCER_ALIAS_MAX_LENGTH,
   PRODUCER_NAME_MAX_LENGTH,
   PRODUCER_OWNER_MAX_LENGTH,
+  PRODUCER_RULES_MAX_PER_REQUEST,
   PRODUCER_SLUG_MAX_LENGTH,
   WHISKY_TYPE_NAME_MAX_LENGTH,
 } from '~constants';
@@ -25,6 +28,8 @@ import {
   ScotlandRegion,
 } from '~enums';
 import type { ID, ProducerCreateInput } from '~types';
+
+import { ProducerRuleCreateDto } from './producer-rule-create.dto';
 
 /**
  * Upper bound on the citation and note fields, matching `ProducerPatchDto`.
@@ -97,4 +102,11 @@ export class ProducerCreateDto implements ProducerCreateInput {
   @IsString({ each: true })
   @MaxLength(PRODUCER_ALIAS_MAX_LENGTH, { each: true })
   public aliases?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(PRODUCER_RULES_MAX_PER_REQUEST)
+  @ValidateNested({ each: true })
+  @Type(() => ProducerRuleCreateDto)
+  public rules?: ProducerRuleCreateDto[];
 }

@@ -56,6 +56,12 @@ export const PRODUCER_OPTION_LIMIT = 20;
  */
 export const PRODUCER_ALIASES_MAX_PER_REQUEST = 20;
 
+/**
+ * How many rules one create may carry. A maker states a handful of
+ * exceptions; a hundred is a script, not a person.
+ */
+export const PRODUCER_RULES_MAX_PER_REQUEST = 20;
+
 export const PRODUCER_SLUG_MAX_LENGTH = 64;
 export const PRODUCER_NAME_MAX_LENGTH = 128;
 export const PRODUCER_OWNER_MAX_LENGTH = 128;

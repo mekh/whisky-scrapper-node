@@ -136,17 +136,24 @@ function tagRule(
  * pattern length. The resolver relies on that ordering, so a fixture that did
  * not reproduce it would test something the production path never sees.
  *
- * @param parts - The aliases, rules and house-style rows for this case.
+ * @param parts - The aliases, rules and house-style rows for this case, plus
+ *   any producer no alias of its own reaches.
  * @returns The index.
  */
 function index(parts: {
   aliases?: KbAliasEntry[];
   rules?: KbFlavorRule[];
   producerFlavors?: [ID, KbProducerFlavor[]][];
+  producers?: KbProducerFacts[];
 }): KbIndex {
+  const reachable = (parts.aliases ?? []).map((alias) => alias.producer);
+
   return {
     aliases: [...parts.aliases ?? []]
       .sort((left, right) => right.key.length - left.key.length),
+    producers: new Map(
+      [...reachable, ...parts.producers ?? []].map((one) => [one.id, one]),
+    ),
     rules: [...parts.rules ?? []].sort((left, right) =>
       right.priority - left.priority
       || right.pattern.length - left.pattern.length
@@ -283,21 +290,78 @@ describe('KbResolverService: independent bottlings', () => {
    * type and peat off a company that owns no still.
    */
   it('never resolves a bottler as the producer, even alone', () => {
-    const result = resolve('Allt-a-Bhainne - Old Malt Cask', 'Unknown Brand', {
-      aliases: aliases(
-        producer('old-malt-cask', {
-          kind: ProducerKind.BOTTLER,
-        }),
-        ['Old Malt Cask'],
-      ),
-      rules: [],
-      producerFlavors: new Map(),
-      peatFlavorIds: { peated: PEATED, smoky: SMOKY },
-    });
+    const result = resolve(
+      'Allt-a-Bhainne - Old Malt Cask',
+      'Unknown Brand',
+      index({
+        aliases: aliases(
+          producer('old-malt-cask', {
+            kind: ProducerKind.BOTTLER,
+          }),
+          ['Old Malt Cask'],
+        ),
+      }),
+    );
 
     expect(result.producer).toBeNull();
     expect(result.bottler?.slug).toBe('old-malt-cask');
     expect(result.peatProfile).toBe(PeatProfile.UNKNOWN);
+  });
+
+  /**
+   * `Glen Crinnan` is Chapter 7's own undisclosed malt: the shop states no
+   * bottler outside a parenthesis the name cleaner strips, and Chapter 7
+   * carries no alias, so the range's recorded owner is the only thing that
+   * can fill the bottler slot.
+   */
+  it('reports the owner of a range whose title names no bottler', () => {
+    const chapter7 = producer('chapter-7', { kind: ProducerKind.BOTTLER });
+    const glenCrinnan = producer('glen-crinnan', {
+      kind: ProducerKind.BLEND,
+      bottlerId: chapter7.id,
+    });
+
+    const result = resolve(
+      'Glen Crinnan 2003',
+      null,
+      index({
+        aliases: aliases(glenCrinnan, ['Glen Crinnan']),
+        producers: [chapter7],
+      }),
+    );
+
+    expect(result.producer?.slug).toBe('glen-crinnan');
+    expect(result.bottler?.slug).toBe('chapter-7');
+  });
+
+  /**
+   * A second bottler in the title is more often the shop that commissioned
+   * the cask than the one that filled it, so the range's recorded owner wins
+   * over an alias found in the name.
+   */
+  it('prefers the recorded owner over a bottler named in the title', () => {
+    const exchange = producer('whisky-exchange', {
+      kind: ProducerKind.BOTTLER,
+    });
+    const bigPeat = producer('big-peat', {
+      kind: ProducerKind.BLEND,
+      bottlerId: DOUGLAS_LAING.id,
+    });
+
+    const result = resolve(
+      'Big Peat Whisky Exchange Edition',
+      'Big Peat',
+      index({
+        aliases: [
+          ...aliases(bigPeat, ['Big Peat']),
+          ...aliases(exchange, ['Whisky Exchange']),
+        ],
+        producers: [DOUGLAS_LAING],
+      }),
+    );
+
+    expect(result.producer?.slug).toBe('big-peat');
+    expect(result.bottler?.slug).toBe('douglas-laing');
   });
 
   it('leaves an undisclosed bottling unresolved rather than guessing', () => {
@@ -539,5 +603,53 @@ describe('KbResolverService: brand-scoped aliases are exact', () => {
 
     expect(result.producer).toBeNull();
     expect(result.peatReason).toBe(KbPeatReason.UNRESOLVED);
+  });
+});
+
+/**
+ * The `lead` scope, which exists for the class of maker no other scope can
+ * reach: four letters, and a shop that states no brand at all. `hyde` cannot
+ * be a name alias (the five-character floor) and a brand alias never fires
+ * from inside a name, so eleven stocked bottlings resolved to nothing.
+ *
+ * Anchoring at the start of the name is what makes the exemption safe, and
+ * `blue` is the case that proves it: anywhere in a name it takes every
+ * `Johnnie Walker Blue Label`, at the start it takes nothing that is not one.
+ */
+describe('KbResolverService: the lead alias scope', () => {
+  const HYDE = producer('hyde', { peatProfile: PeatProfile.NONE });
+  const BLUE = producer('blue-spot');
+  const JOHNNIE = producer('johnnie-walker');
+
+  const LEAD = index({
+    aliases: [
+      ...aliases(HYDE, ['Hyde'], ProducerAliasScope.LEAD),
+      ...aliases(BLUE, ['Blue'], ProducerAliasScope.LEAD),
+      ...aliases(JOHNNIE, ['Johnnie Walker']),
+    ],
+    rules: [],
+  });
+
+  it('matches a short alias at the start of a name', () => {
+    expect(resolve('Hyde #6 Special Reserve', null, LEAD).producer?.slug)
+      .toBe('hyde');
+  });
+
+  it('matches a lead alias that is the whole name', () => {
+    expect(resolve('Hyde', null, LEAD).producer?.slug).toBe('hyde');
+  });
+
+  it('never fires from the middle of a name', () => {
+    expect(resolve('Johnnie Walker Blue Label', null, LEAD).producer?.slug)
+      .toBe('johnnie-walker');
+    expect(resolve('Mr Hyde Reserve', null, LEAD).producer).toBeNull();
+  });
+
+  it('matches only on a word boundary, never a prefix of a longer word', () => {
+    expect(resolve('Hydeaway Malt', null, LEAD).producer).toBeNull();
+  });
+
+  it('is a valid stated brand as well, like every non-name scope', () => {
+    expect(resolve('Some Malt', 'Hyde', LEAD).producer?.slug).toBe('hyde');
   });
 });

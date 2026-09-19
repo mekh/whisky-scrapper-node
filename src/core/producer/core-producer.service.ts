@@ -1,7 +1,14 @@
 import { Injectable } from '@nestjs/common';
+import { Transactional } from 'typeorm-transactional';
 
-import { KB_PEAT_TAGS } from '~constants';
+import {
+  KB_PEAT_TAGS,
+  PRODUCER_ISSUE_SEVERITY,
+  REVIEW_PAGE_SIZE,
+} from '~constants';
 import { CoreBaseService } from '~core/_common';
+import { ProducerIssueCode, ProducerKind } from '~enums';
+import { ServerError } from '~errors';
 import {
   ID,
   KbAliasEntry,
@@ -9,18 +16,25 @@ import {
   KbIndex,
   KbPeatFlavorIds,
   KbProducerFlavor,
-  ProducerCreateInput,
+  ProducerAliasWrite,
   ProducerDetail,
   ProducerListQuery,
   ProducerOptionRow,
   ProducerOwnerRow,
+  ProducerQueueHints,
+  ProducerQueueQuery,
+  ProducerQueueRow,
   ProducerReviewRow,
+  ProducerRuleDraft,
   ProducerRuleInput,
   ResearchedProducer,
+  ReviewProducerSummary,
   TypeBrand,
   UnresearchedBrandRow,
   UnresolvedBrandRow,
 } from '~types';
+
+import type { ProducerCreateResult, ProducerCreateWrite } from '~types';
 
 import { KbAliasUtils } from '~utils';
 
@@ -28,6 +42,7 @@ import { ProducerEntity } from './producer.entity';
 import { ProducerRepository } from './producer.repository';
 
 import type { ProducerReviewPatch } from './producer-review.interfaces';
+import type { ProducerCandidateFactRow } from './producer.interfaces';
 
 /**
  * Persistence-layer public API for the knowledge base.
@@ -58,19 +73,22 @@ export class CoreProducerService extends CoreBaseService<ProducerEntity> {
    * than a producer can never reach a matcher — see the note there for the
    * `& Whisky` case that motivated it.
    *
-   * @returns The alias index, the rules, the house-style statements and the
-   *   two peat tag ids.
+   * @returns The alias index, every live producer's facts by id, the rules,
+   *   the house-style statements and the two peat tag ids.
    */
   public async loadIndex(): Promise<KbIndex> {
-    const [aliases, rules, producerFlavors, peatFlavorIds] = await Promise.all([
-      this.repo.findAliasIndex(),
-      this.repo.findRules(),
-      this.repo.findProducerFlavors(),
-      this.repo.findPeatFlavorIds(KB_PEAT_TAGS.peated, KB_PEAT_TAGS.smoky),
-    ]);
+    const [aliases, producers, rules, producerFlavors, peatFlavorIds] =
+      await Promise.all([
+        this.repo.findAliasIndex(),
+        this.repo.findProducerFacts(),
+        this.repo.findRules(),
+        this.repo.findProducerFlavors(),
+        this.repo.findPeatFlavorIds(KB_PEAT_TAGS.peated, KB_PEAT_TAGS.smoky),
+      ]);
 
     return {
       aliases: KbAliasUtils.usable(aliases),
+      producers,
       rules,
       producerFlavors,
       peatFlavorIds,
@@ -215,23 +233,38 @@ export class CoreProducerService extends CoreBaseService<ProducerEntity> {
   }
 
   /**
-   * Creates one producer.
+   * Creates one producer with its spellings and its rules, in one
+   * transaction: a rule is scoped to a producer id that exists only once the
+   * row is written, and a half-written maker is worse than none.
    *
-   * @param input - The producer to create.
-   * @param slug - The slug to store, already derived and normalized.
-   * @returns The created row, or null when the slug is taken.
+   * @param write - The row, its slug, its spellings and its rules, all
+   *   already validated and normalized by the domain layer.
+   * @returns The created row and the spellings another producer holds, or
+   *   null when the slug is taken.
+   * @throws {ServerError} When the row cannot be read back, which the
+   *   transaction makes impossible.
    */
+  @Transactional()
   public async createProducer(
-    input: ProducerCreateInput,
-    slug: string,
-  ): Promise<ProducerReviewRow | null> {
-    const id = await this.repo.insertProducer(input, slug);
+    write: ProducerCreateWrite,
+  ): Promise<ProducerCreateResult | null> {
+    const id = await this.repo.insertProducer(write.producer, write.slug);
 
     if (!id) {
       return null;
     }
 
-    return this.repo.findOneForReview(id);
+    const skippedAliases = await this.attachAliases(id, write.aliases);
+
+    await this.attachRules(id, write.rules);
+
+    const producer = await this.repo.findOneForReview(id);
+
+    if (!producer) {
+      throw new ServerError('The created producer could not be read back');
+    }
+
+    return { producer, skippedAliases };
   }
 
   /**
@@ -318,6 +351,16 @@ export class CoreProducerService extends CoreBaseService<ProducerEntity> {
   }
 
   /**
+   * One producer's kind, for a caller that only needs to branch on it.
+   *
+   * @param id - The producer.
+   * @returns The kind, or null when nothing has that id.
+   */
+  public async findKind(id: ID): Promise<ProducerKind | null> {
+    return this.repo.findKind(id);
+  }
+
+  /**
    * Lists producers for the review screen.
    *
    * @param status - Restrict to one review status, or omit for all.
@@ -380,6 +423,111 @@ export class CoreProducerService extends CoreBaseService<ProducerEntity> {
   }
 
   /**
+   * Loads the alias index of the producers somebody has ruled out, for the
+   * curation screen's what-if pass. Never for resolution — see
+   * {@link ProducerRepository.findRejectedAliasIndex}.
+   *
+   * @returns Alias entries whose producers are `rejected`.
+   */
+  public async loadRejectedAliasIndex(): Promise<KbAliasEntry[]> {
+    const aliases = await this.repo.findRejectedAliasIndex();
+
+    return KbAliasUtils.usable(aliases);
+  }
+
+  /**
+   * Lists one page of the producers queue, each row carrying why it is there.
+   *
+   * The severity of each code is added here rather than in SQL, from the same
+   * map the client colours its chips by, and the mention count comes from the
+   * what-if pass that produced the hints — neither belongs in a predicate.
+   *
+   * @param query - Issue, status, kind, search and paging.
+   * @param hints - What the what-if pass concluded about the producers.
+   * @returns The page and the total matching count.
+   */
+  public async findQueue(
+    query: ProducerQueueQuery,
+    hints: ProducerQueueHints,
+  ): Promise<{ rows: ProducerQueueRow[]; total: number }> {
+    const limit = query.perPage ?? REVIEW_PAGE_SIZE;
+    const offset = ((query.page ?? 1) - 1) * limit;
+
+    const { rows, total } = await this.repo.findQueue(
+      query,
+      hints.unreachable,
+      hints.mentioned,
+      limit,
+      offset,
+    );
+
+    return {
+      rows: rows.map((row) => ({
+        ...row,
+        unresolvedMentions: hints.mentions.get(row.id) ?? 0,
+        potentialReach: null,
+        issues: row.issues.map((code) => ({
+          code: code as ProducerIssueCode,
+          severity: PRODUCER_ISSUE_SEVERITY[code as ProducerIssueCode],
+        })),
+      })),
+      total,
+    };
+  }
+
+  /**
+   * Counts the producers queue, by code.
+   *
+   * @param hints - What the what-if pass concluded about the producers.
+   * @returns The open total and the per-code tally.
+   */
+  public async countQueueIssues(
+    hints: ProducerQueueHints,
+  ): Promise<ReviewProducerSummary> {
+    return this.repo.countQueueIssues(hints.unreachable, hints.mentioned);
+  }
+
+  /**
+   * The facts a suggested producer is judged by, for a handful of ids.
+   *
+   * @param ids - The producers to describe.
+   * @returns One row per producer that exists.
+   */
+  public async findCandidateFacts(
+    ids: ID[],
+  ): Promise<ProducerCandidateFactRow[]> {
+    return this.repo.findCandidateFacts(ids);
+  }
+
+  /**
+   * The producer one alias row belongs to, and the spelling it holds.
+   *
+   * @param aliasId - The alias.
+   * @returns The producer, the key and the scope, or null.
+   */
+  public async findAliasProducer(
+    aliasId: ID,
+  ): Promise<{ producerId: ID; key: string; scope: string } | null> {
+    return this.repo.findAliasProducer(aliasId);
+  }
+
+  /**
+   * Widens or narrows one alias, scoped to its producer.
+   *
+   * @param aliasId - The alias.
+   * @param producerId - The producer it must belong to.
+   * @param scope - The scope to store.
+   * @returns How many rows were written.
+   */
+  public async setAliasScope(
+    aliasId: ID,
+    producerId: ID,
+    scope: string,
+  ): Promise<number> {
+    return this.repo.updateAliasScope(aliasId, producerId, scope);
+  }
+
+  /**
    * Autocomplete over producer names, matched through their aliases.
    *
    * @param term - The substring to look for.
@@ -432,5 +580,51 @@ export class CoreProducerService extends CoreBaseService<ProducerEntity> {
    */
   public async resolveTypeIds(names: string[]): Promise<Map<string, ID>> {
     return this.repo.findTypeIdsByName(names);
+  }
+
+  /**
+   * Points every spelling of a create at the new row, skipping the keys
+   * another producer already claims.
+   *
+   * A taken key is skipped rather than refused: the person asked for a row
+   * and one duplicate spelling is no reason to leave them without one.
+   *
+   * @param id - The new producer.
+   * @param aliases - The normalized spellings with their scope.
+   * @returns The keys another producer holds.
+   */
+  private async attachAliases(
+    id: ID,
+    aliases: ProducerAliasWrite[],
+  ): Promise<string[]> {
+    const skipped: string[] = [];
+
+    for (const alias of aliases) {
+      const written = await this.repo.insertAlias(alias.key, id, alias.scope);
+
+      if (!written) {
+        skipped.push(alias.key);
+      }
+    }
+
+    return skipped;
+  }
+
+  /**
+   * Stores the rules of a create, stamped with the row that now exists.
+   *
+   * @param id - The new producer.
+   * @param rules - The validated rules.
+   * @returns Resolves once every rule is written.
+   * @throws {QueryFailedError} With driver code `23505` when two rules state
+   *   the same pattern and tag.
+   */
+  private async attachRules(
+    id: ID,
+    rules: ProducerRuleDraft[],
+  ): Promise<void> {
+    for (const rule of rules) {
+      await this.repo.insertRule({ ...rule, producerId: id });
+    }
   }
 }

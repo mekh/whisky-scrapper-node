@@ -11,7 +11,10 @@ import { BadRequestError, DuplicateError, NotFoundError } from '~errors';
 import type {
   ID,
   KbReconcileSummary,
+  ProducerAliasWrite,
   ProducerCreateInput,
+  ProducerCreateResult,
+  ProducerCreateWrite,
   ProducerListQuery,
   ProducerOptionRow,
   ProducerOwnerRow,
@@ -23,12 +26,20 @@ import { KbKeyUtils } from '~utils';
 
 import { KbReconcileService } from '~scrape/kb';
 
+import { ProducerRuleFactory } from './producer-rule.factory';
+
 import type { ProducerAliasInput } from './product-review.interfaces';
 
 /**
  * How many rows a picker returns when the caller states no limit.
  */
 const OPTION_DEFAULT_LIMIT = 20;
+
+/**
+ * Postgres unique-violation code, which a create meets only on a repeated
+ * rule — the slug and the aliases resolve their own conflicts in SQL.
+ */
+const UNIQUE_VIOLATION = '23505';
 
 /**
  * The read and write side of the producers section — the four kinds of maker
@@ -47,12 +58,16 @@ export class ProducerService {
 
   private readonly reconcile: KbReconcileService;
 
+  private readonly rules: ProducerRuleFactory;
+
   public constructor(
     producers: CoreProducerService,
     reconcile: KbReconcileService,
+    rules: ProducerRuleFactory,
   ) {
     this.producers = producers;
     this.reconcile = reconcile;
+    this.rules = rules;
   }
 
   /**
@@ -70,6 +85,29 @@ export class ProducerService {
       .replace(/ /g, '-')
       .slice(0, PRODUCER_SLUG_MAX_LENGTH)
       .replace(/-+$/, '');
+  }
+
+  /**
+   * Normalizes the spellings a new producer must answer to, the name's own
+   * included, and drops the ones that fold to nothing.
+   *
+   * @param input - The producer as the request states it.
+   * @returns The spellings to write, deduplicated and capped.
+   */
+  private static aliasWrites(
+    input: ProducerCreateInput,
+  ): ProducerAliasWrite[] {
+    const spellings = [input.name, ...input.aliases ?? []];
+
+    const keys = [
+      ...new Set(
+        spellings
+          .map((spelling) => KbKeyUtils.key(spelling))
+          .filter((key) => key.length > 0),
+      ),
+    ].slice(0, PRODUCER_ALIASES_MAX_PER_REQUEST + 1);
+
+    return keys.map((key) => ({ key, scope: ProducerAliasScope.ANY }));
   }
 
   /**
@@ -134,17 +172,18 @@ export class ProducerService {
   }
 
   /**
-   * Creates one producer **and applies it**.
+   * Creates one producer with its spellings and rules, **and applies it**.
    *
    * The name is always added as an alias alongside whatever spellings the
    * caller listed: a producer nothing resolves to is a row that changes
    * nothing, and typing the name twice is not a decision worth asking for.
    *
-   * @param input - The producer to create.
+   * @param input - The producer to create, with its spellings and rules.
    * @returns The created row and what re-resolving the catalogue wrote.
-   * @throws {BadRequestError} When the name yields no usable slug, or a
-   *   parent or bottler id names no producer.
-   * @throws {DuplicateError} When the slug is already taken.
+   * @throws {BadRequestError} When the name yields no usable slug, a parent
+   *   or bottler id names no producer, or a rule is malformed.
+   * @throws {DuplicateError} When the slug is taken, or two rules state the
+   *   same claim.
    */
   public async create(
     input: ProducerCreateInput,
@@ -159,17 +198,31 @@ export class ProducerService {
 
     await this.assertLinksExist(input.parentId, input.bottlerId);
 
-    const created = await this.producers.createProducer(input, slug);
+    /**
+     * Everything is validated before the write, so the transaction below can
+     * only fail on the database's own constraints.
+     */
+    const rules = await this.rules.buildMany(input.rules ?? []);
+    const aliases = ProducerService.aliasWrites(input);
+
+    const created = await this.writeProducer({
+      producer: input,
+      slug,
+      aliases,
+      rules,
+    });
 
     if (!created) {
       throw new DuplicateError(`Producer ${slug} already exists`);
     }
 
-    await this.attachAliases(created.id, [input.name, ...input.aliases ?? []]);
-
     const run = await this.reconcile.run();
 
-    return { producer: created, applied: run.summary };
+    return {
+      producer: created.producer,
+      applied: run.summary,
+      skippedAliases: created.skippedAliases,
+    };
   }
 
   /**
@@ -213,6 +266,37 @@ export class ProducerService {
 
     if (!written) {
       await this.assertAliasIsOurs(key, id);
+    }
+
+    const run = await this.reconcile.run();
+
+    return run.summary;
+  }
+
+  /**
+   * Widens or narrows one spelling **and applies the change**.
+   *
+   * The one-click «→ на початку назви» of the producer modal, and the reason
+   * the `lead` scope exists at all: a four-letter maker such as `Hyde` can
+   * only ever be brand-scoped, so the eleven bottlings of a shop that states
+   * no brand are unreachable until somebody widens it — with the two numbers
+   * of the impact preview in front of them.
+   *
+   * @param id - The producer the alias must belong to.
+   * @param aliasId - The alias to rescope.
+   * @param scope - The scope to store.
+   * @returns What re-resolving the catalogue wrote.
+   * @throws {NotFoundError} When the alias is not that producer's.
+   */
+  public async setAliasScope(
+    id: ID,
+    aliasId: ID,
+    scope: ProducerAliasScope,
+  ): Promise<KbReconcileSummary> {
+    const written = await this.producers.setAliasScope(aliasId, id, scope);
+
+    if (!written) {
+      throw new NotFoundError('Alias not found');
     }
 
     const run = await this.reconcile.run();
@@ -275,30 +359,27 @@ export class ProducerService {
   }
 
   /**
-   * Adds the spellings a new producer must answer to, skipping the ones
-   * another producer already claims.
+   * Writes the row, its spellings and its rules in one transaction, naming
+   * the duplicate claim a `23505` stands for here.
    *
-   * A taken key is skipped rather than refused: the create has already
-   * happened, and failing it over one duplicate spelling would leave the
-   * person with no row and no obvious way to retry.
-   *
-   * @param id - The new producer.
-   * @param spellings - The raw spellings, normalized here.
+   * @param write - What the create writes.
+   * @returns The created row, or null when the slug is taken.
+   * @throws {DuplicateError} When two rules state the same pattern and tag.
    */
-  private async attachAliases(id: ID, spellings: string[]): Promise<void> {
-    const keys = [
-      ...new Set(
-        spellings
-          .map((spelling) => KbKeyUtils.key(spelling))
-          .filter((key) => key.length > 0),
-      ),
-    ].slice(0, PRODUCER_ALIASES_MAX_PER_REQUEST + 1);
+  private async writeProducer(
+    write: ProducerCreateWrite,
+  ): Promise<ProducerCreateResult | null> {
+    try {
+      return await this.producers.createProducer(write);
+    } catch (error) {
+      if ((error as { code?: string }).code === UNIQUE_VIOLATION) {
+        throw new DuplicateError(
+          'Two rules of this producer state the same pattern and claim',
+        );
+      }
 
-    await Promise.all(
-      keys.map((key) =>
-        this.producers.addAlias(key, id, ProducerAliasScope.ANY)
-      ),
-    );
+      throw error;
+    }
   }
 
   /**

@@ -1,10 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-import { CACHE_GENERATION_CATALOGUE } from '~constants';
+import { CACHE_GENERATION_CATALOGUE, KB_APPLIED_AT_KEY } from '~constants';
 import { CoreProducerService } from '~core/producer';
 import { CoreProductService } from '~core/product';
 import { ServerError } from '~errors';
 import { VersionedCacheService } from '~lib/cache';
+import { ValkeyClient, ValkeyCluster, ValkeyService } from '~lib/valkey';
 import type { KbApplyPlan, KbReconcileSummary } from '~types';
 
 import { KbApplyService } from './kb-apply.service';
@@ -45,16 +46,42 @@ export class KbReconcileService {
 
   private readonly cache: VersionedCacheService;
 
+  private readonly storage: ValkeyClient | ValkeyCluster;
+
   public constructor(
     producers: CoreProducerService,
     products: CoreProductService,
     apply: KbApplyService,
     cache: VersionedCacheService,
+    valkey: ValkeyService,
   ) {
     this.producers = producers;
     this.products = products;
     this.apply = apply;
     this.cache = cache;
+    this.storage = valkey.getClient();
+  }
+
+  /**
+   * When the catalogue was last re-resolved against the knowledge base.
+   *
+   * Read by the curation screen's header, which says so beside the «База
+   * знань» button — the one thing that tells a person whether the decision
+   * they just recorded is already in the reports.
+   *
+   * @returns The moment, or null when no pass has run since the key was
+   *   introduced or the store cannot answer.
+   */
+  public async lastAppliedAt(): Promise<Date | null> {
+    try {
+      const stamp = await this.storage.get(KB_APPLIED_AT_KEY);
+
+      return stamp ? new Date(stamp) : null;
+    } catch (error) {
+      this.logger.warn('Could not read the apply stamp: %o', error);
+
+      return null;
+    }
   }
 
   /**
@@ -124,6 +151,8 @@ export class KbReconcileService {
      */
     this.cache.bumpAfterCommit(CACHE_GENERATION_CATALOGUE, 'kb:reconcile');
 
+    await this.stampApplied();
+
     return {
       plan,
       rows,
@@ -134,6 +163,22 @@ export class KbReconcileService {
         flavorWrites.length,
       ),
     };
+  }
+
+  /**
+   * Records that a pass has just run, best-effort.
+   *
+   * A stamp that could not be written is not a failed reconciliation — the
+   * catalogue is already correct — so the failure is logged and swallowed.
+   *
+   * @returns Resolves once the stamp is written or the failure is logged.
+   */
+  private async stampApplied(): Promise<void> {
+    try {
+      await this.storage.set(KB_APPLIED_AT_KEY, new Date().toISOString());
+    } catch (error) {
+      this.logger.warn('Could not stamp the apply time: %o', error);
+    }
   }
 
   /**

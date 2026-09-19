@@ -336,17 +336,63 @@ describe('VinaMiraAdapter.fetchListing', () => {
   });
 });
 
+/**
+ * The shop states the maker nowhere but inside the name, as
+ * `(Країна, ТМ Brand)` — which the name cleaner strips. Handing the token over
+ * as the stated brand is what lets whole-string brand matching resolve a
+ * four-letter maker such as `Hyde` with no alias edit at all.
+ */
+describe('VinaMiraAdapter: the ТМ token as the stated brand', () => {
+  /**
+   * Reads one card's snapshot.
+   *
+   * @param name - The listing name the card prints.
+   * @returns The snapshot.
+   */
+  async function listed(
+    name: string,
+  ): Promise<import('~types').ProductSnapshot> {
+    const { adapter } = adapterOver({ 1: page([card({ name })], 1) });
+    const { items: [snap] } = await adapter.fetchListing();
+
+    return snap;
+  }
+
+  it('hands over the brand the name states', async () => {
+    const snap = await listed(
+      'Віскі Hyde #6 Special Reserve 0,7 л 46% (Ірландія, ТМ Hyde)',
+    );
+
+    expect(snap.brand).toBe('Hyde');
+  });
+
+  it('reads the Latin TM spelling too', async () => {
+    const snap = await listed(
+      'Віскі Titanic Irish Whiskey Sherry 0,7л 40% тубус '
+        + '(Ірландія, TM TITANIC)',
+    );
+
+    expect(snap.brand).toBe('TITANIC');
+  });
+
+  it('states no brand when the name carries no token', async () => {
+    expect((await listed('Віскі Jameson 0,7л. 40%')).brand).toBeNull();
+  });
+});
+
 describe('VinaMiraAdapter.enrichDetail', () => {
   /**
    * Builds a listing snapshot and runs the detail pass over it.
    *
    * @param product - The product page's HTML.
+   * @param over - Listing-card overrides, for a case about the raw name.
    * @returns The enriched snapshot and whether the pass found the list.
    */
   async function enrich(
     product: string,
+    over: Partial<CardParts> = {},
   ): Promise<{ snap: import('~types').ProductSnapshot; found: boolean }> {
-    const { adapter } = adapterOver({ 1: page([card()], 1) }, product);
+    const { adapter } = adapterOver({ 1: page([card(over)], 1) }, product);
     const { items: [snap] } = await adapter.fetchListing();
     const found = await adapter.enrichDetail(snap);
 
@@ -375,7 +421,9 @@ describe('VinaMiraAdapter.enrichDetail', () => {
   });
 
   it('never reads the manufacturer as a brand', async () => {
-    const { snap } = await enrich(detail());
+    const { snap } = await enrich(detail(), {
+      name: 'Віскі Hven Hvenus Rye 0,5 л 45,6%',
+    });
 
     expect(snap.brand).toBeNull();
   });

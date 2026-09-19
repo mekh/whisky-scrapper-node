@@ -23,19 +23,25 @@ import type {
   ProducerOwnerRow,
   ProducerPatchResult,
   ProducerProductRow,
+  ProducerQueueRow,
   ProducerReviewRow,
+  ReviewPreview,
   TypePaginated,
 } from '~types';
 
 import {
   ProducerAliasDto,
+  ProducerAliasPreviewQueryDto,
+  ProducerAliasScopeDto,
   ProducerCreateDto,
   ProducerListQueryDto,
   ProducerPatchDto,
+  ProducerQueueQueryDto,
   ProducerRuleCreateDto,
 } from './dto';
+import { ProducerReviewService } from './producer-review.service';
 import { ProducerService } from './producer.service';
-import { ProductReviewService } from './product-review.service';
+import { ReviewPreviewService } from './review-preview.service';
 import {
   KbReconcileSummaryType,
   ProducerDetailType,
@@ -43,14 +49,17 @@ import {
   ProducerOwnerType,
   ProducerPatchResultType,
   ProducerProductType,
+  ProducerQueueRowType,
   ProducerReviewType,
+  ReviewPreviewType,
 } from './types';
 
 @Controller('producer')
 export class ProducerController {
   public constructor(
-    private readonly reviewService: ProductReviewService,
+    private readonly reviewService: ProducerReviewService,
     private readonly producerService: ProducerService,
+    private readonly previewService: ReviewPreviewService,
   ) {}
 
   @Get()
@@ -59,6 +68,14 @@ export class ProducerController {
     @Query() query: ProducerListQueryDto,
   ): Promise<TypePaginated<ProducerReviewRow>> {
     return this.producerService.list(query);
+  }
+
+  @Get('review')
+  @Paginated(ProducerQueueRowType, [Resource.PRODUCER, Action.READ])
+  public review(
+    @Query() query: ProducerQueueQueryDto,
+  ): Promise<TypePaginated<ProducerQueueRow>> {
+    return this.reviewService.queue(query);
   }
 
   @Get('search')
@@ -139,6 +156,44 @@ export class ProducerController {
     @Body() body: ProducerAliasDto,
   ): Promise<KbReconcileSummary> {
     return this.producerService.linkAlias(id as ID, body);
+  }
+
+  @Patch(':id/alias/:aliasId')
+  @Plain(KbReconcileSummaryType, [Resource.PRODUCER, Action.UPDATE])
+  public rescopeAlias(
+    @Param('id') id: string,
+    @Param('aliasId') aliasId: string,
+    @Body() body: ProducerAliasScopeDto,
+  ): Promise<KbReconcileSummary> {
+    return this.producerService.setAliasScope(
+      id as ID,
+      aliasId as ID,
+      body.scope,
+    );
+  }
+
+  /**
+   * What one spelling would do before it is touched: removed when the query
+   * names no scope, rescoped to that scope when it does. One route, since
+   * both are the same question — what changes in the catalogue — about the
+   * same row, and the card asks both for every spelling it shows.
+   */
+  @Get(':id/alias/:aliasId/preview')
+  @Plain(ReviewPreviewType, [Resource.PRODUCER, Action.READ])
+  public previewAlias(
+    @Param('id') id: string,
+    @Param('aliasId') aliasId: string,
+    @Query() query: ProducerAliasPreviewQueryDto,
+  ): Promise<ReviewPreview> {
+    if (query.scope) {
+      return this.previewService.previewAliasRescope(
+        id as ID,
+        aliasId as ID,
+        query.scope,
+      );
+    }
+
+    return this.previewService.previewAliasRemoval(id as ID, aliasId as ID);
   }
 
   @Delete(':id/alias/:aliasId')

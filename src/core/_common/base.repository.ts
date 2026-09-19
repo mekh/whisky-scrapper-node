@@ -11,6 +11,31 @@ export class BaseRepository<
     return this.constructor.name.replace(/Repository$/, '');
   }
 
+  /**
+   * Runs an `UPDATE`/`DELETE ... RETURNING` and hands back the rows alone.
+   *
+   * The driver answers those two statements with `[rows, affected]` while it
+   * answers an `INSERT ... RETURNING` with a flat array — so reading the raw
+   * result's `length` gives **2** for any update that matched anything, which
+   * is a count that looks plausible and is never right. This shipped once as
+   * "записано рядків: 2" on a bulk verdict that wrote thirteen.
+   *
+   * Use it wherever a raw update needs its rows or its count; an insert needs
+   * nothing and keeps using `query` directly.
+   *
+   * @param sql - The statement, which must be an `UPDATE` or a `DELETE`.
+   * @param params - Its bound parameters.
+   * @returns The returned rows.
+   */
+  protected async updateReturning<Row>(
+    sql: string,
+    params: unknown[],
+  ): Promise<Row[]> {
+    const answer = await this.query(sql, params) as [Row[], number];
+
+    return answer[0];
+  }
+
   public async createOrIgnore(
     input: QueryDeepPartialEntity<Entity> | QueryDeepPartialEntity<Entity>[],
   ): Promise<InsertResult> {

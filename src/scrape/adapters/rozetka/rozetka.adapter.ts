@@ -4,8 +4,14 @@ import { ServerError } from '~errors';
 import type { ListingResult, ProductSnapshot } from '~types';
 
 import { BrowserAdapterBase } from '../../browser/browser-adapter.base';
+import { sleep } from '../../scrape-timing.util';
 
-import type { RozetkaPage, RozetkaRow } from './rozetka.interfaces';
+import type { RenderDiagnostics } from '../../browser/browser.interfaces';
+import type {
+  RozetkaPage,
+  RozetkaRow,
+  RozetkaWalk,
+} from './rozetka.interfaces';
 
 const LISTING = 'https://rozetka.com.ua/ua/viski/c4649130/';
 
@@ -21,9 +27,27 @@ const TILE_SELECTOR = 'rz-catalog-tile';
 const MAX_PAGES = 80;
 
 /**
- * One extra attempt per page, in case the Cloudflare challenge flakes once.
+ * How long to wait before each attempt at one page, the first being immediate.
+ * The waits escalate because a page comes back empty when Cloudflare is
+ * refusing this browser, and asking again at once is what it is refusing.
  */
-const PAGE_ATTEMPTS = 2;
+const RETRY_BACKOFF_MS = [0, 20_000, 60_000];
+
+/**
+ * How many blank pages in a row end the walk. One is a challenge that stuck,
+ * which the walk skips and re-reads afterwards; two means the store has
+ * stopped answering and the rest of the walk would only spend the budget.
+ */
+const MAX_BLANK_STREAK = 2;
+
+/**
+ * How many blank pages a walk may skip in total. A blank page costs every
+ * attempt and every back-off, so without this a listing full of holes would
+ * spend the store's whole sync budget and persist nothing.
+ */
+const MAX_BLANK_PAGES = 4;
+
+const PAGE_PATTERN = /page=(\d+)\//;
 
 const SKU_PATTERN = /\/p(\d+)\//;
 
@@ -149,6 +173,27 @@ export class RozetkaAdapter extends BrowserAdapterBase {
   }
 
   /**
+   * The listing URL of one page. Page 1 is the bare listing URL; a number past
+   * the end redirects back to it, which is how the walk knows it has finished.
+   *
+   * @param page - 1-based page number.
+   * @returns The URL to open.
+   */
+  private static urlOfPage(page: number): string {
+    return page === 1 ? LISTING : `${LISTING}page=${page}/`;
+  }
+
+  /**
+   * The page number a listing URL addresses, so a failure can name it.
+   *
+   * @param url - A URL built by {@link urlOfPage}.
+   * @returns The page number, 1 for the bare listing URL.
+   */
+  private static pageOfUrl(url: string): number {
+    return Number(PAGE_PATTERN.exec(url)?.[1] ?? 1);
+  }
+
+  /**
    * The tile's product URL without its fragment.
    *
    * @param row - The tile's data.
@@ -188,6 +233,45 @@ export class RozetkaAdapter extends BrowserAdapterBase {
   }
 
   /**
+   * Formats one failed render as the line an operator reads to tell a stuck
+   * Cloudflare challenge from a block, a rate limit or a markup change.
+   *
+   * @param diagnostics - What the render observed.
+   * @returns A single-line diagnosis.
+   */
+  private static diagnose(diagnostics: RenderDiagnostics): string {
+    const { challenge: chal } = diagnostics;
+    const parts = [
+      `status ${diagnostics.status ?? 'none'}`,
+      `title ${JSON.stringify(diagnostics.title)}`,
+      `challenge ${
+        chal.cleared ? 'cleared' : 'TIMED OUT'
+      } in ${chal.elapsedMs}ms`,
+      `tiles selector ${
+        diagnostics.selectorFound === true ? 'found' : 'never'
+      }`,
+      `url ${diagnostics.finalUrl}`,
+      `took ${diagnostics.elapsedMs}ms`,
+    ];
+
+    if (diagnostics.cfRay !== null) {
+      parts.push(`cf-ray ${diagnostics.cfRay}`);
+    }
+
+    if (chal.titles.length > 0) {
+      parts.push(`titles seen ${JSON.stringify(chal.titles)}`);
+    }
+
+    if (diagnostics.errorResponses.length > 0) {
+      parts.push(`failed ${diagnostics.errorResponses.join(' | ')}`);
+    }
+
+    parts.push(`body ${JSON.stringify(diagnostics.bodyExcerpt)}`);
+
+    return parts.join('; ');
+  }
+
+  /**
    * Walks the category page by page until one yields no tile the walk has not
    * already seen.
    *
@@ -195,11 +279,15 @@ export class RozetkaAdapter extends BrowserAdapterBase {
    * the end **redirects back to page 1** (verified against the live site on
    * 2026-07-25 and again on 2026-09-05: `page=42/` and `page=60/` answer with
    * the bare listing URL and its 60 tiles), so the real terminator is a page
-   * whose tiles the walk had all collected before. A page that rendered no
-   * tile at all is never that: `render` swallows the wait-for-selector
-   * timeout, so a context still sitting on the Cloudflare challenge reads
-   * exactly like an empty catalogue, and the run must not let persist sweep
-   * on it.
+   * whose tiles the walk had all collected before.
+   *
+   * A page that rendered no tile at all is never that — it is the Cloudflare
+   * challenge winning — but it no longer truncates the walk either: it is
+   * recorded, skipped, and re-read once the walk is over, so one stuck page
+   * out of forty-one costs its own tiles rather than the whole run. The walk
+   * ends on {@link MAX_BLANK_STREAK} blank pages in a row or
+   * {@link MAX_BLANK_PAGES} in total — by then the store is refusing the
+   * browser and the rest of the walk would only spend the budget.
    *
    * "Seen" is decided per tile, not per snapshot: the sold-out tail shows no
    * price, so its tiles yield no snapshot, but a page of ten such tiles the
@@ -213,53 +301,140 @@ export class RozetkaAdapter extends BrowserAdapterBase {
    * @returns The store's whisky listing and whether it is the whole listing.
    */
   public async fetchListing(): Promise<ListingResult> {
-    const snaps: ProductSnapshot[] = [];
-    const seen = new Set<string>();
-    let stated: number | null = null;
-    let received = 0;
+    const walk: RozetkaWalk = {
+      snaps: [],
+      seen: new Set<string>(),
+      stated: null,
+      received: 0,
+    };
+    const blanks: number[] = [];
+    let streak = 0;
+    let stop = ListingStop.PAGE_CAP;
 
     for (let page = 1; page <= MAX_PAGES; page += 1) {
-      const url = page === 1 ? LISTING : `${LISTING}page=${page}/`;
-      const rendered = await this.fetchPage(url);
+      const rendered = await this.fetchPage(RozetkaAdapter.urlOfPage(page));
 
-      stated ??= rendered.stated;
+      walk.stated ??= rendered.stated;
 
       if (rendered.tiles.length === 0) {
-        return this.listing(snaps, ListingStop.AMBIGUOUS, stated, received);
+        blanks.push(page);
+        streak += 1;
+
+        const spent = streak >= MAX_BLANK_STREAK
+          || blanks.length >= MAX_BLANK_PAGES;
+
+        if (spent) {
+          return this.finish(walk, ListingStop.AMBIGUOUS);
+        }
+
+        continue;
       }
 
-      received += rendered.tiles.length;
+      streak = 0;
 
-      const unseen = rendered.tiles.filter(
-        (tile) => !seen.has(RozetkaAdapter.skuOf(tile)),
-      );
-      const fresh = this.freshSnapshots(
-        unseen,
-        seen,
-        (tile) => this.toSnapshot(tile),
-      );
-
-      unseen.forEach((tile) => seen.add(RozetkaAdapter.skuOf(tile)));
-      snaps.push(...fresh);
+      const added = this.absorb(walk, rendered.tiles);
 
       this.emit({
         kind: 'page',
         page,
-        added: fresh.length,
-        total: snaps.length,
+        added: added ?? 0,
+        total: walk.snaps.length,
       });
 
-      if (unseen.length === 0) {
-        return this.listing(snaps, ListingStop.EXHAUSTED, stated, received);
+      if (added === null) {
+        stop = ListingStop.EXHAUSTED;
+        break;
       }
     }
 
-    return this.listing(snaps, ListingStop.PAGE_CAP, stated, received);
+    const missed = await this.rereadBlankPages(walk, blanks);
+
+    if (missed > 0) {
+      return this.finish(walk, ListingStop.AMBIGUOUS);
+    }
+
+    return this.finish(walk, stop);
+  }
+
+  /**
+   * Re-reads the pages that came back blank during the walk, once each.
+   *
+   * By the time the walk is over the store has had minutes to stop refusing
+   * the browser, so a page that was stuck is usually readable now — and a
+   * listing made whole this way earns the out-of-stock sweep instead of
+   * losing it to one bad page.
+   *
+   * @param walk - The walk's collected state, extended in place.
+   * @param pages - The 1-based page numbers that came back blank.
+   * @returns How many of them are still unread.
+   */
+  private async rereadBlankPages(
+    walk: RozetkaWalk,
+    pages: number[],
+  ): Promise<number> {
+    let missed = 0;
+
+    for (const page of pages) {
+      await this.restartBrowser();
+
+      const rendered = await this.fetchPage(RozetkaAdapter.urlOfPage(page));
+
+      if (rendered.tiles.length === 0) {
+        missed += 1;
+
+        continue;
+      }
+
+      const added = this.absorb(walk, rendered.tiles);
+
+      this.emit({ kind: 'page-recovered', page, added: added ?? 0 });
+    }
+
+    return missed;
+  }
+
+  /**
+   * Folds one page's tiles into the walk: counts them as served, keeps the
+   * snapshots of the ones it had not seen, and marks every tile seen.
+   *
+   * @param walk - The walk's collected state, extended in place.
+   * @param tiles - The page's tiles, priced or not.
+   * @returns How many snapshots the page added, or null when it carried no
+   *   tile the walk had not already collected — which is the end of the
+   *   listing.
+   */
+  private absorb(walk: RozetkaWalk, tiles: RozetkaRow[]): number | null {
+    walk.received += tiles.length;
+
+    const unseen = tiles.filter(
+      (tile) => !walk.seen.has(RozetkaAdapter.skuOf(tile)),
+    );
+    const fresh = this.freshSnapshots(
+      unseen,
+      walk.seen,
+      (tile) => this.toSnapshot(tile),
+    );
+
+    unseen.forEach((tile) => walk.seen.add(RozetkaAdapter.skuOf(tile)));
+    walk.snaps.push(...fresh);
+
+    return unseen.length === 0 ? null : fresh.length;
+  }
+
+  /**
+   * Closes the walk through the base's completeness rules.
+   *
+   * @param walk - The walk's collected state.
+   * @param stop - Why the walk stopped.
+   * @returns The listing result.
+   */
+  private finish(walk: RozetkaWalk, stop: ListingStop): ListingResult {
+    return this.listing(walk.snaps, stop, walk.stated, walk.received);
   }
 
   /**
    * Renders one listing page in a fresh browser context and extracts its
-   * tiles and stated count, retrying once when the page comes back empty or
+   * tiles and stated count, retrying a page that comes back empty or
    * unrecognized.
    *
    * Every tile must carry either the buy button or an out-of-stock label, and
@@ -267,22 +442,32 @@ export class RozetkaAdapter extends BrowserAdapterBase {
    * means the markup changed under us; so does one that says "buy" but shows
    * nothing to buy it for — `toSnapshot` can record neither, and a silent drop
    * would let the sweep flag an offer the store calls available as gone the
-   * moment the walk completes. Guessing either way would mass-flag the store's
-   * products out of stock (recoverable — the flag flips back on the next good
-   * run — but the reports would be wrong meanwhile). So the page is retried
-   * and then the whole run fails loudly instead.
+   * moment the walk completes. So the page is retried and then the whole run
+   * fails loudly instead.
+   *
+   * An empty page is retried on the same schedule, and every failed attempt
+   * is reported with what the browser actually had on screen — a stuck
+   * challenge, a 403 and a markup change are one symptom here and three
+   * different problems.
    *
    * @param url - The listing page URL.
-   * @returns The page; its tiles are empty when both attempts came back empty.
+   * @returns The page; its tiles are empty when every attempt came back empty.
    * @throws {ServerError} When a tile carries no usable availability signal.
    */
   private async fetchPage(url: string): Promise<RozetkaPage> {
     let unrecognized = 0;
     let stated: number | null = null;
+    let diagnosis = 'no attempt was made';
 
-    for (let attempt = 0; attempt < PAGE_ATTEMPTS; attempt += 1) {
-      const rendered = await this.renderEval(url, PAGE_JS, TILE_SELECTOR);
-      const page = RozetkaAdapter.asPage(rendered);
+    for (let attempt = 0; attempt < RETRY_BACKOFF_MS.length; attempt += 1) {
+      await this.backOff(attempt);
+
+      const { value, diagnostics } = await this.renderEval(
+        url,
+        PAGE_JS,
+        TILE_SELECTOR,
+      );
+      const page = RozetkaAdapter.asPage(value);
 
       stated ??= page.stated;
       unrecognized = page.tiles.filter(
@@ -292,6 +477,8 @@ export class RozetkaAdapter extends BrowserAdapterBase {
       if (page.tiles.length > 0 && unrecognized === 0) {
         return page;
       }
+
+      diagnosis = RozetkaAdapter.diagnose(diagnostics);
     }
 
     if (unrecognized > 0) {
@@ -301,7 +488,28 @@ export class RozetkaAdapter extends BrowserAdapterBase {
       );
     }
 
+    this.emit({
+      kind: 'page-blank',
+      page: RozetkaAdapter.pageOfUrl(url),
+      attempts: RETRY_BACKOFF_MS.length,
+      diagnosis,
+    });
+
     return { tiles: [], stated };
+  }
+
+  /**
+   * Waits before a retry, so a store that is refusing the browser is given
+   * time to stop rather than asked again immediately. Scaled by the run's
+   * delay multiplier, like every other wait this adapter makes.
+   *
+   * @param attempt - 0-based attempt index; the first one waits not at all.
+   * @returns Resolves once the back-off has elapsed.
+   */
+  private backOff(attempt: number): Promise<void> {
+    const delay = (RETRY_BACKOFF_MS[attempt] ?? 0) * this.delayMultiplier;
+
+    return delay <= 0 ? Promise.resolve() : sleep(delay);
   }
 
   /**

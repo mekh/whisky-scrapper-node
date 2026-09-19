@@ -599,6 +599,17 @@ export class SyncOrchestratorService implements OnModuleInit {
             + `${event.inStock} in stock`,
         );
         break;
+      case 'page-blank':
+        writer.warn(
+          `Page ${event.page} rendered nothing after ${event.attempts} `
+            + `attempt(s) — ${event.diagnosis}`,
+        );
+        break;
+      case 'page-recovered':
+        writer.info(
+          `Page ${event.page} re-read after the walk: ${event.added} new`,
+        );
+        break;
       case 'enrich':
         this.writeEnrichProgress(writer, event.done, event.pending);
         break;

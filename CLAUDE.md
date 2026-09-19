@@ -1739,7 +1739,9 @@ wrappers): `scrape/` has its own internal layering.
   end **redirects to page 1** (verified live 2026-07-25 and 2026-09-05), and
   reconciles the tiles handed over against the «Знайдено N товарів» figure the
   listing states, while a page that rendered no tile at all is the Cloudflare
-  challenge winning and reads as incomplete; the eight `PagedHtmlAdapterBase`
+  challenge winning — such a page is skipped, re-read once the walk is over,
+  and only makes the run incomplete when it is still blank then (2026-09-19,
+  see "The browser tier's blank pages"); the eight `PagedHtmlAdapterBase`
   stores use a 404/410 or a page with no new SKU — and `winebutik`
   additionally the first page carrying a known out-of-stock label, because
   its listing sorts purchasable items ahead of a sold-out tail, which makes
@@ -1974,8 +1976,27 @@ wrappers): `scrape/` has its own internal layering.
 - **Browser tier** (`rozetka`): Playwright drives Chromium in-process. Rozetka
   blocks the second and later navigations inside one browser context, so every
   page is rendered in a **fresh stealth context** (`BrowserAdapterBase`
-  `renderEval`/`renderHtml`), with one retry per page and the challenge-title
-  wait.
+  `renderEval`/`renderHtml`), with the challenge-title wait and the selector
+  wait running **concurrently** — the interstitial carries none of the store's
+  markup, so the selector cannot appear early, and waiting in series spent both
+  timeouts on a page that was failing either way.
+  **The context's Client Hints are overridden to match its user agent**
+  (`applyClientHints`, a page-level `Emulation.setUserAgentOverride`).
+  Playwright's `userAgent` option rewrites the UA string alone, so headless
+  Chromium kept announcing itself as `HeadlessChrome` in `Sec-Ch-Ua` — on the
+  main document and on every challenge request, a contradiction Cloudflare's
+  managed challenge reads directly. The brand list, the versions, the platform
+  and the GREASE entry come from `headers.constants.ts`, beside the
+  `USER_AGENT` they must agree with, and each is copied from what the bundled
+  Chromium itself emits rather than invented; verified live that no request
+  carries the `Headless` brand any more.
+  **Every render reports what it saw** (`RenderDiagnostics`): the main
+  document's status and final URL, the `cf-ray`, whether the challenge cleared
+  and how long it took, whether the selector ever appeared, the non-2xx
+  document/xhr/fetch responses and an excerpt of the body text. It is only
+  logged when a page turns out to be unusable, and it is the only thing that
+  can tell a stuck challenge from a 403, a 429 or a markup change — all four
+  used to read as "the page was empty".
   **Every context is confined to the store's own hosts** by
   `browser/browser-request.policy.ts`, installed as a `context.route()` in
   `newStealthContext`: a request may go to the store's host or a subdomain of
@@ -2030,6 +2051,69 @@ wrappers): `scrape/` has its own internal layering.
   when the walk served at least that many, `short` otherwise. The browser is
   launched lazily and closed by `adapter.close()` in `ScrapeService`'s
   `finally`.
+
+  **The browser tier's blank pages (2026-09-19).** A page that renders no tile
+  at all used to end the walk on the spot, which meant one stuck Cloudflare
+  challenge out of forty-one pages threw away the whole run — every production
+  sync since early September stopped at a random page (15, 33, 41) with
+  `Listing incomplete (ambiguous)` and the sweep skipped. The log's own timing
+  is what identified it: the healthy page-to-page gap is 13–24 s, the five
+  anomalous ones were 89–105 s, and the run ended on a 160 s gap — exactly
+  `30 s` of challenge timeout plus `35 s` of selector timeout, once for a
+  retried page and twice for the page that ended it. So the interstitial was
+  standing for the full wait and no tile was ever rendered. Four changes,
+  smallest first:
+
+  - **The Client Hints no longer say `HeadlessChrome`** (above). This is the
+    only change aimed at the cause rather than the blast radius: the browser
+    was announcing itself as headless in a header on every request while its
+    user agent claimed to be Google Chrome.
+  - **The two waits run concurrently**, so a doomed attempt costs one timeout
+    instead of two, and a slow-but-clearing challenge gets 45 s rather than 30.
+  - **Three attempts per page, with escalating back-off** (immediate, 20 s,
+    60 s, scaled by `SCRAPE_DELAY_MULTIPLIER`). Asking again at once is what a
+    store refusing the browser is refusing.
+  - **A blank page no longer truncates the walk.** It is recorded, skipped, and
+    re-read once the walk has reached its real end — by which time the store
+    has usually stopped refusing — so one stuck page costs its own tiles rather
+    than the run. If the re-read succeeds the tile count reconciles against the
+    stated figure and the listing is `counted`, sweep and all; if it does not,
+    the run is `ambiguous` as before but keeps everything the walk did reach.
+    Two blank pages in a row, or four in total, still end the walk: by then the
+    store has stopped answering and the rest would only spend the budget.
+
+  Every failed attempt emits a `page-blank` progress event carrying the render
+  diagnostics, and a recovered page emits `page-recovered` — so the run's log
+  file now says which page failed, what the browser had on screen and whether
+  the re-read got it back. Verified end to end against the live site: 42 pages,
+  2355 tiles, `counted` against the stated 2406.
+
+  **The user agent tracks the Chromium this project runs (2026-09-19).**
+  `USER_AGENT` claimed **Chrome 124** — April 2024, two and a half years stale
+  by the time the blank pages were diagnosed, which Cloudflare's bot scoring
+  weights against on its own. It now claims **151**, the version of the
+  Chromium Playwright bundles, so the browser tier no longer merely looks
+  consistent but _is_ the version it announces — a page that probes the engine
+  rather than the header gets the same answer. Every value is copied from what
+  the bundled engine emits rather than invented: the GREASE brand
+  (`Not=A?Brand`, which varies per build), the brand order, the full version
+  `151.0.7922.34`, and a real macOS platform version — `10_15_7` is a frozen
+  user-agent token, whereas the `Sec-CH-UA-Platform-Version` hint reports the
+  truth, and no machine on Catalina could be running Chrome 151.
+
+  Two things follow. **The blast radius is wider than the browser tier**:
+  `DEFAULT_HEADERS` reaches the wire through `PlainHttpClient`, so every
+  plain-fetch store now presents the new header set — `ImpitHttpClient` is
+  unaffected, since impersonation owns its headers and only `Accept-Language`
+  is overridden, which is the whole point of that split. Verified live after
+  the bump: `alcomag`, `bayadera`, `winebutik` and `vina-mira` all answer 200
+  with full pages, and a Rozetka listing page still renders its 60 tiles.
+  **And the constants can now drift**, because a Playwright bump moves the
+  engine and not them — which would restore the exact inconsistency this
+  removes. `test/scrape/browser-version.integration.spec.ts` launches Chromium
+  and fails when they disagree, the same guard the Dockerfile's
+  `PLAYWRIGHT_VERSION` ARG already has for the browser layer. Bump the two
+  together.
   Infrastructure: the `service_run` Docker stage installs Chromium
   (`playwright install --with-deps chromium`, `PLAYWRIGHT_BROWSERS_PATH=
   /ms-playwright`) and drops to a non-root `appuser` (uid 10001) because

@@ -4,8 +4,12 @@ import { ListingStop } from '~enums';
 
 import { RozetkaAdapter } from '../../src/scrape/adapters/rozetka';
 
-import type { StoreScrapeSpec } from '~types';
+import type { ScrapeProgressEvent, StoreScrapeSpec } from '~types';
 import type { RozetkaRow } from '../../src/scrape/adapters/rozetka/rozetka.interfaces';
+import type {
+  RenderDiagnostics,
+  RenderResult,
+} from '../../src/scrape/browser/browser.interfaces';
 
 const SPEC: StoreScrapeSpec = {
   slug: 'rozetka',
@@ -22,20 +26,45 @@ const SPEC: StoreScrapeSpec = {
 const LISTING = 'https://rozetka.com.ua/ua/viski/c4649130/';
 
 /**
+ * Diagnostics every canned render reports, since the fake never opens a page.
+ */
+const DIAGNOSTICS: RenderDiagnostics = {
+  status: 200,
+  finalUrl: LISTING,
+  title: 'canned',
+  cfRay: null,
+  challenge: { cleared: true, elapsedMs: 0, titles: [] },
+  selectorFound: true,
+  errorResponses: [],
+  bodyExcerpt: '',
+  elapsedMs: 0,
+};
+
+/**
  * A `RozetkaAdapter` whose browser is replaced by canned extractor results, so
  * the pagination, retry, deduplication and mapping logic is tested without
  * launching Chromium (the browser itself is covered by the live parity run).
+ *
+ * The delay multiplier is 0 so the retry back-off — minutes in production —
+ * costs nothing here.
  */
 class FakeRozetkaAdapter extends RozetkaAdapter {
   public readonly urls: string[] = [];
+
+  public readonly events: ScrapeProgressEvent[];
 
   private readonly pages: RozetkaRow[][];
 
   private readonly stated: number | null;
 
-  public constructor(pages: RozetkaRow[][], stated: number | null = null) {
-    super(SPEC, 1);
+  public constructor(
+    pages: RozetkaRow[][],
+    stated: number | null = null,
+    events: ScrapeProgressEvent[] = [],
+  ) {
+    super(SPEC, 0, (event) => events.push(event));
 
+    this.events = events;
     this.pages = pages;
     this.stated = stated;
   }
@@ -45,14 +74,17 @@ class FakeRozetkaAdapter extends RozetkaAdapter {
    * in-page script produces: the tiles plus the count the listing states.
    *
    * @param url - The URL that would have been opened.
-   * @returns The canned page for this call.
+   * @returns The canned page for this call, with canned diagnostics.
    */
-  protected renderEval(url: string): Promise<unknown> {
+  protected renderEval(url: string): Promise<RenderResult<unknown>> {
     this.urls.push(url);
 
     return Promise.resolve({
-      tiles: this.pages[this.urls.length - 1] ?? [],
-      stated: this.stated,
+      value: {
+        tiles: this.pages[this.urls.length - 1] ?? [],
+        stated: this.stated,
+      },
+      diagnostics: DIAGNOSTICS,
     });
   }
 }
@@ -159,6 +191,7 @@ describe('RozetkaAdapter.fetchListing', () => {
       [row('1')],
       [row('2', { price: null })],
       [row('2', { price: null })],
+      [row('2', { price: null })],
     ]);
 
     await expect(adapter.fetchListing()).rejects.toThrow(
@@ -166,6 +199,7 @@ describe('RozetkaAdapter.fetchListing', () => {
     );
     expect(adapter.urls).toEqual([
       LISTING,
+      `${LISTING}page=2/`,
       `${LISTING}page=2/`,
       `${LISTING}page=2/`,
     ]);
@@ -175,7 +209,7 @@ describe('RozetkaAdapter.fetchListing', () => {
     const adapter = new FakeRozetkaAdapter([
       [row('1'), row('2')],
       [row('2'), row('3')],
-      [],
+      [row('1'), row('2')],
     ]);
 
     const { items: snaps } = await adapter.fetchListing();
@@ -185,7 +219,6 @@ describe('RozetkaAdapter.fetchListing', () => {
       LISTING,
       `${LISTING}page=2/`,
       `${LISTING}page=3/`,
-      `${LISTING}page=3/`,
     ]);
   });
 
@@ -194,14 +227,16 @@ describe('RozetkaAdapter.fetchListing', () => {
       [row('1')],
       [row('2', { inStock: false, outOfStock: false })],
       [row('2', { inStock: false, outOfStock: false })],
+      [row('2', { inStock: false, outOfStock: false })],
     ]);
 
     await expect(adapter.fetchListing()).rejects.toThrow(
       /markup changed/,
     );
-    // Page 2 was retried before the run was given up on.
+    // Page 2 was retried twice before the run was given up on.
     expect(adapter.urls).toEqual([
       LISTING,
+      `${LISTING}page=2/`,
       `${LISTING}page=2/`,
       `${LISTING}page=2/`,
     ]);
@@ -212,7 +247,7 @@ describe('RozetkaAdapter.fetchListing', () => {
       [row('1')],
       [row('2', { inStock: false, outOfStock: false })],
       [row('2'), goneRow('3')],
-      [],
+      [row('1')],
     ]);
 
     const { items: snaps } = await adapter.fetchListing();
@@ -221,11 +256,12 @@ describe('RozetkaAdapter.fetchListing', () => {
     expect(snaps[2].inStock).toBe(false);
   });
 
-  it('retries an empty page once before ending the walk', async () => {
+  it('retries an empty page before giving up on it', async () => {
     const adapter = new FakeRozetkaAdapter([
       [row('1')],
       [],
       [row('2')],
+      [row('1')],
     ]);
 
     const listing = await adapter.fetchListing();
@@ -236,7 +272,6 @@ describe('RozetkaAdapter.fetchListing', () => {
       LISTING,
       `${LISTING}page=2/`,
       `${LISTING}page=2/`,
-      `${LISTING}page=3/`,
       `${LISTING}page=3/`,
     ]);
   });
@@ -334,25 +369,98 @@ describe('RozetkaAdapter.fetchListing', () => {
 
   /**
    * A page that rendered nothing at all is the challenge winning, not the
-   * catalogue ending — `render` swallows the selector timeout, so the two are
-   * indistinguishable here and the safe reading is the pessimistic one.
+   * catalogue ending, so the walk skips it and carries on — but a run of them
+   * means the store has stopped answering and ends the walk.
    */
-  it('is incomplete when a page renders nothing twice over', async () => {
-    const adapter = new FakeRozetkaAdapter([[row('1')]]);
+  it('is incomplete when the blank pages run on', async () => {
+    const events: ScrapeProgressEvent[] = [];
+    const adapter = new FakeRozetkaAdapter([[row('1')]], null, events);
 
     const listing = await adapter.fetchListing();
 
     expect(listing.items).toHaveLength(1);
     expect(listing.complete).toBe(false);
     expect(listing.stop).toBe(ListingStop.AMBIGUOUS);
+    // Page 2 and page 3, each after all three attempts.
+    expect(adapter.urls).toHaveLength(7);
+    expect(events.filter((event) => event.kind === 'page-blank')).toHaveLength(
+      2,
+    );
+  });
+
+  /**
+   * One stuck page must not cost the whole walk: it is skipped, the walk runs
+   * to its real end, and the page is re-read afterwards — by which time the
+   * store has usually stopped refusing the browser.
+   */
+  it('skips a blank page and re-reads it after the walk', async () => {
+    const events: ScrapeProgressEvent[] = [];
+    const adapter = new FakeRozetkaAdapter(
+      [
+        [row('1')],
+        [],
+        [],
+        [],
+        [row('3')],
+        [row('1')],
+        [row('2')],
+      ],
+      3,
+      events,
+    );
+
+    const listing = await adapter.fetchListing();
+
+    // Page 2 was re-read last, after page 3 and the redirect that ended it.
+    expect(adapter.urls).toEqual([
+      LISTING,
+      `${LISTING}page=2/`,
+      `${LISTING}page=2/`,
+      `${LISTING}page=2/`,
+      `${LISTING}page=3/`,
+      `${LISTING}page=4/`,
+      `${LISTING}page=2/`,
+    ]);
+    expect(listing.items.map((snap) => snap.storeSku).sort()).toEqual(
+      ['1', '2', '3'],
+    );
+    expect(listing.complete).toBe(true);
+    expect(listing.stop).toBe(ListingStop.COUNTED);
+    expect(events).toContainEqual({
+      kind: 'page-recovered',
+      page: 2,
+      added: 1,
+    });
+  });
+
+  it('stays incomplete when a re-read page is still blank', async () => {
+    const adapter = new FakeRozetkaAdapter([
+      [row('1')],
+      [],
+      [],
+      [],
+      [row('3')],
+      [row('1')],
+      [],
+    ], 3);
+
+    const listing = await adapter.fetchListing();
+
+    // Everything the walk did reach is kept; only the sweep is refused.
+    expect(listing.items.map((snap) => snap.storeSku)).toEqual(['1', '3']);
+    expect(listing.complete).toBe(false);
+    expect(listing.stop).toBe(ListingStop.AMBIGUOUS);
   });
 
   it('treats an unexpected evaluation result as an empty page', async () => {
     class BrokenAdapter extends FakeRozetkaAdapter {
-      protected renderEval(url: string): Promise<unknown> {
+      protected renderEval(url: string): Promise<RenderResult<unknown>> {
         this.urls.push(url);
 
-        return Promise.resolve('not a page');
+        return Promise.resolve({
+          value: 'not a page',
+          diagnostics: DIAGNOSTICS,
+        });
       }
     }
 

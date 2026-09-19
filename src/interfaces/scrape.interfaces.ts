@@ -339,6 +339,47 @@ export type ScrapeProgressEvent =
   }
   | {
     /**
+     * A listing page rendered nothing the walk could read, after every
+     * attempt. The walk carries on without it and reports the gap; only a run
+     * of such pages ends it.
+     */
+    kind: 'page-blank';
+
+    /**
+     * 1-based page number.
+     */
+    page: number;
+
+    /**
+     * How many attempts the page was given.
+     */
+    attempts: number;
+
+    /**
+     * What the browser actually had on screen, as one line: the status, the
+     * title, whether the challenge cleared and what the body said.
+     */
+    diagnosis: string;
+  }
+  | {
+    /**
+     * A page that came back blank earlier was re-read successfully after the
+     * walk, so the listing is whole again.
+     */
+    kind: 'page-recovered';
+
+    /**
+     * 1-based page number.
+     */
+    page: number;
+
+    /**
+     * Items the page contributed that the walk had not already collected.
+     */
+    added: number;
+  }
+  | {
+    /**
      * Detail-enrichment progress.
      */
     kind: 'enrich';

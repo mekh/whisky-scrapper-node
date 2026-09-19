@@ -1,3 +1,5 @@
+import type { ProductSnapshot } from '~types';
+
 /**
  * One catalog tile as the in-page DOM extractor returns it. Prices are parsed
  * in the browser so no raw HTML has to travel back.
@@ -54,4 +56,32 @@ export interface RozetkaPage {
    * товарів»), or null when the page carries no such figure.
    */
   stated: number | null;
+}
+
+/**
+ * What a listing walk has collected so far, carried between the main pass and
+ * the re-read of the pages that came back blank.
+ */
+export interface RozetkaWalk {
+  /**
+   * The snapshots kept so far, in listing order.
+   */
+  snaps: ProductSnapshot[];
+
+  /**
+   * Every SKU the walk has met, priced or not — a repeated tile is how the
+   * walk recognizes the end of the listing.
+   */
+  seen: Set<string>;
+
+  /**
+   * The category size the listing states, or null when no page stated one.
+   */
+  stated: number | null;
+
+  /**
+   * How many tiles the store has handed over, repeats included. It is what
+   * the stated size is reconciled against.
+   */
+  received: number;
 }

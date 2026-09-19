@@ -15,6 +15,8 @@ The Python scraper uses `curl_cffi` with `impersonate="chrome"` for **every**
 store, so "plain `fetch` is enough" is a hypothesis this spike has to prove,
 not an assumption — see `../../../scrapper/whisky/adapters/base.py`.
 
+**Every client presents the scraper's own fingerprint, imported rather than copied (2026-09-19).** `plain` sends the header set from `~scrape/http/headers.constants`, and `playwright` uses `~scrape/browser/browser-context.factory` whole — the launch flags, the stealth context, its request policy, the Client Hints override and the challenge wait. A canary that probes with a weaker fingerprint than production measures nothing useful, and the copies that used to live in `clients.ts` had drifted two Chrome years behind before anyone noticed. What stays local is only the parts a spike needs and production has no use for: the three-client matrix, the per-store probes and the retry/soak loop.
+
 ## Why the IP matters
 
 Cloudflare fingerprints the TLS handshake passively and answers differently

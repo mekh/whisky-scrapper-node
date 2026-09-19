@@ -1,7 +1,15 @@
 import { Impit } from 'impit';
-import { chromium } from 'playwright';
 
-import type { Browser, BrowserContext, Page } from 'playwright';
+import {
+  applyClientHints,
+  awaitChallenge,
+  launchBrowser,
+  newStealthContext,
+} from '~scrape/browser/browser-context.factory';
+import { firstPartyHostOf } from '~scrape/browser/browser-request.policy';
+import { DEFAULT_HEADERS } from '~scrape/http/headers.constants';
+
+import type { Page } from 'playwright';
 
 import type {
   SpikeClient,
@@ -12,32 +20,7 @@ import type {
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const NAVIGATION_TIMEOUT_MS = 60_000;
-const SELECTOR_TIMEOUT_MS = 35_000;
-const CHALLENGE_TIMEOUT_MS = 30_000;
-const CHALLENGE_POLL_MS = 1_500;
-
-const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
-  + 'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-
-/**
- * Realistic Chrome header set, ported from the Python scraper's
- * `adapters/base.py`. `Accept-Encoding` is deliberately omitted: undici
- * negotiates and decodes compression on its own.
- */
-export const DEFAULT_HEADERS: Record<string, string> = {
-  'User-Agent': USER_AGENT,
-  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,'
-    + 'image/avif,image/webp,*/*;q=0.8',
-  'Accept-Language': 'uk-UA,uk;q=0.9,en;q=0.8',
-  'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", '
-    + '"Not-A.Brand";v="99"',
-  'Sec-Ch-Ua-Mobile': '?0',
-  'Sec-Ch-Ua-Platform': '"macOS"',
-  'Sec-Fetch-Dest': 'document',
-  'Sec-Fetch-Mode': 'navigate',
-  'Sec-Fetch-Site': 'none',
-  'Upgrade-Insecure-Requests': '1',
-};
+const SELECTOR_TIMEOUT_MS = 45_000;
 
 /**
  * Substrings that only appear while a Cloudflare interstitial (JS challenge
@@ -134,6 +117,10 @@ const collectHeaders = (headers: Headers): Record<string, string> => {
  * Chrome header set — the cheapest strategy, and the one whose TLS handshake
  * Cloudflare can fingerprint as non-browser.
  *
+ * The headers are the scraper's own (`~scrape/http/headers.constants`) rather
+ * than a copy: this spike is a canary for the fingerprint production actually
+ * presents, and a local copy drifted two Chrome years behind it once already.
+ *
  * @returns The plain-fetch client.
  */
 const createPlainClient = (): SpikeClient => {
@@ -199,58 +186,15 @@ const createImpitClient = (): SpikeClient => {
 };
 
 /**
- * Opens a stealth browser context: real-browser UA, Ukrainian locale/timezone,
- * desktop viewport, and `navigator.webdriver` hidden. Ported verbatim from the
- * Python scraper's `adapters/_browser.py`, without which Cloudflare's managed
- * challenge never clears in headless mode.
- *
- * @param browser - A launched Chromium instance.
- * @returns The prepared browser context.
- */
-const newStealthContext = async (
-  browser: Browser,
-): Promise<BrowserContext> => {
-  const context = await browser.newContext({
-    userAgent: USER_AGENT,
-    locale: 'uk-UA',
-    timezoneId: 'Europe/Kyiv',
-    viewport: { width: 1366, height: 900 },
-  });
-
-  await context.addInitScript(
-    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});",
-  );
-
-  return context;
-};
-
-/**
- * Waits out a Cloudflare interstitial by polling the document title: the
- * challenge reloads the page itself once cleared, so a plain
- * `waitForSelector` on the fresh tab can miss the transition.
- *
- * @param page - The page being navigated.
- * @returns Resolves once the title stops looking like an interstitial.
- */
-const awaitChallenge = async (page: Page): Promise<void> => {
-  const deadline = Date.now() + CHALLENGE_TIMEOUT_MS;
-
-  while (Date.now() < deadline) {
-    const title = (await page.title()).toLowerCase();
-
-    if (!title.includes('зачека') && !title.includes('moment')) {
-      return;
-    }
-
-    await wait(CHALLENGE_POLL_MS);
-  }
-};
-
-/**
  * Builds a browser-backed client. Every request runs in a freshly created
  * context, which is what lets Rozetka paginate at all: it blocks the second
  * and later navigations inside one context, while the first navigation of a
  * new context reliably clears the challenge.
+ *
+ * The launch flags, the stealth context, its request policy, the Client Hints
+ * override and the challenge wait are the scraper's own, so what this canary
+ * presents is what production presents — a spike that probes with a weaker
+ * fingerprint than the real thing measures nothing useful.
  *
  * @param delayRange - Politeness delay range used after each render.
  * @returns The browser client, including the `evaluate` capability.
@@ -258,32 +202,38 @@ const awaitChallenge = async (page: Page): Promise<void> => {
 const createBrowserClient = async (
   delayRange: [number, number],
 ): Promise<SpikeClient> => {
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--disable-blink-features=AutomationControlled'],
-  });
+  const browser = await launchBrowser();
 
   const render = async <T>(
     url: string,
     waitSelector: string | undefined,
     extract: (page: Page) => Promise<T>,
   ): Promise<{ status: number; value: T }> => {
-    const context = await newStealthContext(browser);
+    const context = await newStealthContext(browser, {
+      firstPartyHost: firstPartyHostOf(url),
+    });
     const page = await context.newPage();
 
     try {
+      await applyClientHints(context, page);
+
       const response = await page.goto(url, {
         waitUntil: 'domcontentloaded',
         timeout: NAVIGATION_TIMEOUT_MS,
       });
 
-      await awaitChallenge(page);
-
-      if (waitSelector) {
-        await page
-          .waitForSelector(waitSelector, { timeout: SELECTOR_TIMEOUT_MS })
-          .catch(() => null);
-      }
+      /**
+       * Concurrently, as production does: the interstitial carries none of the
+       * store's markup, so the selector cannot appear before it clears.
+       */
+      await Promise.all([
+        awaitChallenge(page),
+        waitSelector
+          ? page
+            .waitForSelector(waitSelector, { timeout: SELECTOR_TIMEOUT_MS })
+            .catch(() => null)
+          : Promise.resolve(null),
+      ]);
 
       await politeSleep(delayRange);
 

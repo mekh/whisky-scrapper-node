@@ -6,6 +6,7 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
+    "prepare": "husky || true",
     "build": "nest build",
     "build:prod": "nest build -p tsconfig.build.json",
     "start": "nest start",
@@ -108,7 +109,7 @@
   },
   "lint-staged": {
     "*.{ts,js}": [
-      "sh -c tsc -p tsconfig.lint.json --noEmit --skipLibCheck",
+      "bash -c 'tsc -p tsconfig.lint.json --noEmit --skipLibCheck'",
       "eslint",
       "dprint fmt"
     ],

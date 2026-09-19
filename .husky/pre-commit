@@ -1,0 +1,8 @@
+# The repository's own gate, run against what is actually being committed.
+#
+# lint-staged hides unstaged work for the duration, so the typecheck inside it
+# reads the index rather than the working tree — which is what makes the check
+# mean "this commit compiles", not "this laptop happens to compile right now".
+# It also formats and lints the staged files in place, so a commit is always
+# the shape dprint and eslint would give it.
+pnpm exec lint-staged
